@@ -1,0 +1,17 @@
+name = "slendytubbies-lobbies"
+main = "src/index.js"
+compatibility_date = "2026-01-15"
+
+# The static game deploys to Pages; this Worker only carries lobby state.
+# Durable Objects give us one consistent, single-threaded actor per lobby, which
+# is exactly the shape of "everyone under this password shares a room".
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "Lobby"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Lobby"]
+
+[observability]
+enabled = true

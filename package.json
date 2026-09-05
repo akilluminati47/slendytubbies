@@ -1,0 +1,14 @@
+{
+  "name": "slendytubbies-fangame",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "python tools/serve.py 8322",
+    "credits": "python tools/gen_credits.py",
+    "fetch": "python tools/fetch_sketchfab.py"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  }
+}

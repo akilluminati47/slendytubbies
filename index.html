@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Slendytubbies</title>
+<style>
+  :root { --ink:#d8d2c4; --dim:#6d6659; --line:#3a352c; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; background:#000; overflow:hidden;
+    font-family:"Courier New",ui-monospace,monospace; color:var(--ink); }
+  canvas { display:block; }
+  .hide { display:none !important; }
+
+  /* ------------------------------------------------------------------ HUD */
+  #hud { position:fixed; inset:0; pointer-events:none; user-select:none; }
+  body.menu-open #hud { opacity:0; }
+  #crosshair { position:absolute; left:50%; top:50%; width:3px; height:3px;
+    margin:-1.5px 0 0 -1.5px; background:var(--ink); opacity:.35; border-radius:50%; }
+  .corner { position:absolute; font-size:13px; letter-spacing:.14em; text-transform:uppercase; }
+  #objective { left:24px; top:22px; }
+  #objective b { font-size:30px; letter-spacing:.02em; display:block; margin-top:2px; }
+  #meters { left:24px; bottom:24px; width:190px; }
+  .meter { margin-top:9px; }
+  .meter span { font-size:10px; color:var(--dim); }
+  .meter i { display:block; height:3px; background:#241f18; margin-top:3px; }
+  .meter i b { display:block; height:100%; background:var(--ink); width:100%;
+    transition:width .12s linear; }
+  #battery i b { background:#c9b071; }
+  #stamina i b { background:#7e9b86; }
+  #prompt { position:absolute; left:50%; top:58%; transform:translateX(-50%);
+    font-size:13px; letter-spacing:.18em; text-transform:uppercase; opacity:0;
+    transition:opacity .15s; }
+  #prompt.on { opacity:.85; }
+  #vignette { position:absolute; inset:0; box-shadow:inset 0 0 220px 70px #000; }
+  /* Torch OFF: the red owns the whole screen, centre included - there is no
+     beam to protect and nothing to see anyway.
+     Torch ON (.beam): the red pulls back to a ring around the light, so the one
+     thing you can actually see keeps its own colour. Switching the torch is
+     therefore a real visual trade, not just a light toggle. */
+  #dread { position:absolute; inset:0; opacity:0;
+    transition:opacity .35s, background .3s; mix-blend-mode:multiply;
+    background:radial-gradient(ellipse 78% 68% at 50% 56%,
+      #cf9a9a 0%,
+      #c48c8c 45%,
+      #b06a6a 100%); }
+  #dread.beam {
+    background:radial-gradient(ellipse 78% 68% at 50% 56%,
+      #ffffff 0%,
+      #ffffff 34%,
+      #f0cfcf 58%,
+      #d09090 78%,
+      #b06a6a 100%); }
+
+  /* --------------------------------------------------------------- screens */
+  .screen { position:fixed; inset:0; background:#050505; z-index:10;
+    display:grid; place-content:center; text-align:center; gap:26px; padding:40px; }
+  h1 { font-size:clamp(38px,9vw,86px); letter-spacing:.3em; font-weight:400; text-indent:.3em; }
+  .sub { font-size:13px; line-height:2.2; letter-spacing:.13em; color:var(--dim);
+    text-transform:uppercase; }
+  kbd { color:var(--ink); font:inherit; }
+  .btn { pointer-events:auto; cursor:pointer; border:1px solid var(--line);
+    background:none; color:var(--ink); font:inherit; font-size:13px; padding:13px 30px;
+    letter-spacing:.22em; text-transform:uppercase; }
+  .btn:hover { background:#12100c; }
+  .row { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  #note { font-size:11px; color:#463f34; letter-spacing:.1em; }
+
+  /* Title: nothing but the name and one instruction. */
+  #title .press { font-size:13px; letter-spacing:.26em; text-transform:uppercase;
+    animation:pulse 2.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
+  #vr { border-color:#4d6a55; color:#a9c9b3; }
+
+  /* ----------------------------------------------------------------- pause */
+  #pause { background:rgba(5,5,5,.94); align-content:start; justify-content:center;
+    padding-top:8vh; overflow-y:auto; }
+  #pause h2 { font-size:22px; letter-spacing:.3em; font-weight:400;
+    text-transform:uppercase; margin-bottom:6px; }
+  #settings { width:min(460px,86vw); display:grid; gap:2px; margin:14px 0 22px; }
+  .set-row { display:grid; grid-template-columns:1fr auto; align-items:center;
+    gap:14px; padding:11px 2px; border-bottom:1px solid #191712; }
+  .set-label { font-size:12px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--dim); text-align:left; }
+  .set-row input[type=range] { width:170px; accent-color:#8d9b7e; background:none; }
+  .set-value { font-size:12px; min-width:44px; text-align:right; color:var(--ink); }
+  .set-toggle, .set-choices button { cursor:pointer; border:1px solid var(--line);
+    background:none; color:var(--dim); font:inherit; font-size:11px; padding:6px 12px;
+    letter-spacing:.12em; text-transform:uppercase; }
+  .set-toggle.on, .set-choices button.on { color:var(--ink); border-color:#6d7f63;
+    background:#12140f; }
+  .set-choices { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+
+  /* ----------------------------------------------------------------- lobby */
+  .fields { display:grid; gap:14px; width:min(420px,86vw); }
+  .field { display:grid; gap:6px; text-align:left; }
+  .field span { font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--dim); }
+  .field input { background:#0c0b09; border:1px solid var(--line); color:var(--ink);
+    font:inherit; font-size:15px; padding:11px 13px; letter-spacing:.06em; }
+  .field input:focus { outline:none; border-color:#6d7f63; background:#100f0c; }
+  .status { font-size:12px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--dim); min-height:3.4em; line-height:1.7; display:grid;
+    align-content:center; }
+  .status.live { color:#a9c9b3; }
+  .status.empty { color:#8a8272; }
+  .status.error { color:#c08a8a; }
+  .status b { color:var(--ink); font-weight:400; }
+  .btn[disabled] { opacity:.3; cursor:not-allowed; }
+  .btn[disabled]:hover { background:none; }
+  .tiny { font-size:10px; line-height:1.9; max-width:44ch; }
+
+  /* XR composites only the WebGL layer, so DOM is invisible there. */
+  body.xr #hud, body.xr .screen { display:none !important; }
+  body.touch #meters { bottom:auto; top:70px; left:24px; width:150px; }
+  body.touch #prompt { top:auto; bottom:250px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <div id="vignette"></div>
+  <div id="dread"></div>
+  <div id="crosshair"></div>
+  <div class="corner" id="objective">Custard recovered<b><span id="found">0</span> / <span id="total">10</span></b></div>
+  <div id="meters">
+    <div class="meter" id="battery"><span>Battery</span><i><b></b></i></div>
+    <div class="meter" id="stamina"><span>Stamina</span><i><b></b></i></div>
+  </div>
+  <div id="prompt">Walk over the custard to take it</div>
+</div>
+
+<!-- 1. Title. Any input begins, and that gesture is what unlocks audio. -->
+<div class="screen" id="title">
+  <h1>Slendytubbies</h1>
+  <p class="press">Press anything to begin</p>
+</div>
+
+<!-- 2. Mode select. -->
+<div class="screen hide" id="mode">
+  <h1>Slendytubbies</h1>
+  <div class="row">
+    <button class="btn" id="play-solo">Singleplayer</button>
+    <button class="btn" id="play-multi">Multiplayer</button>
+  </div>
+  <p class="sub">Alone against Tinky Winky, or with up to three friends.</p>
+  <div class="row"><button class="btn" id="vr" hidden>Enter in VR</button></div>
+  <p id="note"></p>
+</div>
+
+<!-- 3. Private lobby. The password is the room: same word, same lobby. -->
+<div class="screen hide" id="lobby">
+  <h2>Private lobby</h2>
+  <div class="fields">
+    <label class="field">
+      <span>Your name</span>
+      <input id="lobby-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Tubby">
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input id="lobby-pass" maxlength="48" autocomplete="off" spellcheck="false" placeholder="a word only your friends know">
+    </label>
+  </div>
+  <div id="lobby-status" class="status">Enter a password to see who is in there.</div>
+  <div class="row">
+    <button class="btn" id="lobby-join" disabled>Join</button>
+    <button class="btn" id="lobby-create" disabled>Create</button>
+    <button class="btn" id="lobby-back">Back</button>
+  </div>
+  <p class="sub tiny">
+    The password never leaves your browser — only a hash does, and that hash is
+    the lobby. Nobody can list or find a lobby without knowing the word.
+  </p>
+</div>
+
+<!-- 4. Pause + settings. -->
+<div class="screen hide" id="pause">
+  <h2>Paused</h2>
+  <p class="sub" id="hints"></p>
+  <div id="settings"></div>
+  <div class="row">
+    <button class="btn" id="resume">Resume</button>
+    <button class="btn" id="restart">Restart</button>
+    <button class="btn" id="reset-settings">Defaults</button>
+  </div>
+</div>
+
+<!-- 5. Win / lose. -->
+<div class="screen hide" id="end">
+  <h1 id="end-title">Caught</h1>
+  <p class="sub" id="end-detail"></p>
+  <div class="row"><button class="btn" id="retry">Try again</button></div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

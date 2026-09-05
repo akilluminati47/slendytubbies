@@ -1,0 +1,12 @@
+# Raw Sketchfab downloads - re-fetch with tools/fetch_sketchfab.py.
+# Anything the game loads at runtime belongs in assets/game/ instead.
+node_modules/
+assets/models/
+
+# Baked rig: large, and currently broken (see README "Known issue").
+assets/game/tubbies.glb
+assets/game/tubbies.json
+
+# Worker local state
+worker/node_modules/
+.wrangler/
