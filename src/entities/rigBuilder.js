@@ -333,7 +333,10 @@ export async function buildRiggedTubbies(donorUrl, skins, targetHeight = 1.85) {
     const ws = new THREE.Vector3();
     whole.getSize(ws);
     if (ws.z > ws.y * 1.25) {
-      const upright = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+      // +90 about X, not -90. Blender Z-up to glTF Y-up is (x,y,z) -> (x,z,-y),
+      // and getting the sign backwards stands the model on its head - which is
+      // exactly what it did, with the legs in the air reading as a vase.
+      const upright = new THREE.Matrix4().makeRotationX(Math.PI / 2);
       for (const p of parts) p.geometry.applyMatrix4(upright);
       whole = new THREE.Box3();
       for (const p of parts) whole.union(boundsOf(p.geometry));
