@@ -97,42 +97,47 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
   }
   try {
     const t0 = performance.now();
-    // Only the chaser and the player skins are ever drawn. The donor supplies a
-    // skeleton and 56 clips and nothing else - its own mesh stays hidden.
-    //
-    // Tinky Winky comes from chaser/, which is the ST2 NPC rip with the real
-    // horror face baked into its texture. The other four come from skin/, which
-    // is the clean un_rendem123 template set the players wear.
-    const skins = {};
-    for (const kind of Object.keys(TUBBIES)) {
-      skins[kind] = kind === "tinkywinky"
-        ? `${base}/chaser/tinkywinky/scene.gltf`
-        : `${base}/skin/${kind}/scene.gltf`;
+
+    /*
+     * Two rigs, because the chaser and the players want different animation.
+     *
+     * The chaser rides donor/tinkywinky, which has 27 clips of its OWN - so
+     * Tinky Winky moves like Tinky Winky instead of borrowing Dipsy's walk. It
+     * is also the same character as the mesh being bound, which makes the fit
+     * far more forgiving than transferring across species.
+     *
+     * The players ride donor/dipsy for its 56 clips.
+     */
+    const [chaser, players] = await Promise.all([
+      buildRiggedTubbies(`${base}/donor/tinkywinky/scene.gltf`,
+        { tinkywinky: `${base}/chaser/tinkywinky/scene.gltf` }, CFG.tubby.height),
+      buildRiggedTubbies(`${base}/donor/dipsy/scene.gltf`, {
+        dipsy: `${base}/skin/dipsy/scene.gltf`,
+        laalaa: `${base}/skin/laalaa/scene.gltf`,
+        po: `${base}/skin/po/scene.gltf`,
+        guardian: `${base}/skin/guardian/scene.gltf`,
+      }, CFG.tubby.height),
+    ]);
+
+    for (const [label, rig] of [["chaser", chaser], ["players", players]]) {
+      const bad = validateRig(rig);
+      if (bad) throw new Error(`${label} rig failed validation: ${bad}`);
     }
-    const rig = await buildRiggedTubbies(`${base}/donor/dipsy/scene.gltf`, skins);
 
-    const bad = validateRig(rig);
-    if (bad) {
-      console.error(`[tubbies] rig failed validation: ${bad}. Using stand-ins.`);
-      gltfCache = false;
-      return gltfCache;
-    }
-
-    // Normalise against the drawn character, measured by the builder. The
-    // skeleton's own extent is the wrong ruler - it includes the donor's
-    // chainsaw and camera bones.
-    rig.scale = CFG.tubby.height / rig.measured.height;
-    rig.feet = rig.measured.feet;
-
-    gltfCache = rig;
-    console.info(`[tubbies] rigged set built in ${(performance.now() - t0) | 0}ms - ` +
-      `${rig.animations.length} clips, ${Object.keys(rig.byKind).length} characters, ` +
-      `scaled by ${rig.scale.toFixed(4)} to ${CFG.tubby.height}m`);
+    gltfCache = { chaser, players };
+    console.info(`[tubbies] rigs built in ${(performance.now() - t0) | 0}ms - ` +
+      `chaser ${chaser.animations.length} clips, ` +
+      `players ${players.animations.length} clips`);
   } catch (err) {
-    console.warn("[tubbies] could not build the rigged set, using stand-ins:", err.message);
+    console.warn("[tubbies] could not build the rigs, using stand-ins:", err.message);
     gltfCache = false;
   }
   return gltfCache;
+}
+
+/** Which rig a given character belongs to. */
+function rigFor(kind) {
+  return kind === "tinkywinky" ? gltfCache.chaser : gltfCache.players;
 }
 
 /**
@@ -179,7 +184,9 @@ function validateRig(rig) {
 
 export function makeTubby(kind) {
   const spec = TUBBIES[kind] ?? TUBBIES.tinkywinky;
-  return gltfCache ? new RiggedTubby(gltfCache, kind, spec) : new ProcTubby(spec);
+  if (!gltfCache) return new ProcTubby(spec);
+  const rig = rigFor(kind);
+  return rig?.byKind?.[kind] ? new RiggedTubby(rig, kind, spec) : new ProcTubby(spec);
 }
 
 /* ------------------------------------------------------------------ real ---- */
@@ -189,9 +196,11 @@ class RiggedTubby {
     // An independent copy per tubby: two on screen must not share a skeleton,
     // or they animate in lockstep and stand in the same place.
     this.root = new THREE.Group();
+    // No scaling here: the builder already scaled the rig and rebound every
+    // mesh against the new world matrix. Scaling after a bind is exactly what
+    // made these render at the wrong size.
     const inner = skinnedClone(rig.root);
-    inner.scale.setScalar(rig.scale);
-    inner.position.y = -rig.feet * rig.scale;
+    inner.position.y = -rig.measured.feet;
     this.root.add(inner);
     this.inner = inner;
 

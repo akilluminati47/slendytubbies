@@ -58,6 +58,20 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
  * screen.
  */
 
+/** Bones that carry props rather than body: excluded from the shape reference. */
+/**
+ * How many donor vertices to blend per template vertex.
+ *
+ * 1 - copy the single nearest. Blending 8 by inverse distance was tried and is
+ * clearly WORSE: it smears weights across the body and the arm chains, and the
+ * characters come out stretched horizontally (2.1m wide, 0.69m tall) instead of
+ * standing. The donor and the template are different enough in proportion that
+ * a neighbourhood average mixes bones that should never share a vertex.
+ */
+const WEIGHT_SAMPLES = 1;
+
+const PROP_BONE = /chainsaw|saw\d|smoke|spark|pullchain|chain-|(^|[_.])cam([_.]|$)/i;
+
 /** Uniform-grid nearest-neighbour. Brute force is 27M checks; this is ~1M. */
 class VertexGrid {
   constructor(positions, cell) {
@@ -74,6 +88,31 @@ class VertexGrid {
 
   #key(x, y, z) {
     return `${Math.floor(x / this.cell)},${Math.floor(y / this.cell)},${Math.floor(z / this.cell)}`;
+  }
+
+  /** The k nearest vertices, as [index, distanceSquared] pairs. */
+  nearestK(x, y, z, k) {
+    const found = [];
+    for (let r = 0; r < 12 && found.length < k; r++) {
+      const cx = Math.floor(x / this.cell), cy = Math.floor(y / this.cell), cz = Math.floor(z / this.cell);
+      for (let i = -r; i <= r; i++) {
+        for (let j = -r; j <= r; j++) {
+          for (let l = -r; l <= r; l++) {
+            if (r > 0 && Math.abs(i) !== r && Math.abs(j) !== r && Math.abs(l) !== r) continue;
+            const bucket = this.map.get(`${cx + i},${cy + j},${cz + l}`);
+            if (!bucket) continue;
+            for (const vi of bucket) {
+              const dx = this.positions.getX(vi) - x;
+              const dy = this.positions.getY(vi) - y;
+              const dz = this.positions.getZ(vi) - z;
+              found.push([vi, dx * dx + dy * dy + dz * dz]);
+            }
+          }
+        }
+      }
+    }
+    found.sort((a, b) => a[1] - b[1]);
+    return found.slice(0, k);
   }
 
   nearest(x, y, z) {
@@ -158,7 +197,7 @@ function flatten(scene) {
   return parts;
 }
 
-export async function buildRiggedTubbies(donorUrl, skins) {
+export async function buildRiggedTubbies(donorUrl, skins, targetHeight = 1.85) {
   const loader = new GLTFLoader();
   const donor = await loader.loadAsync(donorUrl);
   donor.scene.updateMatrixWorld(true);
@@ -198,14 +237,19 @@ export async function buildRiggedTubbies(donorUrl, skins) {
    * Filtering to vertices driven by Bip01_* bones gives the body on its own,
    * which is the thing the template mesh is actually shaped like.
    */
+  // Deny-list, not an allow-list: these rips do not share a naming convention.
+  // The ST3 Dipsy is a 3ds Max biped (Bip01_Pelvis, Bip01_R_Clavicle...) while
+  // the Tinky Winky donor is Rigify (spine.001, upper_arm.L, head). Naming what
+  // is NOT body - this donor's chainsaw, its smoke, sparks, pull chain and
+  // camera bone - works for both, and for the next rip too.
   const skeleton = donorMeshes[0].skeleton;
-  const isBodyBone = skeleton.bones.map((b) => /^Bip01/i.test(b.name));
+  const isBodyBone = skeleton.bones.map((b) => !PROP_BONE.test(b.name));
   const bodyBoneCount = isBodyBone.filter(Boolean).length;
 
   const landmark = (re) => skeleton.bones.find((b) => re.test(b.name));
-  const hip = landmark(/^Bip01_Pelvis/i);
-  const headTop = landmark(/^Bip01_Head_end/i) ?? landmark(/^Bip01_Head/i);
-  const toe = landmark(/^Bip01_[LR]_Toe0_end/i) ?? landmark(/^Bip01_[LR]_Foot/i);
+  const hip = landmark(/pelvis|spine\.?0*1$|^root_/i);
+  const headTop = landmark(/head_end/i) ?? landmark(/(^|_)head/i);
+  const toe = landmark(/toe.*end/i) ?? landmark(/toe/i) ?? landmark(/foot/i);
 
   const donorPts = [];
   const donorSrc = [];       // which mesh + vertex each world point came from
@@ -307,16 +351,40 @@ export async function buildRiggedTubbies(donorUrl, skins) {
       const ji = new Uint16Array(n * 4);
       const jw = new Float32Array(n * 4);
       const p = g.attributes.position;
+      /*
+       * Blend the K nearest donor vertices by inverse distance rather than
+       * copying the single closest.
+       *
+       * Copying one vertex makes every transition a hard edge: a vertex just
+       * inside a shoulder takes 100% of an arm bone while its neighbour takes
+       * 100% of the chest, and the limbs tear away from the body as soon as
+       * anything animates. Averaging a small neighbourhood gives the smooth
+       * falloff a hand-painted weight map would have.
+       */
+      const acc = new Map();
       for (let i = 0; i < n; i++) {
-        const hit = grid.nearest(p.getX(i), p.getY(i), p.getZ(i));
-        const srcMesh = donorSrc[hit * 2];
-        const srcIdx = donorSrc[hit * 2 + 1];
-        const sj = srcMesh.geometry.attributes.skinIndex;
-        const sw = srcMesh.geometry.attributes.skinWeight;
-        ji[i * 4] = sj.getX(srcIdx); ji[i * 4 + 1] = sj.getY(srcIdx);
-        ji[i * 4 + 2] = sj.getZ(srcIdx); ji[i * 4 + 3] = sj.getW(srcIdx);
-        jw[i * 4] = sw.getX(srcIdx); jw[i * 4 + 1] = sw.getY(srcIdx);
-        jw[i * 4 + 2] = sw.getZ(srcIdx); jw[i * 4 + 3] = sw.getW(srcIdx);
+        acc.clear();
+        const hits = grid.nearestK(p.getX(i), p.getY(i), p.getZ(i), WEIGHT_SAMPLES);
+        for (const [hit, d2] of hits) {
+          const srcMesh = donorSrc[hit * 2];
+          const srcIdx = donorSrc[hit * 2 + 1];
+          const sj = srcMesh.geometry.attributes.skinIndex;
+          const sw = srcMesh.geometry.attributes.skinWeight;
+          const influence = 1 / (d2 + 1e-6);
+          for (let c = 0; c < 4; c++) {
+            const w = [sw.getX(srcIdx), sw.getY(srcIdx), sw.getZ(srcIdx), sw.getW(srcIdx)][c];
+            if (w <= 0) continue;
+            const b = [sj.getX(srcIdx), sj.getY(srcIdx), sj.getZ(srcIdx), sj.getW(srcIdx)][c];
+            acc.set(b, (acc.get(b) ?? 0) + w * influence);
+          }
+        }
+        // glTF allows four influences per vertex; keep the strongest four.
+        const top = [...acc.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+        const total = top.reduce((sum, e) => sum + e[1], 0) || 1;
+        for (let c = 0; c < 4; c++) {
+          ji[i * 4 + c] = top[c] ? top[c][0] : 0;
+          jw[i * 4 + c] = top[c] ? top[c][1] / total : 0;
+        }
       }
       g.setAttribute("skinIndex", new THREE.BufferAttribute(ji, 4));
       g.setAttribute("skinWeight", new THREE.BufferAttribute(jw, 4));
@@ -347,32 +415,66 @@ export async function buildRiggedTubbies(donorUrl, skins) {
   }
 
   /*
-   * Measure what actually gets DRAWN, not the skeleton.
+   * Scale the rig to metres, then REBIND.
    *
-   * The bone bounding box is the wrong ruler: it includes the chainsaw and the
-   * camera bone, so normalising to it made the tubbies about 1.7x too big. The
-   * bound mesh in its bind pose is the thing whose height we care about.
+   * This was the bug that made the tubbies render tiny. bindMatrix is the mesh's
+   * world matrix captured at bind time; scaling anything above the mesh
+   * afterwards leaves bindMatrix describing the old world and the bones
+   * describing the new one, and the skinned result comes out at the wrong size.
+   * The CPU maths agreed with itself the whole time, which is why measuring
+   * getVertexPosition never showed it.
+   *
+   * So: measure in the bind pose, apply the scale to the root, then rebind every
+   * mesh against its NEW world matrix while still in the bind pose.
    */
-  const first = Object.values(byKind)[0] ?? [];
-  for (const m of first) m.visible = true;
-  root.updateMatrixWorld(true);
-  const drawn = new THREE.Box3();
-  const pv = new THREE.Vector3();
-  for (const m of first) {
-    const pos = m.geometry.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      m.getVertexPosition(i, pv);
-      drawn.expandByPoint(pv.applyMatrix4(m.matrixWorld));
+  const measureDrawn = () => {
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    const pv = new THREE.Vector3();
+    for (const m of sample) {
+      const pos = m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        m.getVertexPosition(i, pv);
+        box.expandByPoint(pv.applyMatrix4(m.matrixWorld));
+      }
     }
+    return box;
+  };
+
+  const sample = Object.values(byKind)[0] ?? [];
+  for (const m of sample) m.visible = true;
+  anchor.skeleton.pose();                    // measure the bind pose, not a clip
+  const before = measureDrawn();
+  const rawHeight = Math.max(before.max.y - before.min.y, 1e-6);
+
+  root.scale.setScalar(targetHeight / rawHeight);
+  root.updateMatrixWorld(true);
+
+  /*
+   * Rebinding alone is not enough, and doing it alone collapsed the rig to 5cm.
+   * bindMatrix and boneInverses are a matched pair: boneInverse[i] is the
+   * inverse of bone i's world matrix AT BIND TIME. Change the world (by scaling
+   * an ancestor) and update only one half of the pair and the skinning cancels
+   * itself. Recompute the inverses in the new, scaled bind pose, then rebind
+   * each mesh against its new world matrix so both halves agree again.
+   *
+   * The clips are unaffected: they drive bone LOCAL transforms, which an
+   * ancestor scale does not touch.
+   */
+  anchor.skeleton.calculateInverses();
+  for (const list of Object.values(byKind)) {
+    for (const m of list) m.bind(m.skeleton, m.matrixWorld);
   }
-  for (const m of first) m.visible = false;
+
+  const after = measureDrawn();
+  for (const m of sample) m.visible = false;
 
   const measured = {
-    height: Math.max(drawn.max.y - drawn.min.y, 1e-6),
-    feet: drawn.min.y,
+    height: Math.max(after.max.y - after.min.y, 1e-6),
+    feet: after.min.y,
   };
-  console.info(`[rig] drawn character is ${measured.height.toFixed(2)} tall, ` +
-    `feet at ${measured.feet.toFixed(2)}`);
+  console.info(`[rig] ${rawHeight.toFixed(2)} -> ${measured.height.toFixed(2)}m ` +
+    `after rescale and rebind, feet at ${measured.feet.toFixed(2)}`);
 
   return { root, animations: donor.animations, byKind, skeleton: anchor.skeleton, measured };
 }
