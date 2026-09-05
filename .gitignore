@@ -10,3 +10,4 @@ assets/game/tubbies.json
 # Worker local state
 worker/node_modules/
 .wrangler/
+dist/

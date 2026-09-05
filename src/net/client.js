@@ -11,6 +11,8 @@
  * to transmit a map.
  */
 
+import { CFG } from "../game/config.js";
+
 export const ROLE_LABEL = {
   guardian: "The Guardian",
   laalaa: "Laa-Laa",
@@ -48,9 +50,10 @@ export function seedFromKey(key) {
 export class NetClient extends EventTarget {
   constructor(base) {
     super();
-    // Same-origin by default so a Pages deploy with the Worker routed under
-    // /api just works; override for local `wrangler dev` on another port.
-    this.base = base || localStorage.getItem("slendytubbies.server") || "";
+    // A localStorage override wins (local `wrangler dev`), then the deployed
+    // Worker, then same-origin for anyone routing /api themselves.
+    this.base = base || localStorage.getItem("slendytubbies.server") ||
+      CFG.net.server || "";
     this.ws = null;
     this.id = null;
     this.role = null;

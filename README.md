@@ -1,5 +1,7 @@
 # Slendytubbies (three.js)
 
+**Play: <https://slendytubbies.pages.dev>**
+
 A first-person survival-horror prototype: recover ten dishes of tubby custard from a
 fogged wasteland while Tinky Winky hunts you by sight and sound.
 
@@ -82,14 +84,22 @@ Point the game at it from the browser console, then reload:
 localStorage.setItem("slendytubbies.server", "http://127.0.0.1:8787")
 ```
 
-To deploy (needs `npx wrangler login` first):
+The deployed lobby server is
+<https://slendytubbies-lobbies.akilluminati47.workers.dev>, which is what
+`CFG.net.server` points at. To redeploy it:
 
 ```bash
 cd worker && npx wrangler deploy
 ```
 
-With the Worker routed under `/api` on the same domain as the Pages site, the client needs
-no configuration at all — it defaults to same-origin.
+## Deploying the game
+
+`npm run deploy` builds `dist/` and pushes it to Cloudflare Pages.
+
+The build step is not optional. Pages uploads whatever directory you give it and does **not**
+honour `.assetsignore` — that is a Workers-static-assets feature — so deploying the repo root
+publishes `node_modules/` and the entire raw `assets/models/` rip cache. `tools/build.mjs`
+copies only what the browser actually loads: 27 files, 2.5 MB.
 
 ## Layout
 

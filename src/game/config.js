@@ -57,6 +57,12 @@ export const CFG = {
     smoothTurnSpeed: 2.0,
     torchOnController: true,
   },
+  net: {
+    // The deployed lobby Worker. Pages serves only static files, so the lobby
+    // server lives on its own origin. Override for local development with:
+    //   localStorage.setItem("slendytubbies.server", "http://127.0.0.1:8787")
+    server: "https://slendytubbies-lobbies.akilluminati47.workers.dev",
+  },
   dread: {
     maxOpacity: 0.5,    // how red the screen can ever get
   },

@@ -16,13 +16,11 @@ class_name = "Lobby"
 name = "REGISTRY"
 class_name = "Registry"
 
+# SQLite-backed classes, not the classic KV-backed ones: the SQLite storage
+# backend is the one available on the free plan.
 [[migrations]]
 tag = "v1"
-new_classes = ["Lobby"]
-
-[[migrations]]
-tag = "v2"
-new_classes = ["Registry"]
+new_sqlite_classes = ["Lobby", "Registry"]
 
 [observability]
 enabled = true

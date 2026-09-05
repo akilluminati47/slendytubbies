@@ -6,7 +6,9 @@
   "scripts": {
     "serve": "python tools/serve.py 8322",
     "credits": "python tools/gen_credits.py",
-    "fetch": "python tools/fetch_sketchfab.py"
+    "fetch": "python tools/fetch_sketchfab.py",
+    "build": "node tools/build.mjs",
+    "deploy": "node tools/build.mjs && wrangler pages deploy dist --project-name slendytubbies --branch main"
   },
   "dependencies": {
     "three": "0.180.0"
