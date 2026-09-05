@@ -92,23 +92,60 @@
   .set-choices { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
 
   /* ----------------------------------------------------------------- lobby */
-  .fields { display:grid; gap:14px; width:min(420px,86vw); }
-  .field { display:grid; gap:6px; text-align:left; }
-  .field span { font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+  #lobby { align-content:start; padding-top:7vh; overflow-y:auto; gap:0; }
+  #lobby h2 { margin-bottom:20px; }
+  #lobby > * { justify-self:center; width:min(430px,88vw); }
+
+  .tabs { display:flex; gap:0; margin-bottom:22px; border-bottom:1px solid #1d1b16; }
+  .tab { flex:1; cursor:pointer; background:none; border:none; border-bottom:2px solid transparent;
+    color:var(--dim); font:inherit; font-size:12px; letter-spacing:.2em;
+    text-transform:uppercase; padding:11px 0 12px; }
+  .tab:hover { color:var(--ink); }
+  .tab.on { color:var(--ink); border-bottom-color:#6d7f63; }
+
+  .field { display:grid; gap:7px; text-align:left; margin-bottom:18px; }
+  .field span { font-size:11px; letter-spacing:.18em; text-transform:uppercase;
     color:var(--dim); }
-  .field input { background:#0c0b09; border:1px solid var(--line); color:var(--ink);
-    font:inherit; font-size:15px; padding:11px 13px; letter-spacing:.06em; }
+  .field input { width:100%; background:#0c0b09; border:1px solid var(--line);
+    color:var(--ink); font:inherit; font-size:15px; letter-spacing:.04em;
+    padding:12px 14px; }
+  .field input::placeholder { color:#4a443a; letter-spacing:.02em; }
   .field input:focus { outline:none; border-color:#6d7f63; background:#100f0c; }
-  .status { font-size:12px; letter-spacing:.12em; text-transform:uppercase;
-    color:var(--dim); min-height:3.4em; line-height:1.7; display:grid;
-    align-content:center; }
-  .status.live { color:#a9c9b3; }
+
+  .pane { display:grid; }
+
+  /* Status line: sentence case and generous leading. The old all-caps run-on
+     was the least readable text on the screen. */
+  .status { font-size:13px; line-height:1.85; letter-spacing:.02em; color:var(--dim);
+    text-align:center; min-height:4.2em; display:grid; align-content:center;
+    padding:14px 12px; margin-bottom:18px; border:1px solid #17150f;
+    background:#0a0908; }
+  .status.live { color:#a9c9b3; border-color:#26301f; }
   .status.empty { color:#8a8272; }
-  .status.error { color:#c08a8a; }
+  .status.error { color:#c08a8a; border-color:#2e1b1b; }
   .status b { color:var(--ink); font-weight:400; }
+
+  .lobby-list { display:grid; gap:7px; margin-bottom:20px; min-height:96px;
+    align-content:start; font-size:13px; color:var(--dim); text-align:center;
+    padding:4px 0; }
+  .lobby-row { display:grid; grid-template-columns:1fr auto auto; align-items:center;
+    gap:12px; text-align:left; background:#0a0908; border:1px solid var(--line);
+    padding:12px 14px; cursor:pointer; font:inherit; font-size:13px; color:var(--ink); }
+  .lobby-row:hover { border-color:#6d7f63; background:#100f0c; }
+  .lobby-row[disabled] { opacity:.4; cursor:not-allowed; }
+  .lobby-row .who { color:var(--dim); font-size:11px; letter-spacing:.1em;
+    text-transform:uppercase; }
+  .lobby-row .count { font-size:12px; color:#a9c9b3; letter-spacing:.08em; }
+  .lobby-row .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .row { margin-top:2px; }
+  .btn.ghost { border-color:#241f18; color:var(--dim); }
   .btn[disabled] { opacity:.3; cursor:not-allowed; }
   .btn[disabled]:hover { background:none; }
-  .tiny { font-size:10px; line-height:1.9; max-width:44ch; }
+
+  .foot { font-size:11px; line-height:1.9; color:#4f483d; text-align:center;
+    margin-top:20px; letter-spacing:.02em; }
+  .foot em { color:#6d6659; font-style:normal; }
 
   /* XR composites only the WebGL layer, so DOM is invisible there. */
   body.xr #hud, body.xr .screen { display:none !important; }
@@ -154,29 +191,49 @@
   <p id="note"></p>
 </div>
 
-<!-- 3. Private lobby. The password is the room: same word, same lobby. -->
+<!-- 3. Multiplayer. Public lobbies have a name; private ones have a password. -->
 <div class="screen hide" id="lobby">
-  <h2>Private lobby</h2>
-  <div class="fields">
+  <h2>Multiplayer</h2>
+
+  <div class="tabs">
+    <button class="tab on" data-tab="public">Public</button>
+    <button class="tab" data-tab="private">Private</button>
+  </div>
+
+  <label class="field">
+    <span>Your name</span>
+    <input id="lobby-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Tubby">
+  </label>
+
+  <div class="pane" id="pane-public">
+    <div id="public-list" class="lobby-list">Looking for lobbies…</div>
     <label class="field">
-      <span>Your name</span>
-      <input id="lobby-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Tubby">
+      <span>Lobby name</span>
+      <input id="lobby-title" maxlength="32" autocomplete="off" placeholder="Late night jumpscares">
     </label>
+    <div class="row">
+      <button class="btn" id="public-host">Host public lobby</button>
+      <button class="btn ghost" id="lobby-back">Back</button>
+    </div>
+    <p class="foot">Anyone can see and join a public lobby. You host as the Guardian.</p>
+  </div>
+
+  <div class="pane hide" id="pane-private">
     <label class="field">
       <span>Password</span>
       <input id="lobby-pass" maxlength="48" autocomplete="off" spellcheck="false" placeholder="a word only your friends know">
     </label>
+    <div id="lobby-status" class="status">Enter a password to see who is in there.</div>
+    <div class="row">
+      <button class="btn" id="lobby-join" disabled>Join</button>
+      <button class="btn" id="lobby-create" disabled>Create</button>
+      <button class="btn ghost" id="lobby-back2">Back</button>
+    </div>
+    <p class="foot">
+      The password never leaves your browser — only a hash does, and that hash
+      <em>is</em> the lobby. Private lobbies are not listed anywhere.
+    </p>
   </div>
-  <div id="lobby-status" class="status">Enter a password to see who is in there.</div>
-  <div class="row">
-    <button class="btn" id="lobby-join" disabled>Join</button>
-    <button class="btn" id="lobby-create" disabled>Create</button>
-    <button class="btn" id="lobby-back">Back</button>
-  </div>
-  <p class="sub tiny">
-    The password never leaves your browser — only a hash does, and that hash is
-    the lobby. Nobody can list or find a lobby without knowing the word.
-  </p>
 </div>
 
 <!-- 4. Pause + settings. -->

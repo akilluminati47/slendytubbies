@@ -118,8 +118,8 @@ const ui = new UI(settings, net, {
     begin();
   },
 
-  onMultiplayer: async (key, name, create) => {
-    await net.connect(key, name, create);
+  onMultiplayer: async (key, name, create, opts) => {
+    await net.connect(key, name, create, opts);
     // connect() resolves when the socket opens; the role arrives in `welcome`.
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("server did not answer")), 8000);

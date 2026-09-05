@@ -1,5 +1,5 @@
 import { SCHEMA } from "./settings.js";
-import { hashKey, ROLE_LABEL } from "../net/client.js";
+import { hashKey, randomKey, ROLE_LABEL } from "../net/client.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,6 +18,7 @@ export class UI {
     this.hooks = hooks;
     this.screen = "title";
     this.stopWatch = null;
+    this.tab = "public";
     this.lobby = { key: null, info: null };
 
     this.#buildSettings();
@@ -63,10 +64,8 @@ export class UI {
     $("play-solo").onclick = () => this.hooks.onSolo();
     $("play-multi").onclick = () => {
       this.show("lobby");
-      $("lobby-name").value =
-        localStorage.getItem("slendytubbies.name") || "";
-      $("lobby-pass").focus();
-      this.#refreshLobby();
+      $("lobby-name").value = localStorage.getItem("slendytubbies.name") || "";
+      this.#showTab("public");
     };
     $("vr").onclick = (e) => { e.stopPropagation(); this.hooks.onEnterVR(); };
   }
@@ -74,19 +73,21 @@ export class UI {
   /* ------------------------------------------------------------------ lobby */
 
   #wireLobby() {
-    const pass = $("lobby-pass");
-    const name = $("lobby-name");
+    for (const tab of document.querySelectorAll(".tab")) {
+      tab.onclick = () => this.#showTab(tab.dataset.tab);
+    }
 
-    // Debounced: hash + probe on every keystroke would hammer the Worker and
-    // flicker the status line while someone is still typing.
+    const pass = $("lobby-pass");
+    $("lobby-name").addEventListener("input", (e) => {
+      localStorage.setItem("slendytubbies.name", e.target.value.trim());
+    });
+
+    // Debounced: hashing and probing on every keystroke would hammer the Worker
+    // and flicker the status line while someone is still typing.
     let debounce;
-    const onType = () => {
+    pass.addEventListener("input", () => {
       clearTimeout(debounce);
-      debounce = setTimeout(() => this.#refreshLobby(), 350);
-    };
-    pass.addEventListener("input", onType);
-    name.addEventListener("input", () => {
-      localStorage.setItem("slendytubbies.name", name.value.trim());
+      debounce = setTimeout(() => this.#refreshPrivate(), 350);
     });
     pass.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
@@ -95,12 +96,27 @@ export class UI {
       if (!btn.disabled) btn.click();
     });
 
-    $("lobby-join").onclick = () => this.#enter(false);
-    $("lobby-create").onclick = () => this.#enter(true);
-    $("lobby-back").onclick = () => {
-      this.#stopWatching();
-      this.show("mode");
+    $("lobby-join").onclick = () => this.#enter(this.lobby.key, false, {});
+    $("lobby-create").onclick = () => this.#enter(this.lobby.key, true, {});
+    $("public-host").onclick = () => {
+      const title = $("lobby-title").value.trim();
+      this.#enter(randomKey(), true, { public: true, title });
     };
+    for (const id of ["lobby-back", "lobby-back2"]) {
+      $(id).onclick = () => { this.#stopWatching(); this.show("mode"); };
+    }
+  }
+
+  #showTab(name) {
+    this.tab = name;
+    for (const t of document.querySelectorAll(".tab")) {
+      t.classList.toggle("on", t.dataset.tab === name);
+    }
+    $("pane-public").classList.toggle("hide", name !== "public");
+    $("pane-private").classList.toggle("hide", name !== "private");
+    this.#stopWatching();
+    if (name === "public") this.#refreshPublic();
+    else this.#refreshPrivate();
   }
 
   #stopWatching() {
@@ -108,19 +124,49 @@ export class UI {
     this.stopWatch = null;
   }
 
+  /** Live list of public lobbies - name, host and headcount. */
+  #refreshPublic() {
+    const list = $("public-list");
+    this.stopWatch = this.net.watchPublic((lobbies, err) => {
+      if (this.screen !== "lobby" || this.tab !== "public") return;
+
+      if (err) {
+        list.textContent = "Cannot reach the lobby server. Play singleplayer, or host one yourself once it is deployed.";
+        return;
+      }
+      if (!lobbies.length) {
+        list.textContent = "No public lobbies right now. Host one and it appears here for everyone.";
+        return;
+      }
+
+      list.textContent = "";
+      for (const l of lobbies) {
+        const full = l.players >= l.capacity;
+        const row = document.createElement("button");
+        row.className = "lobby-row";
+        row.disabled = full;
+        row.innerHTML =
+          `<span class="name">${escapeHtml(l.title || "Open lobby")}</span>` +
+          `<span class="who">${l.host ? escapeHtml(l.host) : "—"}</span>` +
+          `<span class="count">${l.players}/${l.capacity}${full ? " full" : ""}</span>`;
+        row.onclick = () => this.#enter(l.key, false, {});
+        list.appendChild(row);
+      }
+    });
+  }
+
   /**
    * Watch the lobby behind the typed password and keep the status line live, so
-   * "a friend is on right now" is visible before you commit to joining.
+   * "a friend is on right now" is visible before committing to joining.
    */
-  async #refreshLobby() {
+  async #refreshPrivate() {
     this.#stopWatching();
     const password = $("lobby-pass").value.trim();
-    const status = $("lobby-status");
 
     if (password.length < 3) {
       this.lobby = { key: null, info: null };
       this.#setStatus("Enter a password to see who is in there.", "");
-      this.#setLobbyButtons(false, false);
+      this.#setPrivateButtons(false, false);
       return;
     }
 
@@ -131,33 +177,28 @@ export class UI {
     this.stopWatch = this.net.watch(key, (info, err) => {
       // A late response for a password the player has already changed must not
       // overwrite the current one.
-      if (this.lobby.key !== key || this.screen !== "lobby") return;
+      if (this.lobby.key !== key || this.screen !== "lobby" || this.tab !== "private") return;
       this.lobby.info = info;
 
       if (err) {
-        this.#setStatus(
-          "Cannot reach the lobby server.<br>Check it is deployed, or play singleplayer.",
-          "error");
-        this.#setLobbyButtons(false, false);
+        this.#setStatus("Cannot reach the lobby server.<br>Check it is deployed, or play singleplayer.", "error");
+        this.#setPrivateButtons(false, false);
         return;
       }
-
       if (!info.exists) {
-        this.#setStatus(
-          "No lobby on this password.<br><b>Create</b> one and you host as the Guardian.",
-          "empty");
-        this.#setLobbyButtons(false, true);
+        this.#setStatus("Nobody is on this password yet.<br>Create the lobby and you host as the Guardian.", "empty");
+        this.#setPrivateButtons(false, true);
         return;
       }
 
       const full = info.players >= info.capacity;
       const host = info.names?.[0];
       this.#setStatus(
-        `<b>${info.players}/${info.capacity}</b> in the lobby` +
-        (host ? ` · hosted by <b>${escapeHtml(host)}</b>` : "") +
-        (full ? "<br>Lobby is full." : "<br>Ready when you are."),
+        `<b>${info.players} of ${info.capacity}</b> already inside` +
+        (host ? `, hosted by <b>${escapeHtml(host)}</b>.` : ".") +
+        (full ? "<br>The lobby is full." : "<br>Ready when you are."),
         "live");
-      this.#setLobbyButtons(!full, false);
+      this.#setPrivateButtons(!full, false);
     });
   }
 
@@ -167,22 +208,26 @@ export class UI {
     el.className = `status ${cls}`;
   }
 
-  #setLobbyButtons(canJoin, canCreate) {
+  #setPrivateButtons(canJoin, canCreate) {
     $("lobby-join").disabled = !canJoin;
     $("lobby-create").disabled = !canCreate;
   }
 
-  async #enter(create) {
+  async #enter(key, create, opts) {
+    if (!key) return;
     const name = ($("lobby-name").value.trim() || "Tubby").slice(0, 16);
     localStorage.setItem("slendytubbies.name", name);
-    this.#setLobbyButtons(false, false);
-    this.#setStatus(create ? "Creating…" : "Joining…", "");
+    this.#setPrivateButtons(false, false);
     this.#stopWatching();
+    if (this.tab === "private") this.#setStatus(create ? "Creating…" : "Joining…", "");
+    else $("public-list").textContent = create ? "Creating…" : "Joining…";
+
     try {
-      await this.hooks.onMultiplayer(this.lobby.key, name, create);
+      await this.hooks.onMultiplayer(key, name, create, opts);
     } catch (err) {
-      this.#setStatus(`Could not ${create ? "create" : "join"}: ${escapeHtml(err.message)}`, "error");
-      this.#refreshLobby();
+      const msg = `Could not ${create ? "create" : "join"}: ${escapeHtml(err.message)}`;
+      if (this.tab === "private") this.#setStatus(msg, "error");
+      this.#showTab(this.tab);
     }
   }
 

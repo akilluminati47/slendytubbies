@@ -44,6 +44,53 @@ as long as your six seconds of stamina last. A second tubby joins at the halfway
 
 All tuning lives in [`src/game/config.js`](src/game/config.js).
 
+## Multiplayer
+
+Up to four players. **The host is always the Guardian** (the one with the hat); joiners
+become Laa-Laa, Po and Dipsy in order; the CPU hunting everyone is always Tinky Winky
+wearing the horror face.
+
+Two kinds of lobby, one mechanism:
+
+* **Public** — has a *name*, no password. It announces itself to a registry and anyone can
+  see it listed with its host and headcount, and join with one click.
+* **Private** — has a *password*, no name. The password is SHA-256 hashed in the browser
+  and only the hash is ever sent; that hash *is* the Durable Object id. Nothing indexes
+  it, so a private lobby is not merely unlisted, it is genuinely undiscoverable without
+  the word. The password screen polls live, so you can see a friend is already in there
+  before you commit.
+
+That same hash also seeds the world generator, so every player walks an identical
+wasteland derived from the lobby key alone — no terrain is ever transmitted.
+
+The host simulates the CPU tubby and broadcasts it; the server drops `world` messages from
+anyone else, so clients cannot fight over where the monster is. If the host leaves, the
+longest-standing survivor is promoted and inherits the Guardian role.
+
+### Running the lobby server
+
+Cloudflare Pages serves the game but cannot hold state or WebSockets, so lobbies need the
+Worker in [`worker/`](worker/).
+
+```bash
+cd worker && npx wrangler dev --port 8787 --local
+```
+
+Point the game at it from the browser console, then reload:
+
+```js
+localStorage.setItem("slendytubbies.server", "http://127.0.0.1:8787")
+```
+
+To deploy (needs `npx wrangler login` first):
+
+```bash
+cd worker && npx wrangler deploy
+```
+
+With the Worker routed under `/api` on the same domain as the Pages site, the client needs
+no configuration at all — it defaults to same-origin.
+
 ## Layout
 
 ```
@@ -51,6 +98,9 @@ src/engine/    intent.js · input.js · gamepad.js · touch.js · xr.js
 src/entities/  player.js · tubby.js · tubbyModel.js
 src/world/     world.js · custard.js
 src/game/      config.js · settings.js · audio.js · ui.js · hints.js · wristHud.js
+src/net/       client.js · remote.js
+worker/        Cloudflare Worker + Durable Objects (Lobby, Registry)
+vendor/three/  the five three.js files the game imports, so it deploys standalone
 tools/         serve.py · fetch_sketchfab.py · rig_transfer.py · gen_credits.py
 ```
 

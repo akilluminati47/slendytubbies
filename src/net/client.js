@@ -19,6 +19,17 @@ export const ROLE_LABEL = {
   tinkywinky: "Tinky Winky",
 };
 
+/**
+ * A key for a public lobby. Public lobbies have a NAME but no password, so
+ * there is nothing to hash - the key is just a random address that the registry
+ * hands out with the listing.
+ */
+export function randomKey() {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
 export async function hashKey(password) {
   const bytes = new TextEncoder().encode(`slendytubbies:${password}`);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -86,13 +97,47 @@ export class NetClient extends EventTarget {
     };
   }
 
-  async connect(key, name, create) {
+  /** Public lobbies only. Private ones are deliberately absent from this list. */
+  async listPublic(signal) {
+    const res = await fetch(`${this.base}/api/public`, { signal });
+    if (!res.ok) throw new Error(`server said ${res.status}`);
+    const data = await res.json();
+    return data.lobbies ?? [];
+  }
+
+  /** Poll the public list while the player is looking at it. */
+  watchPublic(onUpdate, intervalMs = 5000) {
+    let stopped = false;
+    let controller = null;
+    const tick = async () => {
+      if (stopped) return;
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        onUpdate(await this.listPublic(controller.signal), null);
+      } catch (err) {
+        if (!stopped && err.name !== "AbortError") onUpdate(null, err);
+      }
+      if (!stopped) this.publicTimer = setTimeout(tick, intervalMs);
+    };
+    tick();
+    return () => {
+      stopped = true;
+      controller?.abort();
+      clearTimeout(this.publicTimer);
+    };
+  }
+
+  async connect(key, name, create, opts = {}) {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const host = this.base
       ? this.base.replace(/^https?:/, scheme)
       : `${scheme}//${location.host}`;
-    const url = `${host}/api/ws?k=${key}&name=${encodeURIComponent(name)}` +
+    let url = `${host}/api/ws?k=${key}&name=${encodeURIComponent(name)}` +
       `&create=${create ? 1 : 0}`;
+    if (opts.public) {
+      url += `&public=1&title=${encodeURIComponent(opts.title || "")}`;
+    }
 
     await new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
@@ -162,6 +207,7 @@ export class NetClient extends EventTarget {
 
   close() {
     clearTimeout(this.pollTimer);
+    clearTimeout(this.publicTimer);
     this.ws?.close();
     this.ws = null;
   }

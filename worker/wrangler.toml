@@ -4,14 +4,25 @@ compatibility_date = "2026-01-15"
 
 # The static game deploys to Pages; this Worker only carries lobby state.
 # Durable Objects give us one consistent, single-threaded actor per lobby, which
-# is exactly the shape of "everyone under this password shares a room".
+# is exactly the shape of "everyone in this room shares state".
 [[durable_objects.bindings]]
 name = "LOBBY"
 class_name = "Lobby"
 
+# One singleton actor that indexes lobbies which opted into being public.
+# Private lobbies are addressed straight from their password hash and are
+# deliberately absent from here - that is what makes them undiscoverable.
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "Registry"
+
 [[migrations]]
 tag = "v1"
 new_classes = ["Lobby"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["Registry"]
 
 [observability]
 enabled = true
