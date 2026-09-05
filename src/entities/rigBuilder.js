@@ -22,40 +22,38 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
  * "whatever the donor vertex nearest to me does" is a good approximation, and a
  * far more robust one than re-running heat weighting on a foreign rig.
  *
- * STATUS: close, but not finished. CFG.tubby.useBakedRig is false, so the game
- * runs on the procedural stand-ins and none of this executes.
+ * STATUS: ABANDON THIS APPROACH. CFG.tubby.useBakedRig is false and the game
+ * runs on the procedural stand-ins.
  *
- * Working, and verified by measurement rather than by eye:
- *   - all five characters bind to the donor skeleton, 6 meshes each, ~2.8s build
- *   - the mixer drives all 56 clips
- *   - weights spread over 17 distinct bones instead of collapsing onto one
- *   - the skinned mesh tracks the skeleton (mesh 3.19 vs bones 3.30 before
- *     normalisation) - this was the big one, fixed by giving each new mesh the
- *     ANCHOR's local transform, not just its parent's. The geometry is converted
- *     into anchor.matrixWorld's space, so anything else disagrees by exactly the
- *     anchor's own transform, which is what left it floating.
- *   - the character normalises to 1.80m against a 1.85m target
- *   - feet plant on the ground every frame via the Bip01_*_Toe0/Foot bones,
- *     which also handles the root motion baked into these clips
+ * The premise is wrong. This file transfers weights from the donor onto the
+ * template meshes because the catalogue lists the un_rendem123 models as having
+ * 0 animations, which I read as "static mesh". They are not static: every one of
+ * them ships its OWN skeleton of 56-58 joints with proper artist-made weights,
+ * including facial bones (Eyelid, Mouth, Frown, Nose, Eye). They have no
+ * animation CLIPS, which is a different thing entirely.
  *
- * Filtering the donor cloud to Bip01_* bones was what fixed the sizing: this
- * donor carries a chainsaw plus smoke, sparks, pullchain and camera bones, so a
- * bounding box over every vertex describes "tubby plus chainsaw" and made the
- * character ~1.5x too big.
+ * So all of this - the nearest-vertex transfer, the bounding-box fit, the
+ * orientation guessing, the rescale-and-rebind - is solving a problem that does
+ * not exist, and it flattens each skin's bind pose into its vertices on the way
+ * in, which is why the characters come out mangled and prone.
  *
- * What is still wrong: it does not draw. Every check passes - 6 visible meshes,
- * opaque MeshStandardMaterial with a texture, 44/44 cloned bones resolving in
- * the clone's own tree, geometry 4.6m dead ahead of the camera with dotForward
- * 0.98 - and nothing appears.
+ * WHAT TO DO INSTEAD: retarget, do not transfer.
  *
- * The one measurement that does NOT line up: the cloned pelvis bone reports
- * world y 3.85 while the skinned vertices measure 1.38..3.18. Bones and skinned
- * geometry should not be able to disagree like that, so the next thing to chase
- * is that gap: compare getVertexPosition against the GPU's own skinning for the
- * same vertex, and check whether skinnedClone is remapping bindMatrix as well as
- * the bone list. A bindMatrix left pointing at the source rig would produce
- * exactly this - correct-looking bones, correct-looking CPU maths, nothing on
- * screen.
+ *   Players: load the skin with its own rig intact and retarget the donor's
+ *   clips onto its skeleton by bone name. The skin keeps its correct weights,
+ *   correct proportions and correct bind pose, and only the animation is
+ *   borrowed. SkeletonUtils.retarget/retargetClip does this; it needs a name map
+ *   because the donor is a 3ds Max biped (Bip01_R_UpperArm, Bip01_R_Thigh) and
+ *   the skins are named plainly (Arm R1, Leg R1, Foot R, Head). That map is
+ *   about twenty lines and is the entire job.
+ *
+ *   Chaser: the TinkyWinkyNPC rip is the one model here that IS static - 0
+ *   skins. Rather than weight-transferring it, use the rigged skin/tinkywinky
+ *   and move the chaser's horror-face TEXTURE onto it. The face is what that
+ *   model was wanted for.
+ *
+ * Everything below still works and is worth keeping for reference - the two rigs
+ * build, scale to 1.85m and animate - but it is the wrong road.
  */
 
 /** Bones that carry props rather than body: excluded from the shape reference. */

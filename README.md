@@ -215,40 +215,29 @@ was written to settle it and did: vertices at y≈3641 against a skeleton spanni
 "Helpfully" normalising the armature to unit scale first made it worse, multiplying the bone
 rest data by 32.
 
-**In-browser bind (`src/entities/rigBuilder.js`).** The route worth finishing, and much
-further along. It reuses the donor's skeleton, bind matrix and inverse binds verbatim and only
-swaps in new geometry, so there is no frame left to get wrong.
+**In-browser bind (`src/entities/rigBuilder.js`).** Also the wrong road, for a reason worth
+writing down: **the skin models are already rigged.** The catalogue lists them as "0
+animations" and that was read as "static mesh". Every one of them ships its own skeleton of
+56–58 joints with proper artist-made weights, including facial bones (Eyelid, Mouth, Frown,
+Nose, Eye). They have no animation *clips*, which is a different thing.
 
-Verified by measurement, not by eye:
+So transferring weights onto them from a donor was solving a problem that does not exist, and
+flattening their bind pose into their vertices on the way in is why they came out mangled.
 
-* all five characters bind, 6 meshes each, ~2.8s build
-* the mixer drives all 56 clips
-* weights spread over **17 distinct bones** rather than collapsing onto one
-* the skinned mesh **tracks the skeleton** (3.19 vs 3.30 before normalisation)
-* the character normalises to **1.80m** against a 1.85m target
-* feet plant on the ground every frame from the `Bip01_*_Toe0/Foot` bones, which also absorbs
-  the root motion baked into these clips
+**The actual job is retargeting, not transferring:**
 
-Two fixes got it there. Filtering the donor's vertex cloud to `Bip01_*` bones fixed the
-sizing: this donor carries a chainsaw plus smoke, sparks, pullchain and camera bones, so a box
-over every vertex describes "tubby plus chainsaw" and made the character ~1.5x too big. And
-giving each new mesh the *anchor's* local transform rather than just its parent fixed the
-floating: the geometry is converted into `anchor.matrixWorld`'s space, so anything else
-disagrees by exactly the anchor's own transform.
+* **Players** — load each skin with its rig intact and retarget the donor's clips onto its own
+  skeleton by bone name. The skin keeps its correct weights, proportions and bind pose; only
+  the animation is borrowed. `SkeletonUtils.retargetClip` does this. It needs a name map,
+  because the donor is a 3ds Max biped (`Bip01_R_UpperArm`) and the skins are named plainly
+  (`Arm R1`, `Leg R1`, `Foot R`, `Head`). That map is roughly twenty lines and is the whole task.
+* **Chaser** — the TinkyWinkyNPC rip is the one genuinely static model here (0 skins). Use the
+  rigged `skin/tinkywinky` instead and move the chaser's horror-face *texture* onto it, since
+  the face is what that model was wanted for.
 
-**It draws.** Toggling the meshes changes the frame by **3,436 triangles**, so the GPU is
-rasterising them. Measured in a single call (the earlier "bones disagree with vertices" reading
-was an artefact of sampling across two calls while per-frame foot planting moved the rig
-between them), the numbers are coherent: toe 2.47, pelvis 3.13, vertices 2.03–4.05, root 2.33.
-
-`SkeletonUtils.clone` was ruled out as the cause: it copies `bindMatrix` and rebinds against
-the remapped bone list, which is correct.
-
-**What remains** is that the character renders visibly smaller and higher than those numbers
-predict — so the CPU skinning (`getVertexPosition`) and the GPU skinning disagree about scale
-and offset, even though both should consume the same bind matrix, bone matrices and model
-matrix. That is the one thread left to pull: skin a single known vertex on the CPU and compare
-it against the same vertex read back from the GPU, rather than trusting either in isolation.
+What the current code does get right, and is worth keeping: both rigs build and scale to
+exactly 1.85m, the chaser rides its own 27 clips, and the prop filter is a deny-list so one
+code path serves two rips with no shared naming convention.
 
 The rig source models are staged locally into `assets/game/rig/` and are gitignored; re-stage
 them from `assets/models/` when picking this back up.
