@@ -147,7 +147,7 @@ export class UI {
         row.disabled = full;
         row.innerHTML =
           `<span class="name">${escapeHtml(l.title || "Open lobby")}</span>` +
-          `<span class="who">${l.host ? escapeHtml(l.host) : "—"}</span>` +
+          `<span class="who">${l.host ? escapeHtml(l.host) : "&middot;"}</span>` +
           `<span class="count">${l.players}/${l.capacity}${full ? " full" : ""}</span>`;
         row.onclick = () => this.#enter(l.key, false, {});
         list.appendChild(row);

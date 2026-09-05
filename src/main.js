@@ -251,7 +251,7 @@ net.addEventListener("took", (e) => {
     $("found").textContent = game.found;
     audio.pickup();
     const who = net.peers.get(e.detail.by);
-    if (who) ui.flash(`${who.name} found custard — ${game.found}/${game.total}`);
+    if (who) ui.flash(`${who.name} found custard: ${game.found}/${game.total}`);
   }
 });
 net.addEventListener("dead", (e) => {
@@ -338,7 +338,7 @@ addEventListener("xr", (e) => {
 });
 
 if (!hasBakedAssets) {
-  ui.setNote("Procedural stand-in models — see README to bake in the ripped meshes.");
+  ui.setNote("Procedural stand-in models. See README to bake in the ripped meshes.");
 }
 
 /* -------------------------------------------------------------------- loop */
