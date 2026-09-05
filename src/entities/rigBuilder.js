@@ -263,7 +263,9 @@ export async function buildRiggedTubbies(donorUrl, skins) {
 
   const root = new THREE.Group();
   root.add(donor.scene);
-  for (const m of donorMeshes) m.visible = false;   // the donor itself stays hidden
+  // The donor contributes a skeleton, 56 clips and the weights we sample. Its
+  // geometry is never drawn - only the chaser and the player skins are.
+  for (const m of donorMeshes) m.visible = false;
 
   const byKind = {};
   for (const [kind, url] of Object.entries(skins)) {

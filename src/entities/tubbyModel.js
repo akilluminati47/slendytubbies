@@ -97,9 +97,17 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
   }
   try {
     const t0 = performance.now();
+    // Only the chaser and the player skins are ever drawn. The donor supplies a
+    // skeleton and 56 clips and nothing else - its own mesh stays hidden.
+    //
+    // Tinky Winky comes from chaser/, which is the ST2 NPC rip with the real
+    // horror face baked into its texture. The other four come from skin/, which
+    // is the clean un_rendem123 template set the players wear.
     const skins = {};
     for (const kind of Object.keys(TUBBIES)) {
-      skins[kind] = `${base}/skin/${kind}/scene.gltf`;
+      skins[kind] = kind === "tinkywinky"
+        ? `${base}/chaser/tinkywinky/scene.gltf`
+        : `${base}/skin/${kind}/scene.gltf`;
     }
     const rig = await buildRiggedTubbies(`${base}/donor/dipsy/scene.gltf`, skins);
 
