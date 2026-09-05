@@ -128,6 +128,18 @@ honour `.assetsignore` — that is a Workers-static-assets feature — so deploy
 publishes `node_modules/` and the entire raw `assets/models/` rip cache. `tools/build.mjs`
 copies only what the browser actually loads: 27 files, 2.5 MB.
 
+## Typography
+
+Rock Salt (`assets/game/fonts/`) is the game's face, but it is a **display** face — no
+bold, wide, and drawn with broken strokes that come apart below roughly 16px. So it is used
+where it is big enough to earn its place: the title, headings, buttons, tabs and the custard
+counter. Everything you actually have to *read* — labels, status lines, settings, the hints
+row — is set in a clean sans, and anything numeric (slider values, headcounts, name and
+password fields) is monospace so digits stay unambiguous.
+
+Applying the scrawl to all of it, which was the first attempt, produced a menu nobody could
+read at 10px.
+
 ## Layout
 
 ```

@@ -5,10 +5,31 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Slendytubbies</title>
 <style>
-  :root { --ink:#d8d2c4; --dim:#6d6659; --line:#3a352c; }
+  /* Rock Salt is a DISPLAY face: no bold, wide, and drawn with broken strokes
+     that fall apart below about 16px. So it does the job it is good at - the
+     title, headings, buttons, tabs, the custard counter - and a clean face
+     carries everything you actually have to READ: labels, status lines,
+     settings, values, inputs. Setting a scrawl at 10px is how you get a menu
+     nobody can use, which is what happened when it was applied to everything. */
+  @font-face {
+    font-family: "Rock Salt";
+    src: url("./assets/game/fonts/RockSalt-Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-display: swap;
+  }
+
+  :root {
+    --ink:#d8d2c4; --dim:#6d6659; --line:#3a352c;
+    --hand:"Rock Salt", "Segoe Print", "Bradley Hand", cursive;
+    --ui:ui-sans-serif, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --num:ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body { height:100%; background:#000; overflow:hidden;
-    font-family:"Courier New",ui-monospace,monospace; color:var(--ink); }
+    font-family:var(--ui); color:var(--ink); }
+
+  /* The scrawl, wherever it is big enough to earn its place. */
+  h1, h2, .btn, .tab, #objective b { font-family:var(--hand); }
   canvas { display:block; }
   .hide { display:none !important; }
 
@@ -17,19 +38,21 @@
   body.menu-open #hud { opacity:0; }
   #crosshair { position:absolute; left:50%; top:50%; width:3px; height:3px;
     margin:-1.5px 0 0 -1.5px; background:var(--ink); opacity:.35; border-radius:50%; }
-  .corner { position:absolute; font-size:13px; letter-spacing:.14em; text-transform:uppercase; }
+  .corner { position:absolute; font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; color:#9a9284; }
   #objective { left:24px; top:22px; }
-  #objective b { font-size:30px; letter-spacing:.02em; display:block; margin-top:2px; }
+  #objective b { font-size:27px; letter-spacing:0; display:block; margin-top:6px; }
   #meters { left:24px; bottom:24px; width:190px; }
   .meter { margin-top:9px; }
-  .meter span { font-size:10px; color:var(--dim); }
+  .meter span { font-size:10px; color:#9a9284; letter-spacing:.16em;
+    text-transform:uppercase; }
   .meter i { display:block; height:3px; background:#241f18; margin-top:3px; }
   .meter i b { display:block; height:100%; background:var(--ink); width:100%;
     transition:width .12s linear; }
   #battery i b { background:#c9b071; }
   #stamina i b { background:#7e9b86; }
   #prompt { position:absolute; left:50%; top:58%; transform:translateX(-50%);
-    font-size:13px; letter-spacing:.18em; text-transform:uppercase; opacity:0;
+    font-size:13px; letter-spacing:.1em; text-transform:uppercase; opacity:0;
     transition:opacity .15s; }
   #prompt.on { opacity:.85; }
   #vignette { position:absolute; inset:0; box-shadow:inset 0 0 220px 70px #000; }
@@ -55,19 +78,19 @@
   /* --------------------------------------------------------------- screens */
   .screen { position:fixed; inset:0; background:#050505; z-index:10;
     display:grid; place-content:center; text-align:center; gap:26px; padding:40px; }
-  h1 { font-size:clamp(38px,9vw,86px); letter-spacing:.3em; font-weight:400; text-indent:.3em; }
-  .sub { font-size:13px; line-height:2.2; letter-spacing:.13em; color:var(--dim);
-    text-transform:uppercase; }
-  kbd { color:var(--ink); font:inherit; }
+  h1 { font-size:clamp(28px,6.6vw,60px); letter-spacing:.01em; font-weight:400;
+    line-height:1.3; }
+  .sub { font-size:13px; line-height:1.9; letter-spacing:.03em; color:#98907f; }
+  kbd { color:var(--ink); font-family:var(--num); font-size:.92em; }
   .btn { pointer-events:auto; cursor:pointer; border:1px solid var(--line);
-    background:none; color:var(--ink); font:inherit; font-size:13px; padding:13px 30px;
-    letter-spacing:.22em; text-transform:uppercase; }
+    background:none; color:var(--ink); font-size:14px; padding:15px 26px;
+    letter-spacing:.01em; }
   .btn:hover { background:#12100c; }
   .row { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
-  #note { font-size:11px; color:#463f34; letter-spacing:.1em; }
+  #note { font-size:11.5px; color:#6a6152; letter-spacing:.05em; }
 
   /* Title: nothing but the name and one instruction. */
-  #title .press { font-size:13px; letter-spacing:.26em; text-transform:uppercase;
+  #title .press { font-size:12px; letter-spacing:.22em; text-transform:uppercase;
     animation:pulse 2.1s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
   #vr { border-color:#4d6a55; color:#a9c9b3; }
@@ -75,18 +98,19 @@
   /* ----------------------------------------------------------------- pause */
   #pause { background:rgba(5,5,5,.94); align-content:start; justify-content:center;
     padding-top:8vh; overflow-y:auto; }
-  #pause h2 { font-size:22px; letter-spacing:.3em; font-weight:400;
-    text-transform:uppercase; margin-bottom:6px; }
+  #pause h2, #lobby h2 { font-size:21px; letter-spacing:.01em; font-weight:400;
+    margin-bottom:10px; }
   #settings { width:min(460px,86vw); display:grid; gap:2px; margin:14px 0 22px; }
   .set-row { display:grid; grid-template-columns:1fr auto; align-items:center;
     gap:14px; padding:11px 2px; border-bottom:1px solid #191712; }
-  .set-label { font-size:12px; letter-spacing:.14em; text-transform:uppercase;
-    color:var(--dim); text-align:left; }
+  .set-label { font-size:12px; letter-spacing:.09em; text-transform:uppercase;
+    color:#a49c8c; text-align:left; }
   .set-row input[type=range] { width:170px; accent-color:#8d9b7e; background:none; }
-  .set-value { font-size:12px; min-width:44px; text-align:right; color:var(--ink); }
+  .set-value { font-family:var(--num); font-size:12.5px; min-width:52px;
+    text-align:right; color:var(--ink); letter-spacing:.02em; }
   .set-toggle, .set-choices button { cursor:pointer; border:1px solid var(--line);
-    background:none; color:var(--dim); font:inherit; font-size:11px; padding:6px 12px;
-    letter-spacing:.12em; text-transform:uppercase; }
+    background:none; color:#a49c8c; font-family:var(--ui); font-size:11px;
+    padding:7px 13px; letter-spacing:.09em; text-transform:uppercase; }
   .set-toggle.on, .set-choices button.on { color:var(--ink); border-color:#6d7f63;
     background:#12140f; }
   .set-choices { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
@@ -102,8 +126,8 @@
      below belong to the tab above them. */
   .tabs { display:flex; gap:4px; margin-bottom:0; position:relative; z-index:2;
     border-bottom:1px solid #2a2620; }
-  .tab { flex:1; cursor:pointer; background:none; color:var(--dim); font:inherit;
-    font-size:12px; letter-spacing:.2em; text-transform:uppercase;
+  .tab { flex:1; cursor:pointer; background:none; color:#8f8878;
+    font-size:14px; letter-spacing:.01em;
     padding:12px 0 13px; border:1px solid transparent; border-bottom:none;
     margin-bottom:-1px; }
   .tab:hover { color:var(--ink); background:rgba(125,155,134,.05); }
@@ -114,11 +138,11 @@
     border-top:none; padding:22px 20px 18px; }
 
   .field { display:grid; gap:7px; text-align:left; margin-bottom:18px; }
-  .field span { font-size:11px; letter-spacing:.18em; text-transform:uppercase;
-    color:var(--dim); }
+  .field span { font-size:11px; letter-spacing:.15em; text-transform:uppercase;
+    color:#9a9284; }
   .field input { width:100%; background:#0c0b09; border:1px solid var(--line);
-    color:var(--ink); font:inherit; font-size:15px; letter-spacing:.04em;
-    padding:12px 14px; }
+    color:var(--ink); font-family:var(--num); font-size:14px;
+    letter-spacing:.04em; padding:13px 14px; }
   .field input::placeholder { color:#4a443a; letter-spacing:.02em; }
   .field input:focus { outline:none; border-color:#6d7f63; background:#100f0c; }
 
@@ -126,7 +150,7 @@
 
   /* Status line: sentence case and generous leading. The old all-caps run-on
      was the least readable text on the screen. */
-  .status { font-size:13px; line-height:1.85; letter-spacing:.02em; color:var(--dim);
+  .status { font-size:13.5px; line-height:1.75; letter-spacing:.02em; color:var(--dim);
     text-align:center; min-height:4.2em; display:grid; align-content:center;
     padding:14px 12px; margin-bottom:18px; border:1px solid #17150f;
     background:#0a0908; }
@@ -136,16 +160,18 @@
   .status b { color:var(--ink); font-weight:400; }
 
   .lobby-list { display:grid; gap:7px; margin-bottom:20px; min-height:96px;
-    align-content:start; font-size:13px; color:var(--dim); text-align:center;
-    padding:4px 0; }
+    align-content:start; font-size:13px; line-height:1.7; color:#8b8374;
+    text-align:center; padding:6px 2px; }
   .lobby-row { display:grid; grid-template-columns:1fr auto auto; align-items:center;
     gap:12px; text-align:left; background:#0a0908; border:1px solid var(--line);
-    padding:12px 14px; cursor:pointer; font:inherit; font-size:13px; color:var(--ink); }
+    padding:13px 14px; cursor:pointer; font-family:var(--ui); font-size:13.5px;
+    color:var(--ink); }
   .lobby-row:hover { border-color:#6d7f63; background:#100f0c; }
   .lobby-row[disabled] { opacity:.4; cursor:not-allowed; }
-  .lobby-row .who { color:var(--dim); font-size:11px; letter-spacing:.1em;
+  .lobby-row .who { color:#9a9284; font-size:10px; letter-spacing:.14em;
     text-transform:uppercase; }
-  .lobby-row .count { font-size:12px; color:#a9c9b3; letter-spacing:.08em; }
+  .lobby-row .count { font-family:var(--num); font-size:12.5px; color:#a9c9b3;
+    letter-spacing:.04em; }
   .lobby-row .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .row { margin-top:2px; }
@@ -153,7 +179,7 @@
   .btn[disabled] { opacity:.3; cursor:not-allowed; }
   .btn[disabled]:hover { background:none; }
 
-  .foot { font-size:11px; line-height:1.9; color:#4f483d; text-align:center;
+  .foot { font-size:11.5px; line-height:1.85; color:#6f6759; text-align:center;
     margin:18px 0 0; letter-spacing:.02em; }
   .foot em { color:#6d6659; font-style:normal; }
 

@@ -22,6 +22,7 @@ const INCLUDE = [
   "src",
   "vendor",
   "assets/game/face_tinkywinky.png",
+  "assets/game/fonts",
 ];
 
 async function countFiles(dir) {
