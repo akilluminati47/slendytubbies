@@ -17,6 +17,9 @@ export class UI {
     this.net = net;
     this.hooks = hooks;
     this.screen = "title";
+    // show() is what normally stamps this, but the title screen is the state we
+    // boot into and so is never shown - it has to be declared here.
+    document.body.dataset.screen = "title";
     this.stopWatch = null;
     this.tab = "public";
     this.lobby = { key: null, info: null };
@@ -254,6 +257,8 @@ export class UI {
       $(id).classList.toggle("hide", id !== screen);
     }
     document.body.classList.toggle("menu-open", screen !== "game");
+    // Drives which chrome belongs to this screen, e.g. the byline.
+    document.body.dataset.screen = screen;
     if (screen !== "lobby") this.#stopWatching();
   }
 

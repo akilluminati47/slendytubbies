@@ -121,6 +121,20 @@
   @keyframes pulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
   #vr { border-color:#4d6a55; color:#a9c9b3; }
 
+  /* Signature, bottom right of the splash. Sits in the corner rather than the
+     centred grid flow, and clears the notch on a phone. */
+  #byline { position:fixed; z-index:11; display:none;
+    right:calc(clamp(18px,3.4vw,34px) + env(safe-area-inset-right));
+    bottom:calc(clamp(16px,3vh,30px) + env(safe-area-inset-bottom));
+    font-family:var(--hand); font-size:clamp(13px,2.1vw,19px);
+    letter-spacing:.01em; color:#6f6759; opacity:.85;
+    pointer-events:none; }
+  /* Front of house: splash, mode picker and the lobby. Not over a pause menu,
+     an end screen, or the game itself. */
+  body[data-screen="title"] #byline,
+  body[data-screen="mode"] #byline,
+  body[data-screen="lobby"] #byline { display:block; }
+
   /* ----------------------------------------------------------------- pause */
   #pause { background:rgba(5,5,5,.94); align-content:start; justify-content:center;
     padding-top:8vh; overflow-y:auto; }
@@ -398,6 +412,10 @@
     <button class="btn ghost" id="end-leave" hidden>Leave lobby</button>
   </div>
 </div>
+
+<!-- Lives outside the screens so title and mode can share one element rather
+     than each carrying a copy that could drift apart. -->
+<div id="byline">AK &amp; Co.</div>
 
 <script type="module" src="./src/main.js"></script>
 </body>
