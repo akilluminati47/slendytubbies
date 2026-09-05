@@ -30,6 +30,7 @@ export class RemotePlayer {
     this.anim = "idle";
     this.speed = 0;
     this.seen = false;
+    this.dead = false;
 
     this.label = makeLabel(name, isHost);
     this.label.position.y = 2.25;
@@ -62,12 +63,20 @@ export class RemotePlayer {
     this.yaw += d * Math.min(1, dt * 10);
 
     this.root.position.set(this.current.x, heightAt(this.current.x, this.current.z), this.current.z);
-    this.root.rotation.y = this.yaw;
+    if (!this.dead) this.root.rotation.y = this.yaw;
     this.model.play(this.anim);
     this.model.update(dt, this.speed);
 
     // Name tags face the viewer, and only the viewer.
     if (camera) this.label.quaternion.copy(camera.quaternion);
+  }
+
+  /** A caught player stays on the map as a body - you should see who went down. */
+  setDead(on) {
+    this.dead = !!on;
+    this.model.play(on ? "idle" : this.anim);
+    this.label.material.opacity = on ? 0.35 : 1;
+    this.root.rotation.z = on ? Math.PI * 0.42 : 0;
   }
 
   dispose(scene) {

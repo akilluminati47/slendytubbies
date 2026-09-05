@@ -191,6 +191,14 @@ export class NetClient extends EventTarget {
       }
       case "world": this.#emit("world", msg); break;
       case "took": this.#emit("took", msg); break;
+      case "dead": {
+        const p = this.peers.get(msg.id);
+        if (p) p.dead = true;
+        this.#emit("dead", msg);
+        break;
+      }
+      case "over": this.#emit("over", msg); break;
+      case "restart": this.#emit("restart", msg); break;
     }
   }
 
@@ -207,6 +215,9 @@ export class NetClient extends EventTarget {
   /** Host only; the server drops these from anyone else. */
   sendWorld(tubby, custards) { this.#send({ t: "world", tubby, custards }); }
   sendTook(i) { this.#send({ t: "took", i }); }
+  sendDead() { this.#send({ t: "dead" }); }
+  /** Host only; the server ignores it from anyone else. */
+  sendRestart() { this.#send({ t: "restart" }); }
 
   close() {
     clearTimeout(this.pollTimer);

@@ -22,7 +22,7 @@ freely — pick up a pad mid-game, put it down, carry on with the mouse. No mode
 | Xbox | L stick / d-pad | R stick | L3 · RT · LB | A | X | Start |
 | PlayStation | L stick / d-pad | R stick | L3 · R2 · L1 | ✕ | □ | Options |
 | Switch Pro | L stick / d-pad | R stick | L3 · ZR · L | B | Y | + |
-| Touch | drag left half | drag right half | Run (latches) | Jump | Torch | — |
+| Touch | left-thumb stick | drag anywhere else | push stick to its edge | ↑ button | torch button | II button |
 | Quest / WebXR | L thumbstick | head + R snap turn | L grip | A / X | B / Y | — |
 
 **Menus are fully controller-driven.** Either stick or the d-pad moves the cursor (with
@@ -95,6 +95,18 @@ wasteland derived from the lobby key alone — no terrain is ever transmitted.
 The host simulates the CPU tubby and broadcasts it; the server drops `world` messages from
 anyone else, so clients cannot fight over where the monster is. If the host leaves, the
 longest-standing survivor is promoted and inherits the Guardian role.
+
+### Dying with friends
+
+Caught alone, the run ends. Caught in a lobby, you drop into **third-person
+spectating** on a survivor — camera control only, jump to cycle who you watch. The run is
+over only when the server sees that everyone is down, which it can tell and a client cannot.
+
+The end screen is then **host-gated**: only the host gets a live "Play again", which
+broadcasts a restart to the whole lobby. A guest hitting retry would otherwise tear
+themselves out of a lobby everyone else is still sitting in, so guests are told who they are
+waiting on and offered "Leave lobby" instead. The server drops `restart` from anyone but the
+host, so the gate is real rather than a hidden button.
 
 ### Running the lobby server
 

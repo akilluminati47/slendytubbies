@@ -11,6 +11,7 @@ import { Settings } from "./game/settings.js";
 import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
 import { MenuNav } from "./game/menuNav.js";
+import { Spectator } from "./game/spectate.js";
 import { NetClient, seedFromKey, ROLE_LABEL } from "./net/client.js";
 import { RemotePlayer } from "./net/remote.js";
 
@@ -63,6 +64,8 @@ let host = true;         // solo counts as host: we simulate the AI
 let myRole = "guardian";
 let netWorld = null;
 let netAccum = 0;
+let spectating = false;
+let spectator = null;
 
 const tubbies = [];
 const remotes = new Map();
@@ -77,6 +80,7 @@ function buildWorld(seed) {
   world = new World(scene, seed);
   player = new Player(camera, input, world, rig);
   wrist = new WristHUD();
+  spectator = new Spectator(camera, rig);
   game.total = world.custards.length;
   $("total").textContent = game.total;
 }
@@ -90,6 +94,19 @@ function buildWorld(seed) {
  * collector a fresh array each time was pure garbage for no benefit.
  */
 const _threats = [];
+/**
+ * A bitmask of taken dishes. Ten dishes fit in an int, so the whole shared
+ * objective costs one number per tick - and a player joining halfway through is
+ * immediately correct rather than seeing ten dishes that are not really there.
+ */
+function custardMask() {
+  let mask = 0;
+  for (let i = 0; i < world.custards.length; i++) {
+    if (world.custards[i].taken) mask |= 1 << i;
+  }
+  return mask;
+}
+
 function threatPoints() {
   _threats.length = 0;
   _threats.push(player.pos);
@@ -109,6 +126,7 @@ function spawnTubby(kind) {
 }
 
 function begin() {
+  input.touch.setInGame(true);
   ui.show("game");
   input.lock();
   running = true;
@@ -180,9 +198,14 @@ function addRemote(info) {
   remotes.set(info.id, r);
 }
 
-net.addEventListener("join", (e) => addRemote(e.detail));
+net.addEventListener("join", (e) => {
+  addRemote(e.detail);
+  ui.flash(`${e.detail.name} joined as ${ROLE_LABEL[e.detail.role] ?? e.detail.role}`);
+});
 net.addEventListener("leave", (e) => {
-  remotes.get(e.detail.id)?.dispose(scene);
+  const r = remotes.get(e.detail.id);
+  if (r) ui.flash(`${r.name} left`);
+  r?.dispose(scene);
   remotes.delete(e.detail.id);
 });
 net.addEventListener("state", (e) => remotes.get(e.detail.id)?.apply(e.detail));
@@ -194,16 +217,65 @@ net.addEventListener("host", (e) => {
   ui.announceRole(myRole, true);
 });
 net.addEventListener("world", (e) => {
-  if (!host) netWorld = e.detail;       // we are not the authority; take it
+  if (host) return;                      // we are the authority; ignore echoes
+  netWorld = e.detail;
+  applyCustardMask(e.detail.custards);
 });
+
+/**
+ * Reconcile our dishes with the host's. Authoritative in one direction only:
+ * the host can tell us a dish is gone, never that a gone dish is back, so a
+ * late packet cannot resurrect something we already watched someone collect.
+ */
+function applyCustardMask(mask) {
+  if (typeof mask !== "number" || !world) return;
+  let found = 0;
+  for (let i = 0; i < world.custards.length; i++) {
+    const taken = (mask & (1 << i)) !== 0;
+    if (taken) {
+      world.take(world.custards[i]);
+      found++;
+    } else if (world.custards[i].taken) {
+      found++;                           // ours is gone; keep counting it
+    }
+  }
+  if (found !== game.found) {
+    game.found = found;
+    $("found").textContent = found;
+  }
+}
 net.addEventListener("took", (e) => {
   const c = world?.custards[e.detail.i];
   if (!world?.take(c)) return;
+  // The count is the lobby's, not yours - everyone is filling the same ten.
   if (e.detail.by !== net.id) {
     game.found++;
     $("found").textContent = game.found;
+    audio.pickup();
+    const who = net.peers.get(e.detail.by);
+    if (who) ui.flash(`${who.name} found custard — ${game.found}/${game.total}`);
   }
 });
+net.addEventListener("dead", (e) => {
+  const r = remotes.get(e.detail.id);
+  if (!r) return;
+  r.setDead(true);
+  ui.flash(`${r.name} was caught`);
+  // If we were watching them, move on rather than staring at a body.
+  if (spectating) spectator.cycle(1);
+});
+
+net.addEventListener("over", () => {
+  const detail = `Your lobby recovered ${game.found} of ${game.total} dishes.<br>` +
+    `Tinky Winky got everyone.`;
+  endGame("dead", "All caught", detail);
+});
+
+net.addEventListener("restart", () => {
+  // The host called a new run; everyone reloads into the same lobby together.
+  location.reload();
+});
+
 net.addEventListener("closed", () => {
   online = false;
   if (!game.over) ui.setNote("Lost connection to the lobby.");
@@ -226,6 +298,7 @@ function resume() {
   if (!paused) return;
   paused = false;
   audio.resume();
+  input.touch.setInGame(true);
   ui.show("game");
   input.lock();
   clock.getDelta();     // throw away the time spent in the menu
@@ -272,6 +345,30 @@ if (!hasBakedAssets) {
 
 /* -------------------------------------------------------------------- loop */
 
+/** Everyone still alive and worth watching. */
+function survivors() {
+  return [...remotes.values()].filter((r) => !r.dead);
+}
+
+/**
+ * Caught in a lobby: drop into spectator instead of ending. The run is only
+ * over when the server says everyone is down, which it can see and we cannot.
+ */
+function beginSpectating() {
+  spectating = true;
+  player.alive = false;
+  player.torch.intensity = 0;
+  input.gamepad.stop();
+  net.sendDead();
+  spectator.start(survivors);
+  document.body.classList.add("spectating");
+  audio.caught();
+  const alive = survivors().length;
+  ui.flash(alive
+    ? "Caught — spectating. Jump to switch player."
+    : "Caught — waiting for the others…", 5000);
+}
+
 function endGame(kind, headline, detail) {
   if (game.over) return;
   game.over = kind;
@@ -279,9 +376,16 @@ function endGame(kind, headline, detail) {
   running = false;
   input.gamepad.stop();          // the loop is about to stop calling rumble()
   input.release();
+  input.touch.setInGame(false);
   document.exitPointerLock?.();
-  if (kind === "dead") audio.caught(); else audio.won();
-  ui.showEnd(headline, detail);
+  if (kind === "dead" && !spectating) audio.caught();
+  if (kind === "won") audio.won();
+  spectating = false;
+  spectator?.stop();
+  document.body.classList.remove("spectating");
+  // Online, only the host may start the next run - a guest hitting retry would
+  // otherwise drop out of a lobby everyone else is still sitting in.
+  ui.showEnd(headline, detail, online ? { host, onAgain: () => net.sendRestart() } : null);
   if (input.xr.presenting) input.xr.pulse(1, 400);
 }
 
@@ -303,6 +407,32 @@ function frame() {
 
   if (!running || paused || !player) { renderer.render(scene, camera); return; }
   game.elapsed += dt;
+
+  if (spectating) {
+    // Camera only. Jump cycles who you are watching - it is the button your
+    // thumb is already on, and it does nothing else now that you are dead.
+    if (input.intent.jump) {
+      const t = spectator.cycle(1);
+      if (t) ui.flash(`Watching ${t.name}`, 1800);
+    }
+    const watching = spectator.update(dt, input.intent);
+    for (const [i, t] of tubbies.entries()) {
+      if (host) t.update(dt, player, threatPoints());
+      else { const w = netWorld?.tubby?.[i]; t.netApply(w?.p, w?.f, w?.s, dt); }
+    }
+    for (const r of remotes.values()) r.update(dt, camera);
+    world.updateGlow(game.elapsed, spectator.pos);
+    if (online) {
+      netAccum += dt;
+      if (netAccum >= 1 / 15) {
+        netAccum = 0;
+        if (host) net.sendWorld(tubbies.map((t) => t.netState()), custardMask());
+      }
+    }
+    specHud(watching);
+    renderer.render(scene, camera);
+    return;
+  }
 
   const wasGrounded = player.grounded;
   player.update(dt);
@@ -331,7 +461,8 @@ function frame() {
   const threats = threatPoints();      // built once, shared by every tubby
   for (const [i, t] of tubbies.entries()) {
     if (host) {
-      if (t.update(dt, player, threats) === "kill") {
+      if (t.update(dt, player, threats) === "kill" && player.alive) {
+        if (online) { beginSpectating(); break; }
         endGame("dead", "Caught", `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
         return;
       }
@@ -339,8 +470,18 @@ function frame() {
       // Guests render the monster the host broadcasts, then do their own
       // proximity check - the host cannot see who it caught, only where it is.
       const w = netWorld?.tubby?.[i];
+      // Snap the first time we hear about it, then interpolate. Otherwise it
+      // visibly glides in from its local spawn point, which is nowhere near
+      // where the host's monster actually is.
+      if (w && !t.netSeen) {
+        t.pos.set(w.p[0], 0, w.p[2]);
+        t.facing = w.f ?? t.facing;
+        t.netSeen = true;
+      }
       t.netApply(w?.p, w?.f, w?.s, dt);
-      if (Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z) < CFG.tubby.killRange) {
+      if (player.alive &&
+          Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z) < CFG.tubby.killRange) {
+        if (online) { beginSpectating(); break; }
         endGame("dead", "Caught", `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
         return;
       }
@@ -358,7 +499,7 @@ function frame() {
       netAccum = 0;
       const moving = Math.hypot(player.vel.x, player.vel.z) > 0.6;
       net.sendState(player.pos, player.viewYaw(), moving ? "walk" : "idle");
-      if (host) net.sendWorld(tubbies.map((t) => t.netState()), null);
+      if (host) net.sendWorld(tubbies.map((t) => t.netState()), custardMask());
     }
   }
 
@@ -372,6 +513,50 @@ function frame() {
   renderer.render(scene, camera);
 }
 
+// Ring circumference for r=17, so the arc can be driven by dasharray alone.
+const ARC = 2 * Math.PI * 17;
+const gBattery = { el: null, arc: null, val: null, last: -1 };
+const gStamina = { el: null, arc: null, val: null, last: -1 };
+
+function bindGauge(g, id) {
+  g.el = $(id);
+  g.arc = g.el.querySelector(".arc");
+  g.val = g.el.querySelector(".val");
+  g.arc.style.strokeDasharray = `0 ${ARC}`;
+}
+bindGauge(gBattery, "battery");
+bindGauge(gStamina, "stamina");
+
+/**
+ * Drive one ring. Skips the DOM entirely when nothing visible has changed -
+ * these run every frame, and writing identical strings 60 times a second is
+ * free layout work for no reason.
+ */
+function gauge(g, v, lit) {
+  const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  if (pct !== g.last) {
+    g.last = pct;
+    g.arc.style.strokeDasharray = `${(pct / 100) * ARC} ${ARC}`;
+    g.val.textContent = pct;
+    g.el.classList.toggle("low", pct <= 25);
+    g.el.classList.toggle("critical", pct <= 10);
+  }
+  g.el.classList.toggle("lit", !!lit);
+}
+
+/** While spectating the HUD is just: who you are watching, and the team score. */
+function specHud(watching) {
+  $("dread").style.opacity = 0;
+  const p = $("prompt");
+  if (!ui.flashing) {
+    const others = survivors().length;
+    p.textContent = watching
+      ? `Watching ${watching.name}${others > 1 ? "  ·  jump to switch" : ""}`
+      : "Nobody left to watch";
+    p.classList.add("on");
+  }
+}
+
 function hud(threat) {
   const bat = player.battery / CFG.player.batteryMax;
   const sta = player.stamina / CFG.player.staminaMax;
@@ -381,8 +566,9 @@ function hud(threat) {
     return;
   }
 
-  document.querySelector("#battery b").style.width = `${bat * 100}%`;
-  document.querySelector("#stamina b").style.width = `${sta * 100}%`;
+  input.touch.setTorch(player.torchOn);
+  gauge(gBattery, bat, player.torchOn);
+  gauge(gStamina, sta, false);
 
   const dread = $("dread");
   dread.classList.toggle("beam", player.torchOn);
@@ -403,6 +589,8 @@ window.__dbg = {
   get running() { return running; },
   get paused() { return paused; },
   get online() { return online; },
+  get spectating() { return spectating; },
+  spectator: () => spectator,
   get host() { return host; },
   get role() { return myRole; },
   roleLabel: () => ROLE_LABEL[myRole],

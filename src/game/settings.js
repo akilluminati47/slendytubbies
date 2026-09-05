@@ -18,11 +18,22 @@ export const DEFAULTS = {
   brightness: 1.15,
 };
 
+/**
+ * `fmt` renders a stored value for display; `parse` turns typed text back into
+ * one. They must be inverses - volume is stored 0..1 but shown as a percentage,
+ * so typing "80" has to mean 0.8 and not 80.
+ */
+const num = (t) => parseFloat(String(t).replace(/[^0-9.+-]/g, ""));
+
 export const SCHEMA = [
-  { key: "volume", label: "Volume", min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
-  { key: "mouseSens", label: "Mouse sensitivity", min: 0.4, max: 6, step: 0.1, fmt: (v) => v.toFixed(1) },
-  { key: "padLookSpeed", label: "Stick sensitivity", min: 0.8, max: 6, step: 0.1, fmt: (v) => v.toFixed(1) },
-  { key: "brightness", label: "Brightness", min: 0.6, max: 2, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { key: "volume", label: "Volume", min: 0, max: 1, step: 0.05,
+    fmt: (v) => `${Math.round(v * 100)}%`, parse: (t) => num(t) / 100 },
+  { key: "mouseSens", label: "Mouse sensitivity", min: 0.4, max: 6, step: 0.1,
+    fmt: (v) => v.toFixed(1), parse: num },
+  { key: "padLookSpeed", label: "Stick sensitivity", min: 0.8, max: 6, step: 0.1,
+    fmt: (v) => v.toFixed(1), parse: num },
+  { key: "brightness", label: "Brightness", min: 0.6, max: 2, step: 0.05,
+    fmt: (v) => v.toFixed(2), parse: num },
   { key: "invertY", label: "Invert look Y", type: "toggle" },
   { key: "snapDegrees", label: "VR turning", type: "choice",
     choices: [[0, "Smooth"], [15, "Snap 15°"], [30, "Snap 30°"], [45, "Snap 45°"]] },

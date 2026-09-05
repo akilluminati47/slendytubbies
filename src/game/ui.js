@@ -231,15 +231,25 @@ export class UI {
     }
   }
 
+  /** Transient line in the middle of the screen - who found what, who joined. */
+  flash(text, ms = 2600) {
+    const p = $("prompt");
+    p.textContent = text;
+    p.classList.add("on");
+    // hud() rewrites this element every frame, so it has to know to leave a
+    // flash alone until it expires.
+    this.flashUntil = performance.now() + ms;
+    clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => p.classList.remove("on"), ms);
+  }
+
+  /** True while a flash owns the prompt line. */
+  get flashing() { return performance.now() < (this.flashUntil || 0); }
+
   /** Shown once in-game so a player knows which tubby they are. */
   announceRole(role, isHost) {
-    const p = $("prompt");
-    p.textContent = isHost
-      ? `You are ${ROLE_LABEL[role]} — you host`
-      : `You are ${ROLE_LABEL[role]}`;
-    p.classList.add("on");
-    clearTimeout(this.roleTimer);
-    this.roleTimer = setTimeout(() => p.classList.remove("on"), 4000);
+    this.flash(isHost ? `You are ${ROLE_LABEL[role]} — you host`
+                      : `You are ${ROLE_LABEL[role]}`, 4200);
   }
 
   /* ---------------------------------------------------------------- screens */
@@ -253,9 +263,40 @@ export class UI {
     if (screen !== "lobby") this.#stopWatching();
   }
 
-  showEnd(headline, detail) {
+  /**
+   * `multi` is null in singleplayer. Online, only the host gets a live button;
+   * everyone else is told who they are waiting on, because a guest restarting
+   * would just tear them out of a lobby that is still going.
+   */
+  showEnd(headline, detail, multi = null) {
     $("end-title").textContent = headline;
     $("end-detail").innerHTML = detail;
+
+    const retry = $("retry");
+    const wait = $("end-wait");
+    const leave = $("end-leave");
+
+    if (!multi) {
+      retry.hidden = false;
+      retry.disabled = false;
+      retry.textContent = "Try again";
+      retry.onclick = () => this.hooks.onRestart();
+      wait.hidden = true;
+      leave.hidden = true;
+    } else if (multi.host) {
+      retry.hidden = false;
+      retry.disabled = false;
+      retry.textContent = "Play again";
+      retry.onclick = () => multi.onAgain();
+      wait.hidden = true;
+      leave.hidden = false;
+    } else {
+      retry.hidden = true;
+      wait.hidden = false;
+      wait.textContent = "Waiting for the host to start another run…";
+      leave.hidden = false;
+    }
+    $("end-leave").onclick = () => this.hooks.onRestart();
     this.show("end");
   }
 
@@ -305,9 +346,36 @@ export class UI {
           this.settings.set(item.key, parseFloat(input.value));
           this.#syncSettings();
         };
-        const out = document.createElement("span");
+        // The readout is an input, not a label: dragging a slider to exactly
+        // 2.5 is fiddly with a mouse and genuinely hard with a thumb, so the
+        // number itself is tappable and typeable.
+        const out = document.createElement("input");
         out.className = "set-value";
+        out.type = "text";
+        out.inputMode = "decimal";
+        out.autocomplete = "off";
+        out.spellcheck = false;
         out.dataset.out = item.key;
+        out.setAttribute("aria-label", `${item.label} value`);
+
+        out.addEventListener("focus", () => out.select());
+        const commit = () => {
+          const raw = (item.parse ?? parseFloat)(out.value);
+          if (Number.isFinite(raw)) {
+            // Snap to the slider's own step so typed and dragged values cannot
+            // disagree, then clamp.
+            const stepped = Math.round(raw / item.step) * item.step;
+            const v = Math.max(item.min, Math.min(item.max, stepped));
+            this.settings.set(item.key, +v.toFixed(6));
+          }
+          this.#syncSettings();   // rewrites the field from the stored value
+        };
+        out.addEventListener("blur", commit);
+        out.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); out.blur(); }
+          else if (e.key === "Escape") { e.preventDefault(); this.#syncSettings(); out.blur(); }
+          e.stopPropagation();   // do not let Esc reach the pause handler
+        });
         row.append(input, out);
       }
       host.appendChild(row);
@@ -329,7 +397,10 @@ export class UI {
         const input = document.querySelector(`input[data-key="${item.key}"]`);
         const out = document.querySelector(`[data-out="${item.key}"]`);
         if (input) input.value = v;
-        if (out) out.textContent = item.fmt ? item.fmt(v) : v;
+        // Never stomp what someone is halfway through typing.
+        if (out && document.activeElement !== out) {
+          out.value = item.fmt ? item.fmt(v) : v;
+        }
       }
     }
   }

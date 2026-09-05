@@ -65,6 +65,13 @@ export const CFG = {
   },
   touch: {
     lookSens: 0.0034,   // radians per CSS pixel dragged
+    // The movement stick owns a slab at the lower left; LOOK is everything
+    // outside it, not a strict right half - a thumb sweeping the upper left
+    // should still turn the camera rather than hit a dead zone.
+    stickZone: { width: 0.46, height: 0.68 },
+    // Push the stick to its outer edge to sprint, the way a console stick
+    // works. A separate RUN button meant a third thumb you do not have.
+    sprintAt: 0.88,
   },
   xr: {
     deadzone: 0.22,

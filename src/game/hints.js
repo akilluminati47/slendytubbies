@@ -18,7 +18,7 @@ export const HINTS = {
   generic:
     `${k("L")} move · ${k("R")} look · ${k("L3")} sprint · ${k("A")} jump · ${k("X")} torch`,
   touch:
-    `Drag left to move · drag right to look · buttons bottom-right`,
+    `Left thumb moves · push to the edge to sprint · drag anywhere else to look`,
   xr:
     `${k("L stick")} move · ${k("R stick")} snap turn · ${k("grip")} sprint · ${k("A/X")} jump · ${k("B/Y")} torch`,
 

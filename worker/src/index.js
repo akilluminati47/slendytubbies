@@ -116,7 +116,7 @@ export class Lobby {
     ws.accept();
     const id = this.nextId++;
     const { role, isHost } = this.#freeRole();
-    const me = { ws, id, name, role, isHost, pos: [0, 0, 0], yaw: 0, anim: "idle" };
+    const me = { ws, id, name, role, isHost, pos: [0, 0, 0], yaw: 0, anim: "idle", dead: false };
     this.players.set(id, me);
     if (isHost) this.hostId = id;
 
@@ -158,7 +158,7 @@ export class Lobby {
     return [...this.players.values()]
       .filter((p) => p.id !== exceptId)
       .map((p) => ({ id: p.id, name: p.name, role: p.role, isHost: p.isHost,
-                     pos: p.pos, yaw: p.yaw, anim: p.anim }));
+                     pos: p.pos, yaw: p.yaw, anim: p.anim, dead: p.dead }));
   }
 
   #onMessage(me, event) {
@@ -187,6 +187,24 @@ export class Lobby {
         this.#broadcast({ t: "took", i: msg.i, by: me.id }, null);
         break;
 
+      case "dead": {
+        // A player is caught. Everyone needs to know so they can be spectated
+        // instead of followed, and so the lobby can tell when the run is over.
+        me.dead = true;
+        this.#broadcast({ t: "dead", id: me.id }, null);
+        const anyAlive = [...this.players.values()].some((p) => !p.dead);
+        if (!anyAlive) this.#broadcast({ t: "over", reason: "wiped" }, null);
+        break;
+      }
+
+      case "restart":
+        // Only the host may call a new run - otherwise any guest could yank
+        // everyone else out of a game they are still playing.
+        if (me.id !== this.hostId) return;
+        for (const p of this.players.values()) p.dead = false;
+        this.#broadcast({ t: "restart" }, null);
+        break;
+
       case "ping":
         this.#send(me.ws, { t: "pong", at: msg.at });
         break;
@@ -197,6 +215,11 @@ export class Lobby {
     if (!this.players.has(me.id)) return;
     this.players.delete(me.id);
     this.#broadcast({ t: "leave", id: me.id }, me.id);
+
+    // Someone leaving can also be the last living player.
+    if (this.players.size && ![...this.players.values()].some((p) => !p.dead)) {
+      this.#broadcast({ t: "over", reason: "wiped" }, null);
+    }
 
     if (this.hostId === me.id) {
       // Promote the longest-standing survivor rather than collapsing the lobby.
