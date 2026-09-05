@@ -50,8 +50,8 @@ function build() {
     // almost entirely by its own emission rather than by the scene.
     // Bright enough to spot, dim enough to still read as purple goop rather
     // than a white disc. toneMapped stays on so ACES can roll it off instead of
-    // clipping the surface to paper white; the ground pool comes from the
-    // PointLight below, which is unaffected by this.
+    // clipping the surface to paper white; the pool of light on the ground is a
+    // separate thing entirely, owned by World.
     matFill: new THREE.MeshStandardMaterial({
       color: 0xb843c8, emissive: 0xa32ebb, emissiveIntensity: 1.15,
       roughness: 0.42, flatShading: true,
