@@ -215,21 +215,37 @@ was written to settle it and did: vertices at y≈3641 against a skeleton spanni
 "Helpfully" normalising the armature to unit scale first made it worse, multiplying the bone
 rest data by 32.
 
-**In-browser bind (`src/entities/rigBuilder.js`).** Much closer, and the route worth
-finishing. It reuses the donor's skeleton, bind matrix and inverse binds verbatim and only
-swaps in new geometry, so there is no frame left to get wrong. All five characters bind, the
-mixer drives all 56 clips, and weights spread across 17 bones rather than collapsing onto one.
-Build takes ~2.8s.
+**In-browser bind (`src/entities/rigBuilder.js`).** The route worth finishing, and much
+further along. It reuses the donor's skeleton, bind matrix and inverse binds verbatim and only
+swaps in new geometry, so there is no frame left to get wrong.
 
-What is still wrong is the scale and placement fit. It matches the skin's bounding box to the
-donor's, but the donor's box is not the donor's *body* — this donor carries a chainsaw and has
-bones reaching well outside the silhouette — so the character comes out about 1.5x too big and
-floating above its own feet.
+Verified by measurement, not by eye:
 
-**Next step:** stop using bounding boxes for the fit. Match by landmarks instead: take the hip
-and head bones from the donor skeleton in its bind pose (`Bip01_Pelvis` and the head chain are
-both clearly named), and scale the skin so its own hip-to-head distance matches. That is
-invariant to props and stray bones in a way a bounding box is not.
+* all five characters bind, 6 meshes each, ~2.8s build
+* the mixer drives all 56 clips
+* weights spread over **17 distinct bones** rather than collapsing onto one
+* the skinned mesh **tracks the skeleton** (3.19 vs 3.30 before normalisation)
+* the character normalises to **1.80m** against a 1.85m target
+* feet plant on the ground every frame from the `Bip01_*_Toe0/Foot` bones, which also absorbs
+  the root motion baked into these clips
+
+Two fixes got it there. Filtering the donor's vertex cloud to `Bip01_*` bones fixed the
+sizing: this donor carries a chainsaw plus smoke, sparks, pullchain and camera bones, so a box
+over every vertex describes "tubby plus chainsaw" and made the character ~1.5x too big. And
+giving each new mesh the *anchor's* local transform rather than just its parent fixed the
+floating: the geometry is converted into `anchor.matrixWorld`'s space, so anything else
+disagrees by exactly the anchor's own transform.
+
+**It still does not draw.** Every check passes: six visible meshes, opaque
+`MeshStandardMaterial` with a texture, 44/44 cloned bones resolving inside the clone's own
+tree, geometry 4.6m dead ahead with `dotForward` 0.98. Nothing appears.
+
+The one measurement that does not line up is the gap to chase next: the cloned pelvis reports
+world y **3.85** while the skinned vertices measure **1.38..3.18**. Bones and skinned geometry
+should not be able to disagree like that. Compare `getVertexPosition` against the GPU's own
+skinning for a single vertex, and check whether `SkeletonUtils.clone` remaps `bindMatrix` as
+well as the bone list — a bindMatrix still pointing at the source rig would produce exactly
+this: correct-looking bones, correct-looking CPU maths, and an empty screen.
 
 The rig source models are staged locally into `assets/game/rig/` and are gitignored; re-stage
 them from `assets/models/` when picking this back up.

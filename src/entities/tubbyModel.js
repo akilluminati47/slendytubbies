@@ -65,6 +65,10 @@ export function loadFaceTexture() {
   return facePromise;
 }
 
+const _v = new THREE.Vector3();
+// The toe joint sits inside the foot, not on its sole.
+const FOOT_SINK = 0.04;
+
 export const TUBBIES = {
   tinkywinky: { color: 0x6b3fa0, aerial: "triangle" },
   dipsy:      { color: 0x2f8f3f, aerial: "rod" },
@@ -106,21 +110,16 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
       return gltfCache;
     }
 
-    // Measure the skeleton once and derive the scale from it, rather than
-    // trusting any number written by an exporter.
-    rig.root.updateMatrixWorld(true);
-    const box = new THREE.Box3();
-    for (const b of rig.skeleton.bones) {
-      box.expandByPoint(b.getWorldPosition(new THREE.Vector3()));
-    }
-    const h = Math.max(box.max.y - box.min.y, 1e-6);
-    rig.scale = CFG.tubby.height / h;
-    rig.feet = box.min.y;
+    // Normalise against the drawn character, measured by the builder. The
+    // skeleton's own extent is the wrong ruler - it includes the donor's
+    // chainsaw and camera bones.
+    rig.scale = CFG.tubby.height / rig.measured.height;
+    rig.feet = rig.measured.feet;
 
     gltfCache = rig;
     console.info(`[tubbies] rigged set built in ${(performance.now() - t0) | 0}ms - ` +
       `${rig.animations.length} clips, ${Object.keys(rig.byKind).length} characters, ` +
-      `skeleton ${h.toFixed(2)} tall, scaled by ${rig.scale.toFixed(4)}`);
+      `scaled by ${rig.scale.toFixed(4)} to ${CFG.tubby.height}m`);
   } catch (err) {
     console.warn("[tubbies] could not build the rigged set, using stand-ins:", err.message);
     gltfCache = false;
@@ -184,8 +183,17 @@ class RiggedTubby {
     this.root = new THREE.Group();
     const inner = skinnedClone(rig.root);
     inner.scale.setScalar(rig.scale);
-    inner.position.y = -rig.feet * rig.scale;   // stand the feet on the root
+    inner.position.y = -rig.feet * rig.scale;
     this.root.add(inner);
+    this.inner = inner;
+
+    // These rips have root motion baked into the clips, so a fixed offset that
+    // stands the bind pose on the ground leaves an idling tubby hovering a
+    // metre up. Track the actual foot bones instead and plant them every frame.
+    this.footBones = [];
+    inner.traverse((o) => {
+      if (o.isBone && /Bip01_[LR]_(Toe0|Foot)/i.test(o.name)) this.footBones.push(o);
+    });
 
     const mine = `tubby_${kind}_`;
     let shown = 0;
@@ -252,6 +260,25 @@ class RiggedTubby {
     // Scale playback to ground speed so the feet do not skate.
     this.mixer.timeScale = this.currentName === "idle" ? 1 : Math.max(0.6, speed / 2.4);
     this.mixer.update(dt);
+    this.#plantFeet();
+  }
+
+  /**
+   * Put the lowest foot bone on the root's own height, whatever the clip is
+   * doing. Two bone lookups per frame, and it means every animation lands on
+   * the ground instead of only the one the offset was measured from.
+   */
+  #plantFeet() {
+    if (!this.footBones.length) return;
+    this.inner.position.y = 0;
+    this.inner.updateMatrixWorld(true);
+    let lowest = Infinity;
+    for (const b of this.footBones) {
+      lowest = Math.min(lowest, b.getWorldPosition(_v).y);
+    }
+    if (!Number.isFinite(lowest)) return;
+    // A little sink so the sole meets the ground rather than the joint centre.
+    this.inner.position.y = this.root.position.y - lowest - FOOT_SINK;
   }
 }
 

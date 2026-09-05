@@ -22,25 +22,40 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
  * "whatever the donor vertex nearest to me does" is a good approximation, and a
  * far more robust one than re-running heat weighting on a foreign rig.
  *
- * STATUS: not finished. CFG.tubby.useBakedRig is false, so the game runs on the
- * procedural stand-ins and none of this executes.
+ * STATUS: close, but not finished. CFG.tubby.useBakedRig is false, so the game
+ * runs on the procedural stand-ins and none of this executes.
  *
- * What works: all five characters bind to the donor skeleton, the mixer drives
- * all 56 clips, and the weight transfer spreads across 17 distinct bones rather
- * than collapsing onto one. Build takes ~2.8s.
+ * Working, and verified by measurement rather than by eye:
+ *   - all five characters bind to the donor skeleton, 6 meshes each, ~2.8s build
+ *   - the mixer drives all 56 clips
+ *   - weights spread over 17 distinct bones instead of collapsing onto one
+ *   - the skinned mesh tracks the skeleton (mesh 3.19 vs bones 3.30 before
+ *     normalisation) - this was the big one, fixed by giving each new mesh the
+ *     ANCHOR's local transform, not just its parent's. The geometry is converted
+ *     into anchor.matrixWorld's space, so anything else disagrees by exactly the
+ *     anchor's own transform, which is what left it floating.
+ *   - the character normalises to 1.80m against a 1.85m target
+ *   - feet plant on the ground every frame via the Bip01_*_Toe0/Foot bones,
+ *     which also handles the root motion baked into these clips
  *
- * What does not: the scale/placement fit. Matching the skin's bounding box to
- * the donor's is wrong, because the donor's box is not the donor's BODY - this
- * donor carries a chainsaw and 44 bones that reach well outside the silhouette,
- * so the box is far larger than the character. The result is a tubby roughly
- * 1.5x too big, floating above its own feet.
+ * Filtering the donor cloud to Bip01_* bones was what fixed the sizing: this
+ * donor carries a chainsaw plus smoke, sparks, pullchain and camera bones, so a
+ * bounding box over every vertex describes "tubby plus chainsaw" and made the
+ * character ~1.5x too big.
  *
- * The fix is to stop using bounding boxes for this at all. Match by landmarks
- * instead: find the hip and head bones in the donor skeleton (Bip01_Pelvis and
- * the head chain are both named clearly), take their world positions in the
- * bind pose, and scale the skin so its own hip-to-head distance matches. That
- * is invariant to props, stray bones and whatever else the rip dragged along,
- * which a bounding box is not.
+ * What is still wrong: it does not draw. Every check passes - 6 visible meshes,
+ * opaque MeshStandardMaterial with a texture, 44/44 cloned bones resolving in
+ * the clone's own tree, geometry 4.6m dead ahead of the camera with dotForward
+ * 0.98 - and nothing appears.
+ *
+ * The one measurement that does NOT line up: the cloned pelvis bone reports
+ * world y 3.85 while the skinned vertices measure 1.38..3.18. Bones and skinned
+ * geometry should not be able to disagree like that, so the next thing to chase
+ * is that gap: compare getVertexPosition against the GPU's own skinning for the
+ * same vertex, and check whether skinnedClone is remapping bindMatrix as well as
+ * the bone list. A bindMatrix left pointing at the source rig would produce
+ * exactly this - correct-looking bones, correct-looking CPU maths, nothing on
+ * screen.
  */
 
 /** Uniform-grid nearest-neighbour. Brute force is 27M checks; this is ~1M. */
@@ -171,13 +186,44 @@ export async function buildRiggedTubbies(donorUrl, skins) {
    * vertex then snapped to the same bone. World space is the one frame both
    * meshes genuinely share, so match there and convert back afterwards.
    */
+  /*
+   * Only the BODY counts, and the bone names say which that is.
+   *
+   * This donor is a biped carrying a chainsaw: alongside Bip01_Pelvis, Spine,
+   * Head, Thigh and so on it has chainsaw_rootbone, saw1, saw2, smoke, sparks,
+   * pullchain and a camera bone. Those reach well outside the silhouette, so a
+   * bounding box over every vertex describes "tubby plus chainsaw" and fitting
+   * to it produced a character about 1.5x too big, floating above its feet.
+   *
+   * Filtering to vertices driven by Bip01_* bones gives the body on its own,
+   * which is the thing the template mesh is actually shaped like.
+   */
+  const skeleton = donorMeshes[0].skeleton;
+  const isBodyBone = skeleton.bones.map((b) => /^Bip01/i.test(b.name));
+  const bodyBoneCount = isBodyBone.filter(Boolean).length;
+
+  const landmark = (re) => skeleton.bones.find((b) => re.test(b.name));
+  const hip = landmark(/^Bip01_Pelvis/i);
+  const headTop = landmark(/^Bip01_Head_end/i) ?? landmark(/^Bip01_Head/i);
+  const toe = landmark(/^Bip01_[LR]_Toe0_end/i) ?? landmark(/^Bip01_[LR]_Foot/i);
+
   const donorPts = [];
   const donorSrc = [];       // which mesh + vertex each world point came from
   const v = new THREE.Vector3();
+  let skipped = 0;
   for (const m of donorMeshes) {
     const pos = m.geometry.attributes.position;
-    if (!m.geometry.attributes.skinIndex) continue;
+    const si = m.geometry.attributes.skinIndex;
+    const sw = m.geometry.attributes.skinWeight;
+    if (!si) continue;
     for (let i = 0; i < pos.count; i++) {
+      // Whichever bone actually drives this vertex decides whether it is body.
+      const w = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
+      const j = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)];
+      let best = 0;
+      for (let k = 1; k < 4; k++) if (w[k] > w[best]) best = k;
+      if (!isBodyBone[j[best]]) { skipped++; continue; }
+
       // Where this vertex actually ENDS UP once skinning runs. Raw geometry
       // coordinates are in bind space and can sit nowhere near the character.
       m.getVertexPosition(i, v);
@@ -186,6 +232,7 @@ export async function buildRiggedTubbies(donorUrl, skins) {
       donorSrc.push(m, i);
     }
   }
+  if (!donorPts.length) throw new Error("no body vertices found on the donor");
   const donorPos = new THREE.BufferAttribute(new Float32Array(donorPts), 3);
 
   const donorBox = new THREE.Box3();
@@ -195,6 +242,18 @@ export async function buildRiggedTubbies(donorUrl, skins) {
   const size = new THREE.Vector3();
   donorBox.getSize(size);
   const grid = new VertexGrid(donorPos, Math.max(size.length() / 28, 1e-5));
+
+  // Cross-check the box against the skeleton's own landmarks. If the two
+  // disagree the filter has gone wrong, and it is far better to hear about it
+  // here than to wonder later why the tubbies look odd.
+  const wp = (b) => b.getWorldPosition(new THREE.Vector3());
+  if (hip && headTop && toe) {
+    const hipY = wp(hip).y, headY = wp(headTop).y, toeY = wp(toe).y;
+    console.info(`[rig] donor landmarks: toe ${toeY.toFixed(2)}, hip ${hipY.toFixed(2)}, ` +
+      `head ${headY.toFixed(2)} -> ${(headY - toeY).toFixed(2)} tall; ` +
+      `body box ${size.y.toFixed(2)} tall from ${donorPos.count} verts ` +
+      `(${skipped} prop verts dropped, ${bodyBoneCount}/${skeleton.bones.length} body bones)`);
+  }
 
   // Anchor every new mesh to the same node and bind as the donor's own body, so
   // nothing about the binding has to be re-derived.
@@ -267,6 +326,14 @@ export async function buildRiggedTubbies(donorUrl, skins) {
       const mesh = new THREE.SkinnedMesh(g, mat);
       mesh.name = `tubby_${kind}_${meshes.length}`;
       anchor.parent.add(mesh);
+      // Wear the anchor's own local transform, not just its parent. The
+      // geometry was converted into anchor.matrixWorld's space, so the new mesh
+      // has to resolve to that same world matrix or the two disagree by exactly
+      // the anchor's local transform - which is what left it floating.
+      mesh.position.copy(anchor.position);
+      mesh.quaternion.copy(anchor.quaternion);
+      mesh.scale.copy(anchor.scale);
+      mesh.updateMatrixWorld(true);
       mesh.bind(anchor.skeleton, anchor.bindMatrix);
       mesh.frustumCulled = false;
       mesh.castShadow = true;
@@ -277,5 +344,33 @@ export async function buildRiggedTubbies(donorUrl, skins) {
     console.info(`[rig] ${kind}: ${meshes.length} mesh(es) bound`);
   }
 
-  return { root, animations: donor.animations, byKind, skeleton: anchor.skeleton };
+  /*
+   * Measure what actually gets DRAWN, not the skeleton.
+   *
+   * The bone bounding box is the wrong ruler: it includes the chainsaw and the
+   * camera bone, so normalising to it made the tubbies about 1.7x too big. The
+   * bound mesh in its bind pose is the thing whose height we care about.
+   */
+  const first = Object.values(byKind)[0] ?? [];
+  for (const m of first) m.visible = true;
+  root.updateMatrixWorld(true);
+  const drawn = new THREE.Box3();
+  const pv = new THREE.Vector3();
+  for (const m of first) {
+    const pos = m.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      m.getVertexPosition(i, pv);
+      drawn.expandByPoint(pv.applyMatrix4(m.matrixWorld));
+    }
+  }
+  for (const m of first) m.visible = false;
+
+  const measured = {
+    height: Math.max(drawn.max.y - drawn.min.y, 1e-6),
+    feet: drawn.min.y,
+  };
+  console.info(`[rig] drawn character is ${measured.height.toFixed(2)} tall, ` +
+    `feet at ${measured.feet.toFixed(2)}`);
+
+  return { root, animations: donor.animations, byKind, skeleton: anchor.skeleton, measured };
 }
