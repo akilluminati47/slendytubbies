@@ -25,6 +25,11 @@ freely — pick up a pad mid-game, put it down, carry on with the mouse. No mode
 | Touch | drag left half | drag right half | Run (latches) | Jump | Torch | — |
 | Quest / WebXR | L thumbstick | head + R snap turn | L grip | A / X | B / Y | — |
 
+**Menus are fully controller-driven.** Either stick or the d-pad moves the cursor (with
+hold-to-repeat), A selects, B goes back, the bumpers switch tabs, Start pauses and resumes.
+Sliders and the choice rows take left/right directly rather than making you "enter" them
+first, which is the one thing that would make settings worse on a pad than a mouse.
+
 Button *indices* are identical across all three pad families under the W3C standard
 mapping; only the printed labels differ, and Nintendo transposes A/B and X/Y physically.
 `detectBrand()` picks the right glyphs so nobody is told to press the wrong button.
@@ -37,14 +42,24 @@ The tubby never cheats. It finds you two ways and only two ways:
 * **Hearing** — a radius set by what you are doing: standing still 1.4 m, walking 9 m,
   sprinting 22 m. Landing a jump is a 14 m burst, and **taking a dish is a 26 m burst**.
 
-Walk over a dish to take it — no button, no hold. It is loud, but everything hunting you
-immediately breaks off, resets to `patrol`, and is pushed back beyond the fog. So each
-pickup is a spike of danger followed by a real breather.
+Walk over a dish to take it — no button, no hold. It is loud, and everything hunting you
+turns and **bolts** — 11 m/s, far faster than you can run, away from every player at once,
+in full view. It never despawns; after a few seconds it settles and starts hunting again.
+So each pickup is a spike of danger, then a breather you actually get to watch happen.
 
 Chase speed (5.4 m/s) sits just under your sprint (6.0), so you can outrun it for exactly
 as long as your six seconds of stamina last. A second tubby joins at the halfway mark.
 
 All tuning lives in [`src/game/config.js`](src/game/config.js).
+
+### One light, not ten
+
+Each custard dish used to carry its own `PointLight`. Taking one hid that light, which
+changed the scene's light count — and three.js bakes the light count into every material's
+shader, so the whole scene recompiled and dropped a fat frame at exactly the moment
+something was chasing you. There is now a single dish light that World keeps parked on the
+nearest un-taken dish. The count never changes, so nothing ever recompiles, and every
+shader carries nine fewer lights besides.
 
 ## Multiplayer
 

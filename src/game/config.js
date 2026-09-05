@@ -25,6 +25,12 @@ export const CFG = {
     jumpSpeed: 4.6,       // m/s launch
     gravity: 16.0,        // m/s^2 - snappier than real gravity, like a shooter
     coyoteTime: 0.12,     // grace period to still jump after leaving the ground
+    // Head bob. Deliberately subtle: it should register as weight underfoot,
+    // never as something you notice or have to look past.
+    bobWalk: 0.016,       // metres of vertical travel while walking
+    bobSprint: 0.024,     // and while sprinting
+    bobRoll: 0.0022,      // radians of lean - a hint of it, no more
+    bobEase: 5.0,         // how fast the amplitude fades in and out
   },
   tubby: {
     // The baked GLB (tools/rig_transfer.py) still binds wrong - see README
@@ -36,7 +42,10 @@ export const CFG = {
     patrolSpeed: 1.5,
     investigateSpeed: 2.9,
     chaseSpeed: 5.4,      // just under player sprint - you can outrun it, briefly
+    fleeSpeed: 11.0,      // bolts when someone takes a dish - far faster than you
+    fleeTime: 3.4,        // seconds of running before it settles back to hunting
     turnRate: 3.2,        // rad/s
+    fleeTurnRate: 6.5,    // it whips round to face away much faster than it hunts
     sightRange: 26,
     sightHalfAngle: Math.PI * 0.42,
     hearingBase: 9,       // metres, walking

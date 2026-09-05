@@ -24,6 +24,7 @@ export class Player {
     this.torchOn = true;
     this.noise = 0;        // metres of hearing radius this frame
     this.bob = 0;
+    this.bobAmount = 0;    // eased, so bob never starts or stops abruptly
     this.alive = true;
 
     // Vertical state. `lift` is height above the terrain, so the terrain itself
@@ -157,10 +158,23 @@ export class Player {
     } else {
       this.rig.rotation.set(0, 0, 0);
       // No head bob in the air; it reads as a stumble rather than a stride.
-      if (this.grounded) this.bob += speed * dt * (sprint ? 8.5 : 6.2);
-      const bobY = this.grounded ? Math.sin(this.bob) * (sprint ? 0.055 : 0.03) : 0;
+      if (this.grounded) this.bob += speed * dt * (sprint ? 7.4 : 6.0);
+
+      // Ease the AMPLITUDE rather than snapping it on at full size. Stepping
+      // straight to peak bob on the first frame of movement is most of what
+      // makes bob feel like a camera bug instead of footfalls, and sprinting
+      // exaggerated it worst of all.
+      const want = this.grounded && speed > 0.35
+        ? (sprint ? CFG.player.bobSprint : CFG.player.bobWalk) *
+          Math.min(1, speed / CFG.player.walkSpeed)
+        : 0;
+      this.bobAmount += (want - this.bobAmount) * Math.min(1, dt * CFG.player.bobEase);
+
+      const bobY = Math.sin(this.bob) * this.bobAmount;
+      const roll = Math.sin(this.bob * 0.5) * CFG.player.bobRoll *
+        (this.bobAmount / Math.max(CFG.player.bobSprint, 1e-6));
       this.cam.position.set(0, CFG.player.height + bobY, 0);
-      this.cam.rotation.set(this.input.pitch, this.input.yaw, Math.sin(this.bob * 0.5) * 0.006, "YXZ");
+      this.cam.rotation.set(this.input.pitch, this.input.yaw, roll, "YXZ");
     }
   }
 

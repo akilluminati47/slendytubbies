@@ -60,7 +60,7 @@ function build() {
   return shared;
 }
 
-/** One pickup. Returns the group plus the light so the game can pulse it. */
+/** One pickup. The glow comes from World, not from here. */
 export function makeCustard() {
   const s = build();
   const g = new THREE.Group();
@@ -77,9 +77,10 @@ export function makeCustard() {
   // Far enough to spot through fog, weak enough that standing over the dish
   // does not flood the whole frame. Decay 2 (inverse-square) keeps the falloff
   // honest instead of dumping a flat pool of light on everything nearby.
-  const glow = new THREE.PointLight(0xf070ee, 11, 7, 2);
-  glow.position.y = H / 2 + 0.1;
-  g.add(glow);
-
-  return { group: g, glow, height: H };
+  // NO per-dish light. Ten PointLights meant ten lights in every shader, and
+  // hiding one on pickup changed the scene's light count - which makes three.js
+  // recompile every material in the scene and drops a fat frame right at the
+  // moment the player is being chased. World owns a single light that follows
+  // the nearest dish instead; see World#updateGlow.
+  return { group: g, meshes: [body, lip, bottom, custard], height: H };
 }

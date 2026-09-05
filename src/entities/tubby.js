@@ -27,6 +27,7 @@ export class Tubby {
     this.state = "patrol";
     this.target = this.#wanderPoint();
     this.lostFor = 0;
+    this.fleeLeft = 0;
     this.growl = 0;
     this.speedNow = 0;
   }
@@ -70,11 +71,24 @@ export class Tubby {
     return d < player.noise;
   }
 
-  update(dt, player) {
-    const seen = player.alive && this.#sees(player);
-    const heard = player.alive && this.#hears(player);
+  update(dt, player, threats = null) {
+    threats = threats || [player.pos];
+    const fleeing = this.state === "flee";
+    const seen = !fleeing && player.alive && this.#sees(player);
+    const heard = !fleeing && player.alive && this.#hears(player);
 
     switch (this.state) {
+      case "flee":
+        // Deaf and blind while running. Being re-aggroed mid-flight by the very
+        // noise of the pickup would defeat the point of the breather.
+        this.fleeLeft -= dt;
+        if (this.fleeLeft <= 0) {
+          this.#enter("patrol");
+        } else if (this.pos.distanceTo(this.target) < 8) {
+          this.#aimAwayFrom(threats);   // hit the treeline; pick a new way out
+        }
+        break;
+
       case "patrol":
         if (seen) this.#enter("chase", player.pos);
         else if (heard) this.#enter("investigate", player.pos);
@@ -102,7 +116,11 @@ export class Tubby {
         break;
     }
 
-    const speed = { patrol: T.patrolSpeed, investigate: T.investigateSpeed, chase: T.chaseSpeed }[this.state];
+    const speed = {
+      patrol: T.patrolSpeed, investigate: T.investigateSpeed,
+      chase: T.chaseSpeed, flee: T.fleeSpeed,
+    }[this.state];
+    const turn = fleeing ? T.fleeTurnRate : T.turnRate;
 
     // Steer toward the target, then let the collision pass slide us round trees.
     const dx = this.target.x - this.pos.x, dz = this.target.z - this.pos.z;
@@ -110,7 +128,7 @@ export class Tubby {
     let diff = want - this.heading;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    this.heading += Math.max(-T.turnRate * dt, Math.min(T.turnRate * dt, diff));
+    this.heading += Math.max(-turn * dt, Math.min(turn * dt, diff));
 
     const before = this.pos.clone();
     this.pos.x += Math.sin(this.heading) * speed * dt;
@@ -137,14 +155,18 @@ export class Tubby {
     }
 
     // If a tree pinned us flat, pick a new heading rather than grinding into bark.
-    if (this.speedNow < speed * 0.25 && this.state === "patrol") this.target = this.#wanderPoint();
+    if (this.speedNow < speed * 0.25) {
+      if (this.state === "patrol") this.target = this.#wanderPoint();
+      else if (fleeing) this.#aimAwayFrom(threats);   // snagged a trunk; go around
+    }
 
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
-    this.model.play(this.state === "chase" ? "chase" : this.state === "investigate" ? "walk" : "idle");
+    this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
+      : this.state === "investigate" ? "walk" : "idle");
     this.model.update(dt, this.speedNow);
 
-    if (player.alive && this.state === "chase" &&
+    if (player.alive && this.state === "chase" && !fleeing &&
         Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < T.killRange) {
       return "kill";
     }
@@ -179,7 +201,7 @@ export class Tubby {
 
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
-    this.model.play(this.state === "chase" ? "chase"
+    this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
       : this.state === "investigate" ? "walk" : "idle");
     this.model.update(dt, this.state === "chase" ? 5 : 1.5);
   }
@@ -191,34 +213,46 @@ export class Tubby {
   }
 
   /**
-   * Break off and clear out. Called when the player takes a tank: the hunt
-   * resets to square one rather than the tubby simply carrying on, so the red
-   * screen releases and you get a real breather as a reward.
+   * Bolt. Called when anyone takes a dish.
+   *
+   * It does NOT despawn or teleport - it turns and sprints away from everyone at
+   * a speed you cannot match, in full view, and then goes back to hunting. You
+   * get real breathing room and you get to watch it leave, which is a much
+   * better beat than the monster blinking out of existence.
    */
-  retreat(from, minDistance = 34) {
-    this.state = "patrol";
+  flee(from) {
+    this.state = "flee";
+    this.fleeLeft = T.fleeTime;
     this.lostFor = 0;
-    this.target = this.#wanderPoint();
+    this.#aimAwayFrom(from);
+  }
 
-    // If it is right on top of you, back it off to a distance you cannot see
-    // through the fog - it "hides" rather than teleporting away in view.
-    const dx = this.pos.x - from.x, dz = this.pos.z - from.z;
-    const d = Math.hypot(dx, dz);
-    if (d < minDistance) {
-      const a = d > 1e-3 ? Math.atan2(dx, dz) : Math.random() * Math.PI * 2;
-      const lim = CFG.world.size / 2 - 12;
-      this.pos.x = Math.max(-lim, Math.min(lim, from.x + Math.sin(a) * minDistance));
-      this.pos.z = Math.max(-lim, Math.min(lim, from.z + Math.cos(a) * minDistance));
-      this.world.resolve(this.pos, T.radius);
+  /** Point directly away from the nearest threat in `from` (array of {x,z}). */
+  #aimAwayFrom(from) {
+    const points = Array.isArray(from) ? from : [from];
+    let ax = 0, az = 0;
+    for (const p of points) {
+      const dx = this.pos.x - p.x, dz = this.pos.z - p.z;
+      const d = Math.max(0.5, Math.hypot(dx, dz));
+      // Weight by inverse distance so the closest player dominates the choice.
+      ax += dx / (d * d);
+      az += dz / (d * d);
     }
-    // Send it somewhere away from the player so it does not wander straight back.
-    this.heading = Math.atan2(this.pos.x - from.x, this.pos.z - from.z);
-    this.facing = this.heading;   // it was teleported; do not spin to catch up
+    if (Math.abs(ax) < 1e-6 && Math.abs(az) < 1e-6) {
+      this.heading = Math.random() * Math.PI * 2;
+    } else {
+      this.heading = Math.atan2(ax, az);
+    }
+    this.target.set(
+      this.pos.x + Math.sin(this.heading) * 60,
+      0,
+      this.pos.z + Math.cos(this.heading) * 60,
+    );
   }
 
   /** 0..1 - how close this tubby is to reaching you. Drives the red screen. */
   threat(player) {
-    if (this.state !== "chase") return 0;
+    if (this.state !== "chase") return 0;   // "flee" reads as zero, so red clears
     const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
     return Math.max(0, 1 - d / 20);
   }

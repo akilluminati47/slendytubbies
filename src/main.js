@@ -10,6 +10,7 @@ import { HINTS } from "./game/hints.js";
 import { Settings } from "./game/settings.js";
 import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
+import { MenuNav } from "./game/menuNav.js";
 import { NetClient, seedFromKey, ROLE_LABEL } from "./net/client.js";
 import { RemotePlayer } from "./net/remote.js";
 
@@ -80,6 +81,17 @@ function buildWorld(seed) {
   $("total").textContent = game.total;
 }
 
+/**
+ * Everyone the monster should run away from: you, plus every other player in
+ * the lobby. Fleeing from only the collector would send it straight through
+ * someone else's face.
+ */
+function threatPoints() {
+  const pts = [player.pos];
+  for (const r of remotes.values()) pts.push(r.current);
+  return pts;
+}
+
 function spawnTubby(kind) {
   // Always spawn well outside the player's fog, never in their lap.
   let p, tries = 0;
@@ -101,6 +113,7 @@ function begin() {
 
 /* ------------------------------------------------------------------- modes */
 
+let menuNav;
 const ui = new UI(settings, net, {
   onUnlockAudio: () => {
     // Runs inside the real user gesture, the only moment a browser will start
@@ -151,6 +164,8 @@ const ui = new UI(settings, net, {
   },
 });
 
+menuNav = new MenuNav(ui);
+
 /* -------------------------------------------------------------- net events */
 
 function addRemote(info) {
@@ -178,9 +193,7 @@ net.addEventListener("world", (e) => {
 });
 net.addEventListener("took", (e) => {
   const c = world?.custards[e.detail.i];
-  if (!c || c.taken) return;
-  c.taken = true;
-  c.group.visible = false;
+  if (!world?.take(c)) return;
   if (e.detail.by !== net.id) {
     game.found++;
     $("found").textContent = game.found;
@@ -200,7 +213,7 @@ function pause() {
   input.gamepad.stop();
   input.release();               // we are giving the mouse back on purpose
   document.exitPointerLock?.();
-  ui.setHints(HINTS[input.scheme] ?? HINTS.keyboard);
+  refreshHints();
   ui.show("pause");
 }
 
@@ -222,8 +235,12 @@ document.addEventListener("pointerlockchange", () => {
 });
 
 function refreshHints() {
-  ui.setHints(HINTS[input.scheme] ?? HINTS.keyboard);
-  document.body.dataset.scheme = input.scheme;
+  const scheme = input.scheme;
+  let html = HINTS[scheme] ?? HINTS.keyboard;
+  // A pad player needs the menu bindings too, not just the gameplay ones.
+  if (HINTS.menu[scheme]) html += `<br><span class="menu-hint">${HINTS.menu[scheme]}</span>`;
+  ui.setHints(html);
+  document.body.dataset.scheme = scheme;
 }
 refreshHints();
 addEventListener("pad", refreshHints);
@@ -269,6 +286,14 @@ function frame() {
 
   // The title screen listens for DOM events, but a gamepad produces none.
   if (!running && !game.over && input.gamepad.anyPressed()) ui.padPressed();
+
+  // Menus are fully controller-driven. Start pauses and resumes from either
+  // side, and the nav read is skipped entirely while actually playing so the
+  // jump button stays a jump button.
+  const inMenu = !running || paused || game.over;
+  const nav = input.gamepad.navPoll(dt);
+  if (inMenu) menuNav.update(nav);
+  if (nav.start && running) paused ? resume() : pause();
   if (input.intent.menu && running) paused ? resume() : pause();
 
   if (!running || paused || !player) { renderer.render(scene, camera); return; }
@@ -280,18 +305,16 @@ function frame() {
 
   const got = player.tickCollect(dt, world.custards);
   if (got) {
-    got.taken = true;
-    got.group.visible = false;
+    world.take(got);
     game.found++;
     $("found").textContent = game.found;
     audio.pickup();
     input.gamepad.rumble(0.5, game.elapsed);
     input.xr.pulse(0.4, 90);
     if (online) net.sendTook(world.custards.indexOf(got));
-    // Everything hunting you breaks off and starts its search over. The red
-    // clears, you get a breather, and the noise of the pickup is what it has to
-    // work from next.
-    if (host) for (const t of tubbies) t.retreat(player.pos);
+    // It bolts - away from everyone, faster than anyone can run, in full view.
+    // No despawn: you watch it leave, and it comes back hunting.
+    if (host) for (const t of tubbies) t.flee(threatPoints());
     if (game.found >= game.total) {
       endGame("won", "You got out",
         `All ${game.total} dishes recovered in ${game.elapsed.toFixed(0)} seconds.<br>It is still out there.`);
@@ -302,7 +325,7 @@ function frame() {
   let threat = 0;
   for (const [i, t] of tubbies.entries()) {
     if (host) {
-      if (t.update(dt, player) === "kill") {
+      if (t.update(dt, player, threatPoints()) === "kill") {
         endGame("dead", "Caught", `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
         return;
       }
@@ -321,9 +344,7 @@ function frame() {
 
   for (const r of remotes.values()) r.update(dt, camera);
 
-  for (const c of world.custards) {
-    if (!c.taken) c.glow.intensity = 10 + Math.sin(game.elapsed * 2 + c.pos.x) * 3;
-  }
+  world.updateGlow(game.elapsed, player.pos);
 
   if (online) {
     netAccum += dt;
@@ -369,6 +390,7 @@ renderer.setAnimationLoop(frame);
 // Debug handle: __dbg.tp(x, z), __dbg.here() to warp a tubby onto you, __dbg.reveal().
 window.__dbg = {
   game, tubbies, remotes, scene, camera, input, rig, renderer, audio, settings, ui, net,
+  get menuNav() { return menuNav; },
   pause, resume,
   get world() { return world; },
   get player() { return player; },

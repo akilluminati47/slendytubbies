@@ -34,6 +34,9 @@ export class World {
     scene.background = new THREE.Color(0x05070a);
 
     this.#lights();
+    // Created once, before any dish exists, and never removed.
+    this.custardGlow = new THREE.PointLight(0xf070ee, 0, 9, 2);
+    scene.add(this.custardGlow);
     this.#ground();
     this.#scatter();
     this.#custard();
@@ -206,12 +209,44 @@ export class World {
         break;
       }
 
-      const { group: g, glow, height } = makeCustard();
+      const { group: g, meshes, height } = makeCustard();
       g.rotation.y = this.rand() * Math.PI * 2;   // hide the shared silhouette
       g.position.set(spot.x, heightAt(spot.x, spot.z) + height / 2, spot.z);
       this.scene.add(g);
-      this.custards.push({ group: g, pos: new THREE.Vector3(spot.x, 0, spot.z), taken: false, glow });
+      this.custards.push({ group: g, meshes, pos: new THREE.Vector3(spot.x, 0, spot.z), taken: false });
     }
+  }
+
+  /**
+   * One light for every dish in the game, parked on whichever is nearest.
+   *
+   * The light count a scene renders with is baked into every material's shader,
+   * so it must never change at runtime. Keeping exactly one dish light - always
+   * present, only moved - means no recompile, ever, and nine fewer lights in
+   * every shader besides.
+   */
+  updateGlow(t, from) {
+    let best = null;
+    let bestD = Infinity;
+    for (const c of this.custards) {
+      if (c.taken) continue;
+      const d = (c.pos.x - from.x) ** 2 + (c.pos.z - from.z) ** 2;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (!best) {
+      this.custardGlow.intensity = 0;   // intensity, never visibility
+      return;
+    }
+    this.custardGlow.position.set(best.pos.x, heightAt(best.pos.x, best.pos.z) + 0.19, best.pos.z);
+    this.custardGlow.intensity = 10 + Math.sin(t * 2 + best.pos.x) * 3;
+  }
+
+  /** Take a dish: hide its meshes only. Nothing here touches a light. */
+  take(c) {
+    if (!c || c.taken) return false;
+    c.taken = true;
+    for (const m of c.meshes) m.visible = false;
+    return true;
   }
 
   /** Push a circle of radius r out of every obstacle and the map bounds. */

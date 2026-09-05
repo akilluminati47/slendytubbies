@@ -50,6 +50,10 @@ export function detectBrand(id = "") {
 const RUMBLE_MS = 220;
 const RUMBLE_PERIOD = 0.16;
 
+// Menu repeat: hold a direction and it steps once, waits, then rolls.
+const NAV_DELAY = 0.42;
+const NAV_REPEAT = 0.13;
+
 export class GamepadSource {
   constructor() {
     this.edge = new Edge();
@@ -131,6 +135,57 @@ export class GamepadSource {
     intent.menu = this.edge.hit("menu", b(BTN.start));
 
     return intent;
+  }
+
+  /**
+   * Discrete menu navigation, with hold-to-repeat.
+   *
+   * Menus need edges and repeats, not the continuous axes the game wants, so
+   * this is a separate read rather than something bolted onto poll(). BOTH
+   * sticks drive it as well as the d-pad - a player who has just been steering
+   * with the right stick should not have to move their thumb to pick a button.
+   */
+  navPoll(dt) {
+    const nav = { up: 0, down: 0, left: 0, right: 0,
+                  accept: false, back: false, tabPrev: false, tabNext: false, start: false };
+    const p = this.#pad();
+    if (!p) { this.navHeld = null; return nav; }
+
+    const b = (i) => !!p.buttons[i]?.pressed;
+    const ax = (i) => p.axes[i] ?? 0;
+    const DZ = 0.55;   // higher than gameplay: menus must not drift on a worn stick
+
+    // Either stick, or the d-pad.
+    const x = (Math.abs(ax(0)) > Math.abs(ax(2)) ? ax(0) : ax(2));
+    const y = (Math.abs(ax(1)) > Math.abs(ax(3)) ? ax(1) : ax(3));
+    const dir = {
+      up: b(BTN.up) || y < -DZ,
+      down: b(BTN.down) || y > DZ,
+      left: b(BTN.left) || x < -DZ,
+      right: b(BTN.right) || x > DZ,
+    };
+
+    // Fire immediately, then pause, then repeat - the standard console feel.
+    this.navHeld ??= {};
+    for (const k of ["up", "down", "left", "right"]) {
+      if (!dir[k]) { this.navHeld[k] = 0; continue; }
+      const was = this.navHeld[k] || 0;
+      const next = was + dt;
+      const crossed = was === 0 ||
+        (was < NAV_DELAY && next >= NAV_DELAY) ||
+        (was >= NAV_DELAY && Math.floor((was - NAV_DELAY) / NAV_REPEAT) !==
+                             Math.floor((next - NAV_DELAY) / NAV_REPEAT));
+      this.navHeld[k] = next;
+      if (crossed) nav[k] = 1;
+    }
+
+    // South is jump in-game and accept in menus - the same button either way.
+    nav.accept = this.edge.hit("nav-accept", b(BTN.south));
+    nav.back = this.edge.hit("nav-back", b(BTN.east));
+    nav.tabPrev = this.edge.hit("nav-tabprev", b(BTN.l1));
+    nav.tabNext = this.edge.hit("nav-tabnext", b(BTN.r1));
+    nav.start = this.edge.hit("nav-start", b(BTN.start));
+    return nav;
   }
 
   /** True on the frame ANY button goes down - used to dismiss the title screen. */

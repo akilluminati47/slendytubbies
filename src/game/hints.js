@@ -24,4 +24,15 @@ export const HINTS = {
 
   /** Shown near the reticle when a tank is close - walk over it to take it. */
   nearby: "Walk over the custard to take it",
+
+  /**
+   * Appended on menu screens when a pad is connected. Menus are fully
+   * navigable, so the player should be told rather than left guessing.
+   */
+  menu: {
+    xbox: `${k("Sticks")}/${k("D-pad")} move · ${k("A")} select · ${k("B")} back · ${k("LB")}${k("RB")} tabs · ${k("Start")} resume`,
+    playstation: `${k("Sticks")}/${k("D-pad")} move · ${k("✕")} select · ${k("○")} back · ${k("L1")}${k("R1")} tabs · ${k("Options")} resume`,
+    nintendo: `${k("Sticks")}/${k("D-pad")} move · ${k("B")} select · ${k("A")} back · ${k("L")}${k("R")} tabs · ${k("+")} resume`,
+    generic: `${k("Sticks")}/${k("D-pad")} move · ${k("A")} select · ${k("B")} back · ${k("LB")}${k("RB")} tabs · ${k("Start")} resume`,
+  },
 };

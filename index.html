@@ -147,6 +147,14 @@
     margin-top:20px; letter-spacing:.02em; }
   .foot em { color:#6d6659; font-style:normal; }
 
+  .menu-hint { color:#5d6b57; }
+
+  /* Controller focus. Deliberately louder than a browser outline - on a TV,
+     across a room, a hairline ring is invisible. */
+  .nav-focus { outline:none !important; box-shadow:0 0 0 2px #7d9b86, 0 0 18px rgba(125,155,134,.35); }
+  .tab.nav-focus { box-shadow:inset 0 -2px 0 0 #7d9b86, 0 0 14px rgba(125,155,134,.25); }
+  input[type=range].nav-focus { box-shadow:0 0 0 2px #7d9b86; }
+
   /* XR composites only the WebGL layer, so DOM is invisible there. */
   body.xr #hud, body.xr .screen { display:none !important; }
   body.touch #meters { bottom:auto; top:70px; left:24px; width:150px; }
