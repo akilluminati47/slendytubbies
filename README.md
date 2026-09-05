@@ -236,16 +236,19 @@ giving each new mesh the *anchor's* local transform rather than just its parent 
 floating: the geometry is converted into `anchor.matrixWorld`'s space, so anything else
 disagrees by exactly the anchor's own transform.
 
-**It still does not draw.** Every check passes: six visible meshes, opaque
-`MeshStandardMaterial` with a texture, 44/44 cloned bones resolving inside the clone's own
-tree, geometry 4.6m dead ahead with `dotForward` 0.98. Nothing appears.
+**It draws.** Toggling the meshes changes the frame by **3,436 triangles**, so the GPU is
+rasterising them. Measured in a single call (the earlier "bones disagree with vertices" reading
+was an artefact of sampling across two calls while per-frame foot planting moved the rig
+between them), the numbers are coherent: toe 2.47, pelvis 3.13, vertices 2.03–4.05, root 2.33.
 
-The one measurement that does not line up is the gap to chase next: the cloned pelvis reports
-world y **3.85** while the skinned vertices measure **1.38..3.18**. Bones and skinned geometry
-should not be able to disagree like that. Compare `getVertexPosition` against the GPU's own
-skinning for a single vertex, and check whether `SkeletonUtils.clone` remaps `bindMatrix` as
-well as the bone list — a bindMatrix still pointing at the source rig would produce exactly
-this: correct-looking bones, correct-looking CPU maths, and an empty screen.
+`SkeletonUtils.clone` was ruled out as the cause: it copies `bindMatrix` and rebinds against
+the remapped bone list, which is correct.
+
+**What remains** is that the character renders visibly smaller and higher than those numbers
+predict — so the CPU skinning (`getVertexPosition`) and the GPU skinning disagree about scale
+and offset, even though both should consume the same bind matrix, bone matrices and model
+matrix. That is the one thread left to pull: skin a single known vertex on the CPU and compare
+it against the same vertex read back from the GPU, rather than trusting either in isolation.
 
 The rig source models are staged locally into `assets/game/rig/` and are gitignored; re-stage
 them from `assets/models/` when picking this back up.
