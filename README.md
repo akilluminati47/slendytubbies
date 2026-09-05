@@ -201,45 +201,40 @@ the donor's *skeleton and actions*, discard its mesh, and bind the clean templat
 that skeleton with heat-map weights. Shared topology means one bind serves all five, they
 ride one armature in one GLB, and swapping character at runtime is mesh visibility.
 
-### Known issue — the baked rig does not render
+### Known issue: the rigged models are not in yet
 
-`CFG.tubby.useBakedRig` is **false**, so the game uses the stand-ins. Flip it to `true` to
-work on this.
+`CFG.tubby.useBakedRig` is **false**, so the game runs on the procedural stand-ins.
 
-The bake produces a structurally healthy GLB: 44 bones, 56 clips, skin weights summing to
-1, indices in range, correct bone world positions, and a draw call that submits. It still
-renders nothing, because the skinned vertices are transformed away from their own skeleton.
+Two routes have been tried.
 
-Diagnosis so far: glTF says a skinned mesh node's transform **must be ignored**, but
-three.js folds that node's world matrix into `bindMatrix`. Sketchfab rips arrive wrapped in
-nested nodes carrying ~0.031 scale factors, and Blender parents meshes to armatures through
-a hidden parent-inverse matrix. Both are object transforms that the exporter drops.
+**Offline bake (`tools/rig_transfer.py`).** Abandoned. Blender's glTF exporter writes skinned
+vertices in the *armature's* space and inverse bind matrices to match, so any placement
+computed in world space lands in the wrong frame. The export binds cleanly and reports healthy
+bones, healthy weights and a real draw call while rendering nothing. `tools/inspect_glb.mjs`
+was written to settle it and did: vertices at y≈3641 against a skeleton spanning 115.
+"Helpfully" normalising the armature to unit scale first made it worse, multiplying the bone
+rest data by 32.
 
-Fixed so far: the armature is normalised to identity (with the actions' location channels
-rescaled by hand, since Blender does not do that for you), and `flattenSkinnedNodes()` in
-`tubbyModel.js` zeroes skinned-mesh node transforms and rebinds with an identity bind
-matrix. That corrected X and Y — a vertex probe now lands at the right width and height —
-but a residual offset remains, coming from **ancestor** wrapper nodes above the skinned
-meshes, which the flatten pass does not touch.
+**In-browser bind (`src/entities/rigBuilder.js`).** Much closer, and the route worth
+finishing. It reuses the donor's skeleton, bind matrix and inverse binds verbatim and only
+swaps in new geometry, so there is no frame left to get wrong. All five characters bind, the
+mixer drives all 56 clips, and weights spread across 17 bones rather than collapsing onto one.
+Build takes ~2.8s.
 
-Then `flattenSkinnedNodes()` was extended to reparent every skinned mesh to the glTF scene
-root, dropping the whole wrapper chain rather than just the mesh's own node. That fixed X
-and Z as well — a vertex probe now lands within a few centimetres of the root on both — but
-**Y is still offset by ~70**, the same 1/0.03125 wrapper factor, now arriving through the
-bones' own world transforms rather than the mesh nodes.
+What is still wrong is the scale and placement fit. It matches the skin's bounding box to the
+donor's, but the donor's box is not the donor's *body* — this donor carries a chainsaw and has
+bones reaching well outside the silhouette — so the character comes out about 1.5x too big and
+floating above its own feet.
 
-Next step: probe the bone world positions directly against the sidecar's `nativeHeight`.
-If the bones sit at ~70 units while the geometry is authored at ~2.17, the inverse bind
-matrices and the bone rest data disagree about scale, which points back at
-`transform_apply` on the armature in `rig_transfer.py` — the export's `inverseBindMatrices`
-would need recomputing after that apply. Comparing a fresh export that skips
-`normalise_armature()` entirely would isolate which side is wrong.
+**Next step:** stop using bounding boxes for the fit. Match by landmarks instead: take the hip
+and head bones from the donor skeleton in its bind pose (`Bip01_Pelvis` and the head chain are
+both clearly named), and scale the skin so its own hip-to-head distance matches. That is
+invariant to props and stray bones in a way a bounding box is not.
 
-`validateRig()` runs a vertex probe at load and is meant to reject a broken rig; its
-threshold currently passes this one because the error only shows up once the rig is placed
-in the world, not in the unplaced `gltf.scene`.
+The rig source models are staged locally into `assets/game/rig/` and are gitignored; re-stage
+them from `assets/models/` when picking this back up.
 
-## Debug
+## Debug## Debug
 
 `window.__dbg` in the console:
 

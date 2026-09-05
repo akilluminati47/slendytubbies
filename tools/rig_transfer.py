@@ -12,25 +12,26 @@ Why this works: every un_rendem123 tubby (po, laalaa, dipsy, tinkywinky, guardia
 topology. So one weight-transfer onto one donor skeleton skins all five, and all five can share
 a single armature in a single GLB. At runtime you swap visibility, not skeletons.
 
-THE RULE THAT MATTERS: by export time the armature and every skinned mesh must have an
-IDENTITY object transform.
+THE THING THAT TOOK FOUR REWRITES TO GET RIGHT:
 
-glTF says a skinned mesh node's own transform "MUST be ignored" - skinned vertices are placed
-entirely by the inverse bind matrices and the joint hierarchy. A Sketchfab rip arrives wrapped
-in nested nodes carrying ~0.031 scale factors, and Blender parents meshes to armatures through a
-hidden parent-inverse matrix. Both of those are object transforms, so both get silently DROPPED
-on export. Leave them in and the mesh binds fine in Blender and previews fine in Blender, then
-renders 70 metres above its own skeleton in three.js - with correct bone positions and correct
-skin weights the entire time, which is what makes it such a miserable thing to chase.
+Blender's glTF exporter does NOT write skinned vertices in world space, or in the mesh's own
+object space. It writes them in the ARMATURE's space, and writes inverse bind matrices to
+match. So any placement you compute in world space is in the wrong frame, and the mesh lands
+somewhere the skeleton is not - with correct bones, correct weights, a correct draw call, and
+nothing visible on screen.
 
-So flatten everything: normalise the armature to identity (rescaling the actions' location
-channels to match, since Blender will not do that for you), bring the skins into that same
-space, bake it into vertex data, and only then bind. The rig's native height goes into a sidecar
-JSON and three.js scales the whole cloned root uniformly - safe, because bones and bind matrices
-then scale together.
+Worse, "helpfully" normalising the armature to unit scale first makes it much worse: applying
+a 0.03125 object scale multiplies the bone rest data by 32, so the skeleton ends up spanning
+~3600 units while the mesh sits at 0.1.
+
+So do not compute a placement at all. The donor's OWN mesh is already bound correctly - that
+is the whole reason we picked it - so measure it, drop each skin onto it in its local space,
+and give the skin the donor mesh's exact object transform and parenting. The exporter then
+treats the skin identically to how it treats a mesh that already works, whatever frame it
+happens to prefer. The armature is never touched.
 """
 import bpy, sys, os, json, argparse
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 
 def argv():
@@ -56,68 +57,21 @@ def import_gltf(path):
     return [o for o in bpy.data.objects if o not in before]
 
 
-def bounds(objs):
-    """World-space min/max over every mesh vertex. Blender is Z-up here."""
-    pts = [o.matrix_world @ v.co
-           for o in objs if o.type == "MESH" for v in o.data.vertices]
+def local_bounds(objs):
+    """Bounds of raw vertex data, ignoring object transforms entirely."""
+    pts = [v.co for o in objs if o.type == "MESH" for v in o.data.vertices]
     if not pts:
         return None, None
-    mn = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
-    mx = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
-    return mn, mx
+    return (Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
+            Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))))
 
 
-def action_fcurves(act):
-    """Every f-curve in an action, across Blender's two action APIs.
-
-    Blender 4.4 moved animation data into layers -> strips -> channelbags (one
-    per slot) and 5.x dropped the flat `Action.fcurves` shortcut entirely.
-    """
-    if hasattr(act, "fcurves"):
-        return list(act.fcurves)
-    out = []
-    for layer in getattr(act, "layers", []):
-        for strip in getattr(layer, "strips", []):
-            for bag in getattr(strip, "channelbags", []):
-                out.extend(bag.fcurves)
-    return out
-
-
-def normalise_armature(arm, actions):
-    """Force the armature object transform to identity, keeping the animation valid.
-
-    Applying scale to an armature multiplies every bone's rest length, but Blender
-    does NOT rescale the actions to match - pose-bone `location` channels are in
-    Blender units, so every translated bone would drift by exactly the scale
-    factor. We rescale those channels ourselves. Rotation and scale channels are
-    unaffected, so they are left alone.
-    """
-    scale = tuple(arm.matrix_world.to_scale())
-    k = sum(scale) / 3.0
-    if max(scale) - min(scale) > 1e-4 * max(1.0, k):
-        print(f"  warning: non-uniform armature scale {scale}, using mean {k:.5f}")
-
-    select([arm])
-    if arm.parent:
-        bpy.ops.object.parent_clear(type="CLEAR_KEEP_TRANSFORM")
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-    bpy.context.view_layer.update()
-
-    if abs(k - 1.0) > 1e-6:
-        touched = 0
-        for act in actions:
-            for fc in action_fcurves(act):
-                if not fc.data_path.endswith("location"):
-                    continue
-                for kp in fc.keyframe_points:
-                    kp.co.y *= k
-                    kp.handle_left.y *= k
-                    kp.handle_right.y *= k
-                touched += 1
-        print(f"  armature normalised (scale {k:.5f} baked in), "
-              f"rescaled {touched} location curves across {len(actions)} clips")
-    else:
-        print("  armature already at unit scale")
+def world_bounds(objs):
+    pts = [o.matrix_world @ v.co for o in objs if o.type == "MESH" for v in o.data.vertices]
+    if not pts:
+        return None, None
+    return (Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
+            Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))))
 
 
 def select(objs, active=None):
@@ -125,6 +79,27 @@ def select(objs, active=None):
     for o in objs:
         o.select_set(True)
     bpy.context.view_layer.objects.active = active or (objs[0] if objs else None)
+
+
+def fit_matrix(src_min, src_max, dst_min, dst_max):
+    """Uniform scale + translate mapping one box onto another, feet aligned.
+
+    Uniform on purpose: the tubby silhouette is close enough between the donor
+    and the template that a non-uniform stretch would only add distortion, and a
+    squashed head is far more obvious than a slightly short one.
+    """
+    src_size = src_max - src_min
+    dst_size = dst_max - dst_min
+    k = min(dst_size.x / max(src_size.x, 1e-9),
+            dst_size.y / max(src_size.y, 1e-9),
+            dst_size.z / max(src_size.z, 1e-9))
+    src_mid = (src_min + src_max) / 2
+    dst_mid = (dst_min + dst_max) / 2
+    # Match centres in x/y but stand the feet on the donor's floor: a tubby whose
+    # hips line up matters more than one whose bounding box centre does.
+    offset = Vector((dst_mid.x, dst_mid.y, dst_min.z)) - \
+             Vector((src_mid.x * k, src_mid.y * k, src_min.z * k))
+    return Matrix.Translation(offset) @ Matrix.Diagonal((k, k, k, 1.0))
 
 
 def main():
@@ -140,29 +115,29 @@ def main():
     if not arm:
         sys.exit(f"{donor_path} has no armature - pick a different donor")
 
-    # Measure in WORLD space. Applying the armature's transform below bakes it
-    # into the bone rest data and leaves the rig looking identical in world
-    # space, so world is the frame both the donor and the skins share.
-    dmin, dmax = bounds(donor_objs)
-    if dmin is None:
-        sys.exit("donor has no mesh - cannot establish a scale reference")
-    donor_h = dmax.z - dmin.z
-    if donor_h <= 1e-9:
-        sys.exit("donor mesh has no height - cannot establish a scale reference")
-    donor_mid = Vector(((dmin.x + dmax.x) / 2, (dmin.y + dmax.y) / 2, 0))
+    donor_meshes = [o for o in donor_objs if o.type == "MESH"]
+    if not donor_meshes:
+        sys.exit("donor has no mesh to use as a reference")
+
+    # The biggest donor mesh is the body; the small ones are eyes and trim.
+    ref = max(donor_meshes, key=lambda o: len(o.data.vertices))
+    dmin, dmax = local_bounds([ref])
+    wmin, wmax = world_bounds(donor_meshes)
 
     actions = list(bpy.data.actions)
     for act in actions:
         act.use_fake_user = True          # survive the donor mesh being deleted
-    print(f"donor: {os.path.basename(donor_path)} - armature '{arm.name}', "
-          f"{len(arm.data.bones)} bones, {len(actions)} clips, "
-          f"world height {donor_h:.4f}")
 
-    for o in donor_objs:
-        if o.type == "MESH":
-            bpy.data.objects.remove(o, do_unlink=True)
+    print(f"donor: {os.path.basename(donor_path)}")
+    print(f"  armature '{arm.name}', {len(arm.data.bones)} bones, {len(actions)} clips")
+    print(f"  reference mesh '{ref.name}', {len(ref.data.vertices)} verts")
+    print(f"  its LOCAL bounds z {dmin.z:.3f}..{dmax.z:.3f}  (world height {wmax.z - wmin.z:.3f})")
+    print(f"  armature matrix scale {tuple(round(v, 5) for v in arm.matrix_world.to_scale())}"
+          " - left untouched, deliberately")
 
-    normalise_armature(arm, actions)
+    ref_basis = ref.matrix_basis.copy()
+    ref_parent = ref.parent
+    ref_parent_inverse = ref.matrix_parent_inverse.copy()
 
     # ---------------------------------------------------------------- skins --
     skinned = []
@@ -180,91 +155,52 @@ def main():
         if not meshes:
             continue
 
-        # Flatten the Sketchfab wrapper nodes into the meshes themselves.
+        # Flatten the Sketchfab wrapper nodes into the vertex data so the skin's
+        # local space is its own, then measure it in that space.
         select(meshes)
         bpy.ops.object.parent_clear(type="CLEAR_KEEP_TRANSFORM")
         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        smin, smax = local_bounds(meshes)
 
-        # Match the donor's size and footing. World space == armature space now.
-        smin, smax = bounds(meshes)
-        k = donor_h / max(smax.z - smin.z, 1e-9)
-        smid = Vector(((smin.x + smax.x) / 2, (smin.y + smax.y) / 2, 0))
-        for m in meshes:
-            m.scale = [s * k for s in m.scale]
-            m.location = (m.location - smid) * k + donor_mid
-            m.location.z = (m.location.z - smin.z) * k + dmin.z
-        bpy.context.view_layer.update()
-        select(meshes)
-        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        fit = fit_matrix(smin, smax, dmin, dmax)
+        for idx, m in enumerate(meshes):
+            # Bake the fit into the vertex data, then wear the donor mesh's own
+            # object transform and parenting. From here the exporter cannot tell
+            # this apart from the mesh that was already working.
+            m.data.transform(fit)
+            m.data.update()
+            m.name = f"tubby_{name}_{idx}"
+            for mod in list(m.modifiers):
+                m.modifiers.remove(mod)
+            m.parent = ref_parent
+            m.matrix_parent_inverse = ref_parent_inverse.copy()
+            m.matrix_basis = ref_basis.copy()
 
-        # Drop everything the skin brought except the meshes.
+        # Drop everything the skin brought except its meshes.
         for o in objs:
             if o.type != "MESH" and o.name in bpy.data.objects:
                 bpy.data.objects.remove(o, do_unlink=True)
 
-        for idx, m in enumerate(meshes):
-            # Index the parts explicitly. Naming them all the same makes Blender
-            # append .001/.002 suffixes, which defeat prefix matching at runtime.
-            m.name = f"tubby_{name}_{idx}"
-            for mod in list(m.modifiers):
-                m.modifiers.remove(mod)
-
+        bpy.context.view_layer.update()
         select(meshes, active=arm)
         arm.select_set(True)
-        # Heat-map weights: fine here because the tubby silhouette is a simple
-        # closed body. Bones far outside the mesh (the donor's chainsaw) warn and
-        # receive no weights, which is exactly what we want.
+        # Heat-map weights, computed with the skin sitting exactly where the
+        # donor's own mesh sits - which is the only place the bones expect it.
         bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-
-        # parent_set stores a parent-inverse matrix, and some importers leave a
-        # residual local matrix on the first mesh of a hierarchy. three.js builds
-        # each SkinnedMesh's bindMatrix from its world matrix, so ANY leftover
-        # object transform here corrupts the bind and throws the geometry across
-        # the map. The vertices are already baked into armature space, so the
-        # correct local transform is exactly identity - assert that.
-        for m in meshes:
-            m.matrix_parent_inverse.identity()
-            # NOT m.matrix_basis.identity() - matrix_basis returns a COPY derived
-            # from loc/rot/scale, so mutating it in place is silently discarded.
-            # Zero the underlying properties instead.
-            m.location = (0.0, 0.0, 0.0)
-            m.rotation_euler = (0.0, 0.0, 0.0)
-            m.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
-            m.scale = (1.0, 1.0, 1.0)
-        bpy.context.view_layer.update()
-
         skinned += meshes
-        print(f"  skinned {name}: {len(meshes)} mesh(es)")
+        fmin, fmax = world_bounds(meshes)
+        print(f"  skinned {name}: {len(meshes)} mesh(es), world height {fmax.z - fmin.z:.3f}")
 
     if not skinned:
         sys.exit("nothing was skinned - fetch the skin/ models first")
 
-    fmin, fmax = bounds(skinned)
-    native_h = fmax.z - fmin.z
-    print(f"rig native height {native_h:.4f}, feet at z={fmin.z:.4f}")
+    # Only now is the donor mesh expendable.
+    for o in donor_meshes:
+        bpy.data.objects.remove(o, do_unlink=True)
 
-    # Anything still carrying an object transform will be dropped by glTF, so say
-    # so loudly here rather than letting it turn into an invisible mesh later.
-    stray = []
-    for o in [arm, *skinned]:
-        t = o.matrix_world.to_translation()
-        sc = o.matrix_world.to_scale()
-        if max(abs(t.x), abs(t.y), abs(t.z)) > 1e-4 or \
-           max(abs(sc.x - 1), abs(sc.y - 1), abs(sc.z - 1)) > 1e-4:
-            stray.append(o.name)
-    if stray:
-        print(f"  WARNING: non-identity transforms glTF will drop: {stray}")
-        for nm in stray[:1]:
-            o = bpy.data.objects[nm]
-            print(f"    {nm}: loc={tuple(round(v,4) for v in o.location)} "
-                  f"scale={tuple(round(v,4) for v in o.scale)} "
-                  f"dloc={tuple(round(v,4) for v in o.delta_location)} "
-                  f"dscale={tuple(round(v,4) for v in o.delta_scale)} "
-                  f"parent={o.parent.name if o.parent else None} "
-                  f"constraints={[c.type for c in o.constraints]}")
-            print(f"    matrix_world={[round(v,4) for row in o.matrix_world for v in row]}")
-    else:
-        print("  all object transforms are identity - safe for glTF skinning")
+    fmin, fmax = world_bounds(skinned)
+    native_h = fmax.z - fmin.z
+    print(f"\nrig world height {native_h:.4f}, feet at z={fmin.z:.4f}")
 
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     bpy.ops.object.select_all(action="SELECT")
@@ -274,7 +210,6 @@ def main():
         export_nla_strips=False, export_skins=True,
         export_apply=False, use_selection=False)
 
-    # Blender Z-up becomes glTF Y-up on export, so z here is y for the game.
     sidecar = os.path.splitext(a.out)[0] + ".json"
     with open(sidecar, "w", encoding="utf8") as f:
         json.dump({
@@ -285,7 +220,7 @@ def main():
                                   for m in skinned}),
         }, f, indent=1)
 
-    print(f"\nwrote {a.out}: {len(skinned)} meshes on 1 armature, {len(actions)} clips")
+    print(f"wrote {a.out}: {len(skinned)} meshes on 1 armature, {len(actions)} clips")
     print(f"wrote {sidecar}")
 
 

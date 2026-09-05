@@ -4,6 +4,9 @@ node_modules/
 assets/models/
 
 # Baked rig: large, and currently broken (see README "Known issue").
+# Rig source, staged locally for the in-browser binder. Not shipped while
+# CFG.tubby.useBakedRig is false; re-stage from assets/models when needed.
+assets/game/rig/
 assets/game/tubbies.glb
 assets/game/tubbies.json
 
