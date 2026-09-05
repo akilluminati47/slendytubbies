@@ -1,5 +1,5 @@
 import { SCHEMA } from "./settings.js";
-import { hashKey, randomKey, ROLE_LABEL } from "../net/client.js";
+import { hashKey, randomKey } from "../net/client.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -245,12 +245,6 @@ export class UI {
 
   /** True while a flash owns the prompt line. */
   get flashing() { return performance.now() < (this.flashUntil || 0); }
-
-  /** Shown once in-game so a player knows which tubby they are. */
-  announceRole(role, isHost) {
-    this.flash(isHost ? `You are ${ROLE_LABEL[role]} — you host`
-                      : `You are ${ROLE_LABEL[role]}`, 4200);
-  }
 
   /* ---------------------------------------------------------------- screens */
 

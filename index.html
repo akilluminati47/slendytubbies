@@ -237,9 +237,26 @@
     transform:none; }
   body.touch #crosshair { opacity:.5; }
 
-  /* Spectating: no crosshair, no gauges - none of it is yours any more. */
-  body.spectating #crosshair, body.spectating #gauges { display:none; }
+  /* Spectating: no crosshair, no gauges, no prompt - none of it is yours. */
+  body.spectating #crosshair, body.spectating #gauges,
+  body.spectating #prompt { display:none; }
   body.spectating #vignette { box-shadow:inset 0 0 260px 90px #000; }
+
+  /* Centred across the full width, but the HUD column lives at the left, so on
+     a narrow screen the banner drops below it rather than running into the
+     custard counter. */
+  #spectate-banner { position:absolute; left:0; right:0;
+    top:clamp(16px,4vh,42px); text-align:center; display:none; }
+  @media (max-width:620px) {
+    #spectate-banner { top:84px; }
+  }
+  body.spectating #spectate-banner { display:block; }
+  #spectate-banner h2 { font-family:var(--hand); font-size:clamp(24px,5vw,38px);
+    letter-spacing:.01em; color:var(--ink); opacity:.92; }
+  #spec-who { margin-top:6px; font-size:clamp(11px,1.8vw,13px); letter-spacing:.18em;
+    text-transform:uppercase; color:#9a9284; }
+  .spec-hint { margin-top:4px; font-size:10px; letter-spacing:.16em;
+    text-transform:uppercase; color:#5d564a; }
   body.touch #hud-left { left:calc(14px + env(safe-area-inset-left));
     top:calc(12px + env(safe-area-inset-top)); }
 </style>
@@ -289,6 +306,14 @@
     </div>
   </div>
   <div id="prompt">Walk over the custard to take it</div>
+
+  <!-- Standing banner while dead in a lobby. Set in the game's own face, up top,
+       where a title belongs - not as a transient line by the reticle. -->
+  <div id="spectate-banner">
+    <h2>Spectator</h2>
+    <p id="spec-who"></p>
+    <p class="spec-hint">Jump to switch player</p>
+  </div>
 </div>
 
 <!-- 1. Title. Any input begins, and that gesture is what unlocks audio. -->
@@ -333,7 +358,7 @@
       <button class="btn" id="public-host">Host public lobby</button>
       <button class="btn ghost" id="lobby-back">Back</button>
     </div>
-    <p class="foot">Anyone can see and join a public lobby. You host as the Guardian.</p>
+    <p class="foot">Open to anyone. You host as the Guardian.</p>
   </div>
 
   <div class="pane hide" id="pane-private">
@@ -347,10 +372,7 @@
       <button class="btn" id="lobby-create" disabled>Create</button>
       <button class="btn ghost" id="lobby-back2">Back</button>
     </div>
-    <p class="foot">
-      The password never leaves your browser — only a hash does, and that hash
-      <em>is</em> the lobby. Private lobbies are not listed anywhere.
-    </p>
+    <p class="foot">Unlisted — only the password finds it.</p>
   </div>
 </div>
 

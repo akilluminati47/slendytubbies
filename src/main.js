@@ -172,7 +172,6 @@ const ui = new UI(settings, net, {
 
     for (const p of net.peers.values()) addRemote(p);
     begin();
-    ui.announceRole(myRole, host);
   },
 
   onResume: () => resume(),
@@ -214,7 +213,6 @@ net.addEventListener("host", (e) => {
   if (e.detail.id !== net.id) return;
   host = true;
   myRole = net.role;
-  ui.announceRole(myRole, true);
 });
 net.addEventListener("world", (e) => {
   if (host) return;                      // we are the authority; ignore echoes
@@ -363,10 +361,6 @@ function beginSpectating() {
   spectator.start(survivors);
   document.body.classList.add("spectating");
   audio.caught();
-  const alive = survivors().length;
-  ui.flash(alive
-    ? "Caught — spectating. Jump to switch player."
-    : "Caught — waiting for the others…", 5000);
 }
 
 function endGame(kind, headline, detail) {
@@ -544,17 +538,10 @@ function gauge(g, v, lit) {
   g.el.classList.toggle("lit", !!lit);
 }
 
-/** While spectating the HUD is just: who you are watching, and the team score. */
+/** Spectating: a standing banner, plus who you are on. */
 function specHud(watching) {
   $("dread").style.opacity = 0;
-  const p = $("prompt");
-  if (!ui.flashing) {
-    const others = survivors().length;
-    p.textContent = watching
-      ? `Watching ${watching.name}${others > 1 ? "  ·  jump to switch" : ""}`
-      : "Nobody left to watch";
-    p.classList.add("on");
-  }
+  $("spec-who").textContent = watching ? watching.name : "Nobody left to watch";
 }
 
 function hud(threat) {
