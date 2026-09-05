@@ -52,6 +52,18 @@ as long as your six seconds of stamina last. A second tubby joins at the halfway
 
 All tuning lives in [`src/game/config.js`](src/game/config.js).
 
+### What the AI actually costs
+
+Profiled rather than assumed, because the obvious suspect was wrong. `Tubby#update` with
+the player in sight — the expensive path, including the line-of-sight check against all 510
+obstacles — measures **4.9 µs**. Two tubbies are ~0.1% of a 16.7 ms frame. Rendering is
+0.54 ms, and 78% of that is the torch's shadow pass.
+
+So the AI was never the problem and has not been "optimised" beyond removing per-frame
+allocations from its hot path (a `Vector3.clone()` per tubby per frame, and a threat array
+that was being rebuilt once per tubby rather than once per frame). That alone took it from
+8.7 µs to 4.9 µs, but the real win was the light fix below.
+
 ### One light, not ten
 
 Each custard dish used to carry its own `PointLight`. Taking one hid that light, which

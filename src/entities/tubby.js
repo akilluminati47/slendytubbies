@@ -130,18 +130,20 @@ export class Tubby {
     while (diff < -Math.PI) diff += Math.PI * 2;
     this.heading += Math.max(-turn * dt, Math.min(turn * dt, diff));
 
-    const before = this.pos.clone();
+    // Scalars, not a cloned Vector3: this runs every frame for every tubby and
+    // the allocation bought nothing.
+    const beforeX = this.pos.x, beforeZ = this.pos.z;
     this.pos.x += Math.sin(this.heading) * speed * dt;
     this.pos.z += Math.cos(this.heading) * speed * dt;
     this.world.resolve(this.pos, T.radius);
-    this.speedNow = this.pos.distanceTo(before) / Math.max(dt, 1e-4);
+    const movedX = this.pos.x - beforeX, movedZ = this.pos.z - beforeZ;
+    this.speedNow = Math.hypot(movedX, movedZ) / Math.max(dt, 1e-4);
 
     // Face where it actually WENT, not where it intended to go. Collision
     // resolution slides it around trees, so steering by `heading` alone makes it
     // moonwalk sideways along a trunk while still pointing down its old path.
-    const mx = this.pos.x - before.x, mz = this.pos.z - before.z;
-    if (mx * mx + mz * mz > 1e-7) {
-      const moved = Math.atan2(mx, mz);
+    if (movedX * movedX + movedZ * movedZ > 1e-7) {
+      const moved = Math.atan2(movedX, movedZ);
       let d = moved - this.facing;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
@@ -189,7 +191,10 @@ export class Tubby {
    */
   netApply(pos, facing, state, dt) {
     if (pos) {
-      this.pos.lerp(new THREE.Vector3(pos[0], 0, pos[2]), Math.min(1, dt * 12));
+      // Guests run this every frame; lerp componentwise rather than allocating.
+      const k = Math.min(1, dt * 12);
+      this.pos.x += (pos[0] - this.pos.x) * k;
+      this.pos.z += (pos[2] - this.pos.z) * k;
     }
     if (typeof facing === "number") {
       let d = facing - this.facing;

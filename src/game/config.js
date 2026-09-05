@@ -31,6 +31,12 @@ export const CFG = {
     bobSprint: 0.024,     // and while sprinting
     bobRoll: 0.0022,      // radians of lean - a hint of it, no more
     bobEase: 5.0,         // how fast the amplitude fades in and out
+    // Bob cycles per metre travelled, NOT per second. Sprinting is a longer
+    // stride, so it must be the LOWER number - fewer, bigger steps over the
+    // same ground. Making it higher (as it was) gave a frantic patter that
+    // read as running on the spot.
+    strideWalk: 6.0,
+    strideSprint: 3.6,
   },
   tubby: {
     // The baked GLB (tools/rig_transfer.py) still binds wrong - see README

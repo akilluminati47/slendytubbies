@@ -96,12 +96,22 @@
   #lobby h2 { margin-bottom:20px; }
   #lobby > * { justify-self:center; width:min(430px,88vw); }
 
-  .tabs { display:flex; gap:0; margin-bottom:22px; border-bottom:1px solid #1d1b16; }
-  .tab { flex:1; cursor:pointer; background:none; border:none; border-bottom:2px solid transparent;
-    color:var(--dim); font:inherit; font-size:12px; letter-spacing:.2em;
-    text-transform:uppercase; padding:11px 0 12px; }
-  .tab:hover { color:var(--ink); }
-  .tab.on { color:var(--ink); border-bottom-color:#6d7f63; }
+  /* A real tab-and-panel pair, not two buttons floating above some fields.
+     The selected tab shares the panel's fill and drops its own bottom border so
+     the two read as one surface - that is what makes it obvious the fields
+     below belong to the tab above them. */
+  .tabs { display:flex; gap:4px; margin-bottom:0; position:relative; z-index:2;
+    border-bottom:1px solid #2a2620; }
+  .tab { flex:1; cursor:pointer; background:none; color:var(--dim); font:inherit;
+    font-size:12px; letter-spacing:.2em; text-transform:uppercase;
+    padding:12px 0 13px; border:1px solid transparent; border-bottom:none;
+    margin-bottom:-1px; }
+  .tab:hover { color:var(--ink); background:rgba(125,155,134,.05); }
+  .tab.on { color:var(--ink); background:#0b0a08; border-color:#2a2620;
+    box-shadow:inset 0 2px 0 0 #7d9b86, 0 -8px 20px -10px rgba(125,155,134,.55); }
+
+  .pane { display:grid; background:#0b0a08; border:1px solid #2a2620;
+    border-top:none; padding:22px 20px 18px; }
 
   .field { display:grid; gap:7px; text-align:left; margin-bottom:18px; }
   .field span { font-size:11px; letter-spacing:.18em; text-transform:uppercase;
@@ -144,7 +154,7 @@
   .btn[disabled]:hover { background:none; }
 
   .foot { font-size:11px; line-height:1.9; color:#4f483d; text-align:center;
-    margin-top:20px; letter-spacing:.02em; }
+    margin:18px 0 0; letter-spacing:.02em; }
   .foot em { color:#6d6659; font-style:normal; }
 
   .menu-hint { color:#5d6b57; }
@@ -152,7 +162,11 @@
   /* Controller focus. Deliberately louder than a browser outline - on a TV,
      across a room, a hairline ring is invisible. */
   .nav-focus { outline:none !important; box-shadow:0 0 0 2px #7d9b86, 0 0 18px rgba(125,155,134,.35); }
-  .tab.nav-focus { box-shadow:inset 0 -2px 0 0 #7d9b86, 0 0 14px rgba(125,155,134,.25); }
+  /* Focus is a full ring; selection is the underline glow above. They stack
+     without becoming the same thing. */
+  .tab.nav-focus { box-shadow:0 0 0 2px #7d9b86 inset, 0 0 16px rgba(125,155,134,.3); }
+  .tab.on.nav-focus { box-shadow:0 0 0 2px #7d9b86 inset, inset 0 2px 0 0 #7d9b86,
+    0 -8px 20px -10px rgba(125,155,134,.55); }
   input[type=range].nav-focus { box-shadow:0 0 0 2px #7d9b86; }
 
   /* XR composites only the WebGL layer, so DOM is invisible there. */
@@ -203,15 +217,15 @@
 <div class="screen hide" id="lobby">
   <h2>Multiplayer</h2>
 
-  <div class="tabs">
-    <button class="tab on" data-tab="public">Public</button>
-    <button class="tab" data-tab="private">Private</button>
-  </div>
-
   <label class="field">
     <span>Your name</span>
     <input id="lobby-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Tubby">
   </label>
+
+  <div class="tabs">
+    <button class="tab on" data-tab="public">Public</button>
+    <button class="tab" data-tab="private">Private</button>
+  </div>
 
   <div class="pane" id="pane-public">
     <div id="public-list" class="lobby-list">Looking for lobbies…</div>

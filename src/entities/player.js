@@ -158,7 +158,10 @@ export class Player {
     } else {
       this.rig.rotation.set(0, 0, 0);
       // No head bob in the air; it reads as a stumble rather than a stride.
-      if (this.grounded) this.bob += speed * dt * (sprint ? 7.4 : 6.0);
+      if (this.grounded) {
+        this.bob += speed * dt *
+          (sprint ? CFG.player.strideSprint : CFG.player.strideWalk);
+      }
 
       // Ease the AMPLITUDE rather than snapping it on at full size. Stepping
       // straight to peak bob on the first frame of movement is most of what

@@ -44,10 +44,14 @@ export class MenuNav {
     if (this.index >= this.items.length) this.index = 0;
   }
 
-  #paint() {
+  #clear() {
     for (const el of document.querySelectorAll(".nav-focus")) {
       el.classList.remove("nav-focus");
     }
+  }
+
+  #paint() {
+    this.#clear();
     const el = this.items[this.index];
     if (!el) return;
     el.classList.add("nav-focus");
@@ -86,13 +90,19 @@ export class MenuNav {
     this.#move(dir);
   }
 
-  /** Called every frame. `nav` comes from GamepadSource#navPoll. */
-  update(nav) {
+  /**
+   * Called every frame. `nav` comes from GamepadSource#navPoll; `padActive`
+   * says whether a controller is actually connected.
+   *
+   * With no pad connected we do nothing at all - a mouse user should never see
+   * a controller focus ring following them around the menus.
+   */
+  update(nav, padActive) {
     const screenEl = this.#activeScreen();
 
-    if (!screenEl) {          // in game: nothing to navigate
+    if (!screenEl || !padActive) {   // in game, or no controller: nothing to do
       this.screen = null;
-      if (document.querySelector(".nav-focus")) this.#paint();
+      this.#clear();
       return;
     }
 
@@ -103,6 +113,11 @@ export class MenuNav {
       this.screen = screenEl.id;
       this.index = 0;
       this.#rescan(screenEl);
+      // Start on the tab that is actually selected, so focus and selection
+      // agree on arrival instead of pointing at two different tabs.
+      const selected = this.items.findIndex((el) => el.classList.contains("on") &&
+        el.classList.contains("tab"));
+      if (selected >= 0) this.index = selected;
       this.#paint();
     } else if (this.items.some((el) => el.offsetParent === null || el.disabled)) {
       // The lobby list repaints under us as players come and go.
@@ -122,9 +137,12 @@ export class MenuNav {
       const tabs = [...screenEl.querySelectorAll(".tab")];
       if (tabs.length) {
         const at = tabs.findIndex((t) => t.classList.contains("on"));
-        tabs[(at + (nav.tabNext ? 1 : -1) + tabs.length) % tabs.length].click();
-        this.index = 0;
+        const next = tabs[(at + (nav.tabNext ? 1 : -1) + tabs.length) % tabs.length];
+        next.click();
         this.#rescan(screenEl);
+        // Follow the tab we just switched to rather than jumping to the top.
+        const moved = this.items.indexOf(next);
+        this.index = moved >= 0 ? moved : 0;
         this.#paint();
       }
     }

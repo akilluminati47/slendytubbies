@@ -85,11 +85,16 @@ function buildWorld(seed) {
  * Everyone the monster should run away from: you, plus every other player in
  * the lobby. Fleeing from only the collector would send it straight through
  * someone else's face.
+ *
+ * Reused, not rebuilt: this is read once per tubby per frame, and handing the
+ * collector a fresh array each time was pure garbage for no benefit.
  */
+const _threats = [];
 function threatPoints() {
-  const pts = [player.pos];
-  for (const r of remotes.values()) pts.push(r.current);
-  return pts;
+  _threats.length = 0;
+  _threats.push(player.pos);
+  for (const r of remotes.values()) _threats.push(r.current);
+  return _threats;
 }
 
 function spawnTubby(kind) {
@@ -292,7 +297,7 @@ function frame() {
   // jump button stays a jump button.
   const inMenu = !running || paused || game.over;
   const nav = input.gamepad.navPoll(dt);
-  if (inMenu) menuNav.update(nav);
+  if (inMenu) menuNav.update(nav, input.gamepad.connected);
   if (nav.start && running) paused ? resume() : pause();
   if (input.intent.menu && running) paused ? resume() : pause();
 
@@ -314,7 +319,7 @@ function frame() {
     if (online) net.sendTook(world.custards.indexOf(got));
     // It bolts - away from everyone, faster than anyone can run, in full view.
     // No despawn: you watch it leave, and it comes back hunting.
-    if (host) for (const t of tubbies) t.flee(threatPoints());
+    if (host) for (const t of tubbies) t.flee(threatPoints());   // once, on pickup
     if (game.found >= game.total) {
       endGame("won", "You got out",
         `All ${game.total} dishes recovered in ${game.elapsed.toFixed(0)} seconds.<br>It is still out there.`);
@@ -323,9 +328,10 @@ function frame() {
   }
 
   let threat = 0;
+  const threats = threatPoints();      // built once, shared by every tubby
   for (const [i, t] of tubbies.entries()) {
     if (host) {
-      if (t.update(dt, player, threatPoints()) === "kill") {
+      if (t.update(dt, player, threats) === "kill") {
         endGame("dead", "Caught", `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
         return;
       }

@@ -50,10 +50,11 @@ export class RemotePlayer {
   }
 
   update(dt, camera) {
-    const prev = this.current.clone();
+    const prevX = this.current.x, prevZ = this.current.z;
     // 12/s converges in well under one network tick without visible stepping.
     this.current.lerp(this.target, Math.min(1, dt * 12));
-    this.speed = prev.distanceTo(this.current) / Math.max(dt, 1e-4);
+    this.speed = Math.hypot(this.current.x - prevX, this.current.z - prevZ) /
+      Math.max(dt, 1e-4);
 
     let d = this.targetYaw - this.yaw;
     while (d > Math.PI) d -= Math.PI * 2;
