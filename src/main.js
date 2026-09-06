@@ -54,6 +54,7 @@ settings.apply(renderer, audio);
 
 audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
 audio.preload("scream", "./assets/game/scream.mp3");
+audio.preload("heartbeat", "./assets/game/heartbeat.mp3");
 
 const hasBakedAssets = Boolean(await loadTubbyAssets());
 
@@ -410,6 +411,8 @@ function endGame(kind, headline, detail) {
  * time would be wallpaper. It fires on the turn: close, hunting, and now inside
  * your view. Once per chase, so glancing back and forth does not machine-gun it.
  */
+let heartTimer = null;
+
 function checkSpotted(dt) {
   if (!player?.alive || spectating) return;
   for (const t of tubbies) {
@@ -420,8 +423,16 @@ function checkSpotted(dt) {
     const look = (-Math.sin(input.yaw) * dx + -Math.cos(input.yaw) * dz) / d;
     if (look < Math.cos(CFG.tubby.lookAngle * Math.PI / 180)) continue;
     t.seenCue = true;
-    audio.playSample("jumpscare", 0.8);
     input.gamepad.rumble(0.7, game.elapsed);
+    // The heart comes in over the back half of the shock and carries on after
+    // it, so the fright trails rather than stopping dead with the noise.
+    audio.playSample("jumpscare", 0.8).then((seconds) => {
+      if (!seconds) return;
+      clearTimeout(heartTimer);
+      heartTimer = setTimeout(() => {
+        if (player?.alive && running) audio.playSample("heartbeat", 0.65);
+      }, seconds * 500);
+    });
   }
 }
 

@@ -23,6 +23,8 @@ const INCLUDE = [
   "vendor",
   "assets/game/face_tinkywinky.png",
   "assets/game/jumpscare.mp3",
+  "assets/game/scream.mp3",
+  "assets/game/heartbeat.mp3",
   "assets/game/fonts",
   // The rigged models. assets/game/rig/chaser is deliberately absent: it is the
   // static TinkyWinkyNPC rip, which has no skeleton and so cannot be animated,

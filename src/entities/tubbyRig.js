@@ -1221,6 +1221,9 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
       axShin: P(t.foot).sub(P(t.shin)).normalize().applyQuaternion(bq(t.shin)),
       axFoot: t.toe && s.toe
         ? P(t.toe).sub(P(t.foot)).normalize().applyQuaternion(bq(t.foot)) : null,
+      // The same direction left in world terms: where this foot points when the
+      // character is standing in its own rest pose.
+      footRest: t.toe && s.toe ? P(t.toe).sub(P(t.foot)).normalize() : null,
     });
   }
 
@@ -1246,6 +1249,13 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const out = [];
   for (const clip of clips) {
     const ref = donorReference(rig, clip, [...sourceOf.values()].filter(Boolean));
+    // Where the donor's own feet point at rest, so the foot can be transferred
+    // as a change from that rather than copied outright.
+    for (const L of legs) {
+      if (!L.footRest) continue;
+      const a = ref.pos.get(L.s.foot), b = ref.pos.get(L.s.toe);
+      L.srcFootRest = a && b ? b.clone().sub(a).normalize() : null;
+    }
     mixer.stopAllAction();
     mixer.clipAction(clip).reset().play();
 
@@ -1338,12 +1348,20 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
         worldQ.set(L.t.shin,
           aimBone(L.t.shin, L.axShin, lower, worldQ.get(L.t.shin) ?? bind.get(L.t.shin).worldQ, sc));
 
-        // The foot points exactly where the donor's foot points, which is what
-        // makes the sole go flat on time rather than a shoe size late.
-        if (L.axFoot) {
+        // The foot swings the way the donor's foot swings - as a change from
+        // each rig's own rest, not as a copied direction.
+        //
+        // Copying it outright put the tubbies permanently en pointe. Bip01_Toe0
+        // sits at the ball of a human foot, an inch or two ahead of the ankle
+        // and well below it, while the tubby's toe bone spans a whole 33cm foot
+        // that should lie flat. Handing the second the first's direction pitched
+        // the sole to 85 degrees nose-down and it never once went flat.
+        if (L.axFoot && L.srcFootRest) {
           L.s.foot.getWorldPosition(tmp);
           L.s.toe.getWorldPosition(dKnee);
-          const want = dKnee.sub(tmp).normalize();
+          const now = dKnee.sub(tmp).normalize();
+          const swing = new THREE.Quaternion().setFromUnitVectors(L.srcFootRest, now);
+          const want = L.footRest.clone().applyQuaternion(swing);
           worldQ.set(L.t.foot,
             aimBone(L.t.foot, L.axFoot, want, worldQ.get(L.t.foot) ?? bind.get(L.t.foot).worldQ, sc));
         }

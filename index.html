@@ -70,14 +70,19 @@
   .gauge .ico { position:absolute; inset:0; margin:auto; width:38%; height:38%;
     transform:translateY(-14%); fill:none; stroke:#8d8676; stroke-width:1.8;
     stroke-linecap:round; stroke-linejoin:round; }
-  /* Both icons come alive when their meter is being spent: the torch when it is
-     on, the runner while the legs are actually going. */
+  /* Both gauges come alive when their meter is being spent: the torch when it is
+     on, the runner while the legs are actually going. The torch takes its ring
+     with it - a lit lamp should read as light, and the ring is most of the
+     shape - while the ring goes flat again the moment it is off, which is how
+     the sprint ring sits when you are not running. */
   #battery.lit .ico { stroke:#fff0cf;
     filter:drop-shadow(0 0 6px rgba(255,226,160,.75)); }
+  #battery.lit .arc { stroke:#ffdf9e;
+    filter:drop-shadow(0 0 7px rgba(255,214,140,.8)); }
   #stamina.lit .ico { stroke:#d8f2e0;
     filter:drop-shadow(0 0 6px rgba(150,240,190,.7)); }
   #stamina.lit .arc { stroke:#a6e0bd; }
-  .gauge .ico { transition:stroke .18s ease, filter .18s ease; }
+  .gauge .ico, .gauge .arc { transition:stroke .18s ease, filter .18s ease; }
   .gauge .val { position:absolute; bottom:14%; font-family:var(--num);
     font-size:clamp(8px,1.7vw,10px); color:#8d8676; letter-spacing:0;
     font-weight:400; }
