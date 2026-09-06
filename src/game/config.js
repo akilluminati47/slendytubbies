@@ -39,10 +39,10 @@ export const CFG = {
     strideSprint: 3.6,
   },
   tubby: {
-    // The baked GLB (tools/rig_transfer.py) still binds wrong - see README
-    // "Known issue". Flip this to true to test a fixed bake; the game plays on
-    // the procedural stand-ins meanwhile.
-    useBakedRig: false,
+    // Load the ripped meshes and retarget the donors' clips onto them at start
+    // up (see tubbyRig.js). Turn this off to play on the procedural stand-ins,
+    // which the game falls back to on its own if anything fails to load.
+    useBakedRig: true,
     height: 1.85,
     radius: 0.45,
     patrolSpeed: 1.5,

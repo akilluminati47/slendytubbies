@@ -2,18 +2,18 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as skinnedClone } from "three/addons/utils/SkeletonUtils.js";
 import { CFG } from "../game/config.js";
-import { buildRiggedTubbies } from "./rigBuilder.js";
+import { buildTubbyRigs, bakeClips } from "./tubbyRig.js";
 
 /**
  * Two ways to get a tubby:
  *
- *   1. assets/game/tubbies.glb exists  ->  real meshes on a real skeleton, real clips.
- *      Built by tools/rig_transfer.py: un_rendem123's clean template meshes bound to a
- *      donor ST3 armature, every donor clip baked in, all five tubbies sharing one armature.
+ *   1. the rigged models load  ->  the real ripped meshes on their own skeletons,
+ *      wearing donor clips retargeted onto them at load time. See tubbyRig.js.
  *
- *   2. it does not exist yet  ->  procedural stand-ins with the same silhouette,
- *      proportions and colours, animated by hand below. The game is fully playable
- *      on these, so nothing is blocked on the asset download.
+ *   2. anything goes wrong, or CFG.tubby.useBakedRig is off  ->  procedural
+ *      stand-ins with the same silhouette, proportions and colours, animated by
+ *      hand below. The game is fully playable on these, so a missing or broken
+ *      asset costs fidelity and nothing else.
  *
  * Both expose the same interface: { root, play(name), update(dt, speed) }.
  */
@@ -66,8 +66,8 @@ export function loadFaceTexture() {
 }
 
 const _v = new THREE.Vector3();
-// The toe joint sits inside the foot, not on its sole.
-const FOOT_SINK = 0.04;
+// A hair of sink so the sole meets the ground rather than hovering on it.
+const FOOT_SINK = 0.01;
 
 export const TUBBIES = {
   tinkywinky: { color: 0x6b3fa0, aerial: "triangle" },
@@ -77,196 +77,183 @@ export const TUBBIES = {
   guardian:   { color: 0xd8d8d0, aerial: "rod" },
 };
 
-let gltfCache = null;
+let rigCache = null;
 
 /**
- * Build the rigged set once, in the browser.
+ * Which donor clip stands in for each game state, best candidate first.
  *
- * There is no Blender step: rigBuilder binds the clean template meshes to the
- * donor's own skeleton at load time, reusing the donor's bind matrix and
- * inverse binds verbatim. See the note at the top of rigBuilder.js for why the
- * offline bake was abandoned.
+ * Both donors are matched against the same table. The rippers named their clips
+ * however they felt like - "dipsy_run_main" on the biped, "TINKY_RUNNING_ARMED"
+ * on the Rigify one - so the Tinky Winky names lead, being specific enough that
+ * they cannot collide with anything in the other donor's 56.
  */
-export async function loadTubbyAssets(base = "./assets/game/rig") {
-  if (gltfCache !== null) return gltfCache;
-  if (!CFG.tubby.useBakedRig) {
-    console.info("[tubbies] rigged models disabled (CFG.tubby.useBakedRig) - " +
-      "using procedural stand-ins");
-    gltfCache = false;
-    return gltfCache;
-  }
-  try {
-    const t0 = performance.now();
+const CLIP_FOR = {
+  idle:        ["idle_lookaround", "idle_pose", "idle1", "_idle", "idle"],
+  walk:        ["tinky_walking", "walk_main", "walk1", "_walk", "walk"],
+  investigate: ["tinky_walking", "walk_main", "walk1", "_walk", "walk"],
+  chase:       ["tinky_running_armed", "run_main", "run1", "_run", "run"],
+  flee:        ["tinky_running_armed", "run_main", "run1", "_run", "run"],
+  attack:      ["axe_hit1", "axe_hit", "attack1", "attack"],
+  death:       ["_death", "death", "ragdoll", "trap_caught_left"],
+  spawn:       ["teleport_forward", "spawn1", "spawn"],
+};
 
-    /*
-     * Two rigs, because the chaser and the players want different animation.
-     *
-     * The chaser rides donor/tinkywinky, which has 27 clips of its OWN - so
-     * Tinky Winky moves like Tinky Winky instead of borrowing Dipsy's walk. It
-     * is also the same character as the mesh being bound, which makes the fit
-     * far more forgiving than transferring across species.
-     *
-     * The players ride donor/dipsy for its 56 clips.
-     */
-    const [chaser, players] = await Promise.all([
-      buildRiggedTubbies(`${base}/donor/tinkywinky/scene.gltf`,
-        { tinkywinky: `${base}/chaser/tinkywinky/scene.gltf` }, CFG.tubby.height),
-      buildRiggedTubbies(`${base}/donor/dipsy/scene.gltf`, {
-        dipsy: `${base}/skin/dipsy/scene.gltf`,
-        laalaa: `${base}/skin/laalaa/scene.gltf`,
-        po: `${base}/skin/po/scene.gltf`,
-        guardian: `${base}/skin/guardian/scene.gltf`,
-      }, CFG.tubby.height),
-    ]);
-
-    for (const [label, rig] of [["chaser", chaser], ["players", players]]) {
-      const bad = validateRig(rig);
-      if (bad) throw new Error(`${label} rig failed validation: ${bad}`);
-    }
-
-    gltfCache = { chaser, players };
-    console.info(`[tubbies] rigs built in ${(performance.now() - t0) | 0}ms - ` +
-      `chaser ${chaser.animations.length} clips, ` +
-      `players ${players.animations.length} clips`);
-  } catch (err) {
-    console.warn("[tubbies] could not build the rigs, using stand-ins:", err.message);
-    gltfCache = false;
-  }
-  return gltfCache;
-}
-
-/** Which rig a given character belongs to. */
-function rigFor(kind) {
-  return kind === "tinkywinky" ? gltfCache.chaser : gltfCache.players;
-}
-
-/**
- * A rig can be structurally perfect and still render nowhere, so check the one
- * thing that actually matters: does a skinned vertex land on its own skeleton?
- */
-function validateRig(rig) {
-  const kinds = Object.keys(rig.byKind);
-  if (!kinds.length) return "no characters were bound";
-  if (!rig.animations?.length) return "no animation clips";
-
-  const mesh = rig.byKind[kinds[0]][0];
-  if (!mesh) return "character has no meshes";
-  rig.root.updateMatrixWorld(true);
-
-  const box = new THREE.Box3();
-  for (const b of rig.skeleton.bones) box.expandByPoint(b.getWorldPosition(new THREE.Vector3()));
-  const span = Math.max(box.max.distanceTo(box.min), 1e-3);
-
-  const pos = mesh.geometry.attributes.position;
-  const si = mesh.geometry.attributes.skinIndex;
-  const sw = mesh.geometry.attributes.skinWeight;
-  const v = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0)).applyMatrix4(mesh.bindMatrix);
-  const acc = new THREE.Vector3();
-  const tmp = new THREE.Matrix4();
-  for (let i = 0; i < 4; i++) {
-    const w = [sw.getX(0), sw.getY(0), sw.getZ(0), sw.getW(0)][i];
-    if (w <= 0) continue;
-    const idx = [si.getX(0), si.getY(0), si.getZ(0), si.getW(0)][i];
-    const bone = rig.skeleton.bones[idx];
-    if (!bone) return `skin index ${idx} out of range`;
-    tmp.multiplyMatrices(bone.matrixWorld, rig.skeleton.boneInverses[idx]);
-    acc.add(v.clone().applyMatrix4(tmp).multiplyScalar(w));
-  }
-  acc.applyMatrix4(mesh.bindMatrixInverse).applyMatrix4(mesh.matrixWorld);
-
-  const dist = box.distanceToPoint(acc);
-  if (dist > span * 0.25) {
-    return `a skinned vertex sits ${dist.toFixed(2)} from a skeleton only ` +
-      `${span.toFixed(2)} across`;
+function pickClip(clips, keys) {
+  for (const key of keys) {
+    // Match on the part after "|": this donor's skeleton is literally called
+    // "..._dipsy_chainsaw_ref_skeleton", which would false-positive on anything.
+    const hit = clips.find((c) => c.name.split("|").pop().toLowerCase().includes(key));
+    if (hit) return hit;
   }
   return null;
 }
 
+/**
+ * Resolve every game state to a donor clip, then bake the distinct set once.
+ *
+ * Baking costs about 5ms a second of clip, so this deliberately bakes the eight
+ * the game asks for rather than all 56 - and it bakes each clip once even when
+ * three states share it, which walk, investigate and the two run states do.
+ */
+function bakeStates(character, rig, height) {
+  const wanted = new Map();
+  const forState = {};
+  for (const [state, keys] of Object.entries(CLIP_FOR)) {
+    const clip = pickClip(rig.donor.animations, keys);
+    if (!clip) continue;
+    forState[state] = clip.name;
+    wanted.set(clip.name, clip);
+  }
+
+  const baked = bakeClips(character, rig, [...wanted.values()], height);
+  const byName = new Map(baked.map((c) => [c.name, c]));
+  character.byState = new Map(
+    Object.entries(forState)
+      .map(([state, name]) => [state, byName.get(name)])
+      .filter(([, clip]) => clip));
+  return character;
+}
+
+/**
+ * Build every character once, in the browser. There is no offline bake.
+ *
+ * Two donors, because the chaser and the players want different animation. The
+ * players ride donor/dipsy for its 56 clips of ordinary locomotion; the chaser
+ * rides donor/tinkywinky, which has 27 of its own, so Tinky Winky moves like
+ * Tinky Winky. See tubbyRig.js for what had to be corrected in the skins first.
+ */
+export async function loadTubbyAssets(base = "./assets/game/rig") {
+  if (rigCache !== null) return rigCache;
+  if (!CFG.tubby.useBakedRig) {
+    console.info("[tubbies] rigged models disabled (CFG.tubby.useBakedRig) - " +
+      "using procedural stand-ins");
+    rigCache = false;
+    return rigCache;
+  }
+  try {
+    const t0 = performance.now();
+    const [chaser, players] = await Promise.all([
+      buildTubbyRigs(`${base}/donor/tinkywinky/scene.gltf`,
+        { tinkywinky: `${base}/skin/tinkywinky/scene.gltf` }),
+      buildTubbyRigs(`${base}/donor/dipsy/scene.gltf`, {
+        dipsy: `${base}/skin/dipsy/scene.gltf`,
+        laalaa: `${base}/skin/laalaa/scene.gltf`,
+        po: `${base}/skin/po/scene.gltf`,
+        guardian: `${base}/skin/guardian/scene.gltf`,
+      }),
+    ]);
+
+    const characters = {};
+    for (const rig of [chaser, players]) {
+      for (const [kind, character] of Object.entries(rig.characters)) {
+        characters[kind] = bakeStates(character, rig, CFG.tubby.height);
+      }
+    }
+
+    const short = Object.entries(characters)
+      .filter(([, c]) => c.byState.size < 4)
+      .map(([kind, c]) => `${kind} has only ${c.byState.size} states`);
+    if (short.length) throw new Error(short.join(", "));
+
+    rigCache = characters;
+    console.info(`[tubbies] ${Object.keys(characters).length} rigs built in ` +
+      `${(performance.now() - t0) | 0}ms, ` +
+      `${characters.po?.byState.size ?? 0} states each`);
+  } catch (err) {
+    console.warn("[tubbies] could not build the rigs, using stand-ins:", err.message);
+    rigCache = false;
+  }
+  return rigCache;
+}
+
+/**
+ * A second tubby of the same kind needs its own skeleton, or the two animate in
+ * lockstep and stand in the same place.
+ *
+ * SkeletonUtils.clone rebinds each mesh to its CURRENT world matrix, but these
+ * rips bind with an identity bindMatrix and rely on AttachedBindMode cancelling
+ * the mesh transform out. Mixing the two conventions puts the copy back at the
+ * wrong size, so the source's bindMatrix is restored afterwards.
+ *
+ * In practice the roles are all distinct - the host is the guardian, guests take
+ * laalaa, po and dipsy, and the chaser is always Tinky Winky - so this is a
+ * safety net rather than a path the game normally takes.
+ */
+function cloneCharacter(character) {
+  const scene = skinnedClone(character.scene);
+  const sources = [];
+  character.scene.traverse((o) => { if (o.isSkinnedMesh) sources.push(o); });
+  const copies = [];
+  scene.traverse((o) => { if (o.isSkinnedMesh) copies.push(o); });
+  copies.forEach((m, i) => {
+    m.bind(m.skeleton, sources[i].bindMatrix);
+    m.frustumCulled = false;
+    m.castShadow = true;
+  });
+  return { ...character, scene, meshes: copies, target: copies[0] };
+}
+
 export function makeTubby(kind) {
   const spec = TUBBIES[kind] ?? TUBBIES.tinkywinky;
-  if (!gltfCache) return new ProcTubby(spec);
-  const rig = rigFor(kind);
-  return rig?.byKind?.[kind] ? new RiggedTubby(rig, kind, spec) : new ProcTubby(spec);
+  const character = rigCache && rigCache[kind];
+  return character ? new RiggedTubby(character, spec) : new ProcTubby(spec);
 }
 
 /* ------------------------------------------------------------------ real ---- */
 
 class RiggedTubby {
-  constructor(rig, kind, spec) {
-    // An independent copy per tubby: two on screen must not share a skeleton,
-    // or they animate in lockstep and stand in the same place.
+  constructor(character, spec) {
+    const mine = character.taken ? cloneCharacter(character) : character;
+    character.taken = true;
+
     this.root = new THREE.Group();
-    // No scaling here: the builder already scaled the rig and rebound every
-    // mesh against the new world matrix. Scaling after a bind is exactly what
-    // made these render at the wrong size.
-    const inner = skinnedClone(rig.root);
-    inner.position.y = -rig.measured.feet;
-    this.root.add(inner);
-    this.inner = inner;
+    // No scaling here: bakeClips already scaled the rig. Scaling after the fact
+    // is exactly what made these render at the wrong size before.
+    this.inner = mine.scene;
+    this.inner.position.y = -mine.feet;
+    this.root.add(this.inner);
 
-    // These rips have root motion baked into the clips, so a fixed offset that
-    // stands the bind pose on the ground leaves an idling tubby hovering a
-    // metre up. Track the actual foot bones instead and plant them every frame.
+    // These clips carry root motion, so a fixed offset that stands the bind pose
+    // on the ground leaves an idling tubby hovering. Track the foot bones and
+    // plant the lowest one every frame instead.
     this.footBones = [];
-    inner.traverse((o) => {
-      if (o.isBone && /Bip01_[LR]_(Toe0|Foot)/i.test(o.name)) this.footBones.push(o);
+    this.inner.traverse((o) => {
+      if (o.isBone && /^(foot|toe)[_ ][lr]([_ ]|$)/i.test(o.name)) this.footBones.push(o);
     });
+    this.soleDrop = this.#measureSoleDrop();
 
-    const mine = `tubby_${kind}_`;
-    let shown = 0;
-    inner.traverse((o) => {
-      if (!o.isSkinnedMesh) return;
-      o.visible = o.name.startsWith(mine);
-      o.castShadow = o.visible;
-      // three.js derives a SkinnedMesh's bounding sphere from its unskinned
-      // geometry, which culls a character standing right in front of you.
-      o.frustumCulled = false;
-      if (o.visible) shown++;
-    });
-    if (!shown) console.warn(`[tubbies] nothing named ${mine}* in the rig`);
-
-    this.mixer = new THREE.AnimationMixer(inner);
-    this.clips = rig.animations;
+    this.mixer = new THREE.AnimationMixer(mine.target);
+    this.byState = mine.byState;
     this.current = null;
+    this.currentName = null;
     this.spec = spec;
-    this.variant = Math.random();
-    this.play("idle");
-  }
-
-  /**
-   * Donor rigs name clips whatever the original ripper felt like - here it is
-   * "<skeleton>|dipsy_run_main". So each game state maps to an ordered list of
-   * candidate substrings, best first, and we take the first that hits.
-   */
-  static ALIASES = {
-    idle:        ["idle1", "_idle", "idle"],
-    walk:        ["walk_main", "walk1", "_walk", "walk"],
-    investigate: ["walk_main", "walk1", "_walk", "walk"],
-    chase:       ["run_main", "run1", "_run", "run", "walk_main"],
-    flee:        ["run_main", "run1", "_run", "run"],
-    attack:      ["attack1", "attack"],
-    death:       ["_death", "death", "ragdoll"],
-    spawn:       ["spawn1", "spawn"],
-  };
-
-  #candidates(name) {
-    const keys = RiggedTubby.ALIASES[name] ?? [name];
-    for (const key of keys) {
-      // Match on the part after "|" so the skeleton name cannot produce a false
-      // positive - this donor's skeleton is literally called "..._dipsy_...".
-      const hits = this.clips.filter((c) => c.name.split("|").pop().toLowerCase().includes(key));
-      if (hits.length) return hits;
-    }
-    return [];
+    this.play("idle", 0);
   }
 
   play(name, fade = 0.25) {
     if (this.currentName === name) return;
-    const hits = this.#candidates(name);
-    if (!hits.length) return;
-    // 56 clips is a gift: pick a variant per tubby so two on screen at once are
-    // not lockstep copies of each other.
-    const clip = hits[Math.floor(this.variant * hits.length) % hits.length];
+    const clip = this.byState.get(name);
+    if (!clip) return;
     const next = this.mixer.clipAction(clip).reset().setEffectiveWeight(1).fadeIn(fade).play();
     if (this.current) this.current.fadeOut(fade);
     this.current = next;
@@ -281,9 +268,35 @@ class RiggedTubby {
   }
 
   /**
-   * Put the lowest foot bone on the root's own height, whatever the clip is
-   * doing. Two bone lookups per frame, and it means every animation lands on
-   * the ground instead of only the one the offset was measured from.
+   * How far the sole hangs below the lowest foot JOINT, in the bind pose.
+   *
+   * Measured rather than guessed, because the ankle sits well up inside the
+   * foot: planting the joint itself on the ground buried these tubbies 13cm
+   * deep. One pass over the vertices at construction, never per frame.
+   */
+  #measureSoleDrop() {
+    if (!this.footBones.length) return 0;
+    this.inner.position.y = 0;
+    this.inner.updateMatrixWorld(true);
+    let joint = Infinity;
+    for (const b of this.footBones) joint = Math.min(joint, b.getWorldPosition(_v).y);
+    let sole = Infinity;
+    this.inner.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      const pos = o.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        o.getVertexPosition(i, _v);
+        sole = Math.min(sole, _v.applyMatrix4(o.matrixWorld).y);
+      }
+    });
+    return Number.isFinite(joint) && Number.isFinite(sole) ? joint - sole : 0;
+  }
+
+  /**
+   * Stand the sole on the root's own height, whatever the clip is doing, so
+   * every animation lands on the ground rather than only the one an offset
+   * happened to be measured from. These clips carry root motion, so a fixed
+   * offset is not enough on its own.
    */
   #plantFeet() {
     if (!this.footBones.length) return;
@@ -294,8 +307,8 @@ class RiggedTubby {
       lowest = Math.min(lowest, b.getWorldPosition(_v).y);
     }
     if (!Number.isFinite(lowest)) return;
-    // A little sink so the sole meets the ground rather than the joint centre.
-    this.inner.position.y = this.root.position.y - lowest - FOOT_SINK;
+    this.inner.position.y =
+      this.root.position.y - lowest + this.soleDrop - FOOT_SINK;
   }
 }
 

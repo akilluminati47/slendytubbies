@@ -164,8 +164,10 @@ export class Tubby {
 
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
+    // Patrolling counts as walking. It used to fall through to idle, which was
+    // harmless on the procedural stand-ins and foot-skates badly on a real clip.
     this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
-      : this.state === "investigate" ? "walk" : "idle");
+      : this.speedNow > 0.15 ? "walk" : "idle");
     this.model.update(dt, this.speedNow);
 
     if (player.alive && this.state === "chase" && !fleeing &&
@@ -207,7 +209,7 @@ export class Tubby {
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
     this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
-      : this.state === "investigate" ? "walk" : "idle");
+      : this.state === "patrol" || this.state === "investigate" ? "walk" : "idle");
     this.model.update(dt, this.state === "chase" ? 5 : 1.5);
   }
 
