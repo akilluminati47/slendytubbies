@@ -18,31 +18,70 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
  */
 
 /**
- * Target bone (in the skin) -> source bone (in the donor).
+ * Target bone (in the skin) -> source bone (in the donor), per donor rig.
  *
- * The donor is a 3ds Max biped and the skins are named plainly, so this table is
- * the whole translation. Both sides carry numeric suffixes (Bip01_Pelvis_02_13,
- * Body 1_01) which resolve() strips by matching on prefix.
+ * There are two donors and they share nothing but a skeleton's worth of joints.
+ * donor/dipsy is a 3ds Max biped out of Garry's Mod, with 56 clips of walking,
+ * running, attacking and dying; the players ride that one. donor/tinkywinky is a
+ * Rigify rig with 27 clips of its own, including TINKY_WALKING and AXE_HIT, so
+ * the chaser moves like Tinky Winky rather than borrowing Dipsy's gait.
+ *
+ * resolve() matches on a normalised prefix, so the exporter's numeric suffixes
+ * (Bip01_Pelvis_02_13, upper_arm.R_025_32, Body 1_01) do not need writing out.
  */
-const BONE_PAIRS = [
-  ["Body 1", "Bip01_Pelvis"],
-  ["Body 2", "Bip01_Spine1"],
-  ["Head", "Bip01_Head"],
-  ["Arm R1", "Bip01_R_UpperArm"],
-  ["Arm R2", "Bip01_R_Forearm"],
-  ["Hand R", "Bip01_R_Hand"],
-  ["Arm L1", "Bip01_L_UpperArm"],
-  ["Arm L2", "Bip01_L_Forearm"],
-  ["Hand L", "Bip01_L_Hand"],
-  ["Leg R1", "Bip01_R_Thigh"],
-  ["Leg R2", "Bip01_R_Calf"],
-  ["Foot R", "Bip01_R_Foot"],
-  ["Toe R", "Bip01_R_Toe0"],
-  ["Leg L1", "Bip01_L_Thigh"],
-  ["Leg L2", "Bip01_L_Calf"],
-  ["Foot L", "Bip01_L_Foot"],
-  ["Toe L", "Bip01_L_Toe0"],
-];
+const DONOR_MAPS = {
+  biped: [
+    ["Body 1", "Bip01_Pelvis"],
+    ["Body 2", "Bip01_Spine1"],
+    ["Head", "Bip01_Head"],
+    ["Arm R1", "Bip01_R_UpperArm"],
+    ["Arm R2", "Bip01_R_Forearm"],
+    ["Hand R", "Bip01_R_Hand"],
+    ["Arm L1", "Bip01_L_UpperArm"],
+    ["Arm L2", "Bip01_L_Forearm"],
+    ["Hand L", "Bip01_L_Hand"],
+    ["Leg R1", "Bip01_R_Thigh"],
+    ["Leg R2", "Bip01_R_Calf"],
+    ["Foot R", "Bip01_R_Foot"],
+    ["Toe R", "Bip01_R_Toe0"],
+    ["Leg L1", "Bip01_L_Thigh"],
+    ["Leg L2", "Bip01_L_Calf"],
+    ["Foot L", "Bip01_L_Foot"],
+    ["Toe L", "Bip01_L_Toe0"],
+  ],
+  // Rigify. Note the skin has two spine joints to Rigify's three, so Body 2 maps
+  // to the chest rather than the waist. forearm.R is safe against
+  // forearmTwist.R, which does not share its prefix once the dot is kept.
+  rigify: [
+    ["Body 1", "spine.001"],
+    ["Body 2", "spine.003"],
+    ["Head", "head"],
+    ["Arm R1", "upper_arm.R"],
+    ["Arm R2", "forearm.R"],
+    ["Hand R", "hand.R"],
+    ["Arm L1", "upper_arm.L"],
+    ["Arm L2", "forearm.L"],
+    ["Hand L", "hand.L"],
+    ["Leg R1", "thigh.R"],
+    ["Leg R2", "shin.R"],
+    ["Foot R", "foot.R"],
+    ["Toe R", "toe.R"],
+    ["Leg L1", "thigh.L"],
+    ["Leg L2", "shin.L"],
+    ["Foot L", "foot.L"],
+    ["Toe L", "toe.L"],
+  ],
+};
+
+/** Whichever map names the most of this donor's actual bones. */
+function pickDonorMap(sourceBones) {
+  let best = null, bestScore = -1;
+  for (const [name, pairs] of Object.entries(DONOR_MAPS)) {
+    const score = pairs.filter(([, src]) => resolve(sourceBones, src)).length;
+    if (score > bestScore) { bestScore = score; best = { name, pairs, score }; }
+  }
+  return best;
+}
 
 const HIP_TARGET = "Body 1";
 
@@ -76,10 +115,15 @@ const REST_POSE = [
  * for names like "Bip01_Head".
  */
 function resolve(bones, prefix) {
-  // GLTFLoader replaces spaces in node names with underscores, so "Body 1_01"
-  // arrives as "Body_1_01". Normalise both sides rather than writing the table
-  // in loader-mangled form, which would not survive a different exporter.
-  const norm = (x) => x.toLowerCase().replace(/[ _]+/g, "_");
+  // GLTFLoader runs every node name through PropertyBinding.sanitizeNodeName,
+  // which turns whitespace into underscores and DELETES the characters reserved
+  // by the animation path syntax, "[ ] . : /". So "Body 1_01" arrives as
+  // "Body_1_01" and Rigify's "upper_arm.R_025_32" as "upper_armR_025_32", with
+  // the dot simply gone. Normalise both sides the same way rather than writing
+  // the tables in loader-mangled form, which would not survive a different
+  // exporter - and note that dropping the dot is what keeps "forearm.R" from
+  // colliding with "forearmTwist.R".
+  const norm = (x) => x.toLowerCase().replace(/[[\].:/]/g, "").replace(/[ _]+/g, "_");
   const p = norm(prefix);
   const hits = bones.filter((b) => {
     const n = norm(b.name);
@@ -542,6 +586,10 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
   const sourceBones = donorMeshes[0].skeleton.bones;
   const donorHeight = poseHeight(donorMeshes).height;
   const donorBind = snapshotBind(sourceBones);
+  const map = pickDonorMap(sourceBones);
+  console.info(`[rig] donor ${donorUrl.split("/").slice(-2)[0]}: ` +
+    `${map.name} rig, ${map.score}/${map.pairs.length} bones, ` +
+    `${donor.animations.length} clips`);
 
   const characters = {};
   for (const [kind, url] of Object.entries(skinUrls)) {
@@ -565,7 +613,7 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
     // against its own bones so a renamed joint fails loudly rather than silently.
     const pairs = [];
     const missing = [];
-    for (const [t, srcName] of BONE_PAIRS) {
+    for (const [t, srcName] of map.pairs) {
       const tb = resolve(targetBones, t);
       const sb = resolve(sourceBones, srcName);
       if (tb && sb) pairs.push([tb, sb]);
@@ -595,7 +643,7 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
       clips: null,
     };
     console.info(`[rig] ${kind}: ${targetBones.length} joints, ` +
-      `${pairs.length}/${BONE_PAIRS.length} mapped, ` +
+      `${pairs.length}/${map.pairs.length} mapped, ` +
       `native ${characters[kind].nativeHeight.toFixed(2)}, ` +
       `skeleton grown x${fitted.k} to span ${fitted.boneSpan}/${fitted.meshSpan}, ` +
       `${eyes.moved} facial parts seated x${eyes.scale}`);
