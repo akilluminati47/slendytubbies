@@ -145,6 +145,26 @@ const DAMPED = [["Body 2", 0.75]];
 const SPLAY = 0.2;
 const STANCE = 0.028;
 
+/**
+ * How much of the donor's knee lift to keep.
+ *
+ * donor/dipsy's walk peaks at 92 degrees of knee flexion. That is a march, not
+ * a walk - a person walking bends a knee about 60 to 70 - and the retarget was
+ * reproducing it exactly, both sides, to within two degrees. Faithful, and it
+ * reads as one leg folding up under the body while the other stays straight.
+ *
+ * A knee bends because the ankle is closer to the hip than the leg is long, so
+ * the way to unbend one is to push the ankle further away, part of the distance
+ * back out towards full extension. 0 keeps the donor's march; 1 would lock the
+ * leg straight.
+ *
+ * Scaling the ankle's HEIGHT was the wrong handle and did the opposite of what
+ * it looks like it does: the ankle sits below the hip, so shrinking that offset
+ * carries the foot up towards the body, shortens the reach, and folds the knee
+ * further than the donor ever did.
+ */
+const STRAIGHTEN = 0.34;
+
 const REST_POSE = [
   ["Arm R1", 0, 0, 1, 60], ["Arm R2", 0, 0, 1, -6], ["Hand R", 0, 0, 1, -2],
   ["Arm L1", 0, 0, 1, -60], ["Arm L2", 0, 0, 1, 6], ["Hand L", 0, 0, 1, 2],
@@ -1352,6 +1372,16 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
           .add(myHip);
         // And out onto its own line, so the two feet do not tread one groove.
         target.x += L.out * STANCE * (L.l1 + L.l2);
+        // Out towards full extension, which is the direction that unbends a
+        // knee. See STRAIGHTEN.
+        {
+          const full = L.l1 + L.l2;
+          const now = target.distanceTo(myHip);
+          if (now > 1e-6) {
+            const want = Math.min(full * 0.995, now + (full - now) * STRAIGHTEN);
+            target.sub(myHip).multiplyScalar(want / now).add(myHip);
+          }
+        }
 
         // Knee hint: where the donor puts its knee, off the hip-to-ankle line,
         // then tipped out onto this leg's own side. See SPLAY.
