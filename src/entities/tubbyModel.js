@@ -175,6 +175,7 @@ function contentBox(data, w, h, accept) {
   return x1 < x0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
 
+
 /**
  * Derive a normal map for the chaser's mask from the mask itself.
  *
@@ -350,10 +351,11 @@ function buildMaskPlate(character, { face, normalMap }) {
     ? head.localToWorld(character.sockets[0].local.clone())
         .distanceTo(head.localToWorld(character.sockets[1].local.clone()))
     : radius;
-  // Wide enough to bury the sockets and the snout, no wider: bent onto a sphere,
-  // a plate much past the head's own radius wraps round towards the ears.
-  const width = Math.max(gap * 2.3, radius * 1.3);
-  const height = width * 1.16;
+  // Big enough that the mask reaches the edges of the face it replaces, rather
+  // than sitting on it as a smaller oval with tubby showing round the outside.
+  // Past about 1.8 radii it starts wrapping towards the ears.
+  const width = Math.max(gap * 3.1, radius * 1.62);
+  const height = width * 1.2;
 
   // --- a plane, bent onto that sphere --------------------------------------
   const SEG = 20;
@@ -384,8 +386,8 @@ function buildMaskPlate(character, { face, normalMap }) {
     normalMap,
     normalScale: new THREE.Vector2(1.35, 1.35),
     transparent: true,
-    // Cut rather than blend: a blended edge over a head this dark haloes.
-    alphaTest: 0.45,
+    // Cut, not blended: a soft edge over a head this dark haloes.
+    alphaTest: 0.5,
     roughness: 0.62,
     side: THREE.DoubleSide,
   });
@@ -446,7 +448,16 @@ async function wearHorrorFace(character) {
   const mask = document.createElement("canvas");
   mask.width = box.w;
   mask.height = box.h;
-  mask.getContext("2d").drawImage(cut, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+  const maskCtx = mask.getContext("2d", { willReadFrequently: true });
+  maskCtx.drawImage(cut, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+
+  // Push the skin outwards into the transparent corners until it runs edge to
+  // edge. The rip is an oval on a field of nothing, and cutting that oval out
+  // left a visible seam where it stopped and the head began - a mask sitting on
+  // a face rather than being one.
+  // Nothing is invented outside the face. Growing the skin into the corners and
+  // softening it only ever produced a halo in the colour the key was removing;
+  // the mask is simply drawn bigger instead, and cut out where it ends.
 
   const faceTex = new THREE.CanvasTexture(mask);
   faceTex.colorSpace = THREE.SRGBColorSpace;
@@ -461,6 +472,9 @@ async function wearHorrorFace(character) {
   const normalMap = new THREE.CanvasTexture(maskNormalMap(mask, null));
   normalMap.flipY = false;
   normalMap.needsUpdate = true;
+
+  // Now that the mask exists, the rest of the chaser can be made out of it.
+  const greyed = greyTheChaser(character, cheekRamp(mask));
 
   const plate = buildMaskPlate(character, { face: faceTex, normalMap });
   if (!plate) {
@@ -484,7 +498,8 @@ async function wearHorrorFace(character) {
   // the empty sockets from the side.
   fillSockets(character, { sclera: 0x05050a, bulge: 0.85 });
 
-  console.info(`[tubbies] chaser wears a mask plate ${plate.width} across ` +
+  console.info(`[tubbies] chaser wears a mask plate ${plate.width} across, ` +
+    `${greyed} sheets recoloured through its own cheeks, ` +
     `on a head of ${plate.radius}, ${hidden} eye meshes hidden, ` +
     `relief from a generated normal map`);
   return true;
@@ -509,17 +524,20 @@ async function wearHorrorFace(character) {
  */
 
 /**
- * Flag the vertices that belong to the screen, as a mesh attribute.
+ * Flag the screen's vertices, and give them a coordinate of their own.
  *
- * A bounding box in texture space was the obvious way and it is wrong: the face
- * and the screen share one sheet, their islands interleave, and a rectangle
- * drawn round the screen's texture coordinates also caught the top of the face.
- * Po walked around with a patch of static on its forehead.
+ * Two things are wrong with reading the belly screen through its texture
+ * coordinates. The first is that the face and the screen share one sheet and
+ * their islands interleave, so a rectangle drawn round the screen's UVs also
+ * caught the top of the face - Po walked around with static on its forehead.
+ * The second is that the screen's UVs are mirrored down the middle, so anything
+ * generated from them comes out bookmatched, a Rorschach blot rather than snow.
  *
- * Which triangles are the screen is not a texture question at all - it is a
- * question about where they sit on the body, and the answer there is exact.
+ * Both go away if the screen is described in its own terms: which vertices it is,
+ * and where each one sits across the panel. Position answers both, and position
+ * does not mirror.
  */
-function markScreenVertices(mesh) {
+function markScreen(mesh) {
   const pos = mesh.geometry.attributes.position;
   const v = new THREE.Vector3();
   let lo = Infinity, hi = -Infinity;
@@ -532,84 +550,213 @@ function markScreenVertices(mesh) {
   const cut = lo + (hi - lo) * 0.5;
 
   const flag = new Float32Array(pos.count);
-  const box = { u0: Infinity, v0: Infinity, u1: -Infinity, v1: -Infinity };
-  const uv = mesh.geometry.attributes.uv;
+  const box = new THREE.Box3();
+  const raw = [];
   let n = 0;
   for (let i = 0; i < pos.count; i++) {
     mesh.getVertexPosition(i, v);
-    if (v.applyMatrix4(mesh.matrixWorld).y > cut) continue;
+    const world = v.clone().applyMatrix4(mesh.matrixWorld);
+    raw.push(v.clone());
+    if (world.y > cut) continue;
     flag[i] = 1;
+    box.expandByPoint(v);
     n++;
-    if (!uv) continue;
-    const u = uv.getX(i), w = uv.getY(i);
-    box.u0 = Math.min(box.u0, u); box.u1 = Math.max(box.u1, u);
-    box.v0 = Math.min(box.v0, w); box.v1 = Math.max(box.v1, w);
   }
   if (n < 4) return null;
+
+  // Across and up the panel, 0..1, from the geometry rather than the sheet.
+  const size = box.getSize(new THREE.Vector3());
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    uv[i * 2] = size.x > 1e-6 ? (raw[i].x - box.min.x) / size.x : 0;
+    uv[i * 2 + 1] = size.y > 1e-6 ? (raw[i].y - box.min.y) / size.y : 0;
+  }
   mesh.geometry.setAttribute("aScreen", new THREE.BufferAttribute(flag, 1));
-  return box;
+  mesh.geometry.setAttribute("aScreenUv", new THREE.BufferAttribute(uv, 2));
+  return true;
 }
 
 const tvClock = { value: 0 };
 
 /**
+ * A seeded set of CRT faults, so no two sets are the same.
+ *
+ * Every one of these is a real thing a dying television does, and every one is
+ * rolled per spawn: the tube's convergence, how badly the frame is holding, how
+ * fast the roll bar crawls, how coarse the shadow mask is. `menace` biases the
+ * roll - the chaser always takes the worst set it can, so its screen is the one
+ * that looks wrong from across a clearing.
+ */
+function rollTube(seed, menace = 0) {
+  // Cheap deterministic stream from one integer.
+  let s = (seed * 2654435761) >>> 0;
+  const rnd = () => (((s = (s * 1664525 + 1013904223) >>> 0) >>> 8) / 16777216);
+  const pick = (lo, hi) => {
+    const a = rnd(), b = rnd();
+    // Two rolls, keep the worse one, when this tube is supposed to be nastier.
+    return lo + (hi - lo) * (menace ? Math.max(a, b) : a);
+  };
+  return {
+    cells: new THREE.Vector2(18 + Math.round(pick(0, 14)), 13 + Math.round(pick(0, 10))),
+    triad: 22 + pick(0, 26),          // shadow-mask pitch across the panel
+    rollSpeed: 0.06 + pick(0, 0.5),   // how fast the frame slips
+    skew: -0.55 + pick(0, 1.1),       // and how far off level it slips
+    warp: 0.03 + pick(0, 0.09),       // barrel on the glass, gently
+    bleed: 0.1 + pick(0, 0.45),       // convergence error, colour off the edges
+    jitter: pick(0, 0.5),             // horizontal tearing
+    tick: 10 + pick(0, 12),           // frames a second of snow
+  };
+}
+
+/**
  * Make the screen on this character's belly play static.
  *
- * Returns false when the mesh does not carry a screen, which is every case
- * except the one mesh that does.
+ * The panel is drawn in the fragment shader rather than as a texture: it wants
+ * to move, and a movie of static is a lot of bytes to ship for something you
+ * mostly see out of the corner of your eye.
  */
-function animateBellyTV(character) {
+function animateBellyTV(character, { seed = 1, menace = 0 } = {}) {
   const face = character.meshes.find((m) => /face/i.test(m.material?.name ?? ""));
-  if (!face) return false;
+  if (!face) return null;
   character.scene.updateMatrixWorld(true);
-  const box = markScreenVertices(face);
-  if (!box) return false;
+  if (!markScreen(face)) return null;
 
-  // Cloned, or all five would share one material and the last one to be set up
-  // would win the screen for everybody.
+  const tube = rollTube(seed, menace);
+
+  // Cloned, or all five share one material and the last one set up wins the
+  // screen for everybody.
   face.material = face.material.clone();
   face.material.onBeforeCompile = (shader) => {
     shader.uniforms.uTvTime = tvClock;
-    shader.uniforms.uTvBox = { value: new THREE.Vector4(box.u0, box.v0, box.u1, box.v1) };
-    // A varying carries the flag through, so the test is "is this the screen"
-    // rather than "is this near the screen on the sheet".
+    shader.uniforms.uCells = { value: tube.cells };
+    shader.uniforms.uTube = {
+      value: new THREE.Vector4(tube.triad, tube.rollSpeed, tube.skew, tube.warp),
+    };
+    shader.uniforms.uTube2 = {
+      value: new THREE.Vector3(tube.bleed, tube.jitter, tube.tick),
+    };
+
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>
         attribute float aScreen;
-        varying float vScreen;`)
+        attribute vec2 aScreenUv;
+        varying float vScreen;
+        varying vec2 vScreenUv;`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>
-        vScreen = aScreen;`);
+        vScreen = aScreen;
+        vScreenUv = aScreenUv;`);
+
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
         uniform float uTvTime;
-        uniform vec4 uTvBox;
+        uniform vec2 uCells;
+        uniform vec4 uTube;
+        uniform vec3 uTube2;
         varying float vScreen;
-        // Cheap hash. Quality does not matter here - television static is the
-        // one thing in graphics where a bad random number generator is correct.
+        varying vec2 vScreenUv;
+        // Quality does not matter here. Television static is the one place in
+        // graphics where a bad random number generator is the correct one.
         float tvHash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
         }`)
       .replace("#include <map_fragment>", `#include <map_fragment>
-        {
-          vec2 tvT = (vMapUv - uTvBox.xy) / (uTvBox.zw - uTvBox.xy);
-          if (vScreen > 0.5) {
-            // Chunky cells, and a clock that ticks rather than slides, so it
-            // reads as frames of static instead of a drifting wash.
-            vec2 cell = floor(tvT * vec2(26.0, 20.0));
-            float tick = floor(uTvTime * 14.0);
-            float r = tvHash(cell + tick * 1.7);
-            float g = tvHash(cell + tick * 1.7 + 41.0);
-            float b = tvHash(cell + tick * 1.7 + 97.0);
-            // Mostly luminance with a little colour fringing, the way an aerial
-            // picture breaks up, rather than confetti.
-            float lum = (r + g + b) / 3.0;
-            vec3 snow = mix(vec3(lum), vec3(r, g, b), 0.35);
-            diffuseColor.rgb = pow(snow, vec3(0.85)) * 0.92 + 0.04;
-          }
+        if (vScreen > 0.5) {
+          float triad = uTube.x, rollSpeed = uTube.y, skew = uTube.z, warp = uTube.w;
+          float bleed = uTube2.x, jitter = uTube2.y, tick = uTube2.z;
+
+          // Barrel: the glass is curved, so the picture is too.
+          vec2 c = vScreenUv * 2.0 - 1.0;
+          c *= 1.0 + warp * dot(c, c);
+          vec2 t = c * 0.5 + 0.5;
+
+          // The frame is not holding. A band crawls through it, tilted, and
+          // drags the lines it passes sideways as it goes.
+          float roll = fract(t.y - t.x * skew - uTvTime * rollSpeed);
+          float band = smoothstep(0.0, 0.06, roll) * smoothstep(0.20, 0.10, roll);
+          t.x += band * jitter * 0.06 * (tvHash(vec2(floor(t.y * 90.0), floor(uTvTime * 20.0))) - 0.5);
+
+          float frame = floor(uTvTime * tick);
+          vec2 cell = floor(t * uCells);
+          float r = tvHash(cell + frame * 1.7);
+          float g = tvHash(cell + frame * 1.7 + 41.0);
+          float b = tvHash(cell + frame * 1.7 + 97.0);
+          float lum = (r + g + b) / 3.0;
+          vec3 snow = mix(vec3(lum), vec3(r, g, b), bleed);
+
+          // Trinitron: vertical phosphor stripes, red green blue across the
+          // face, with the gaps between them dark. An aperture grille has no
+          // horizontal wires, which is what separates it from a shadow mask.
+          float stripe = fract(t.x * triad);
+          vec3 mask = vec3(
+            smoothstep(0.66, 0.34, abs(stripe - 0.166) * 3.0),
+            smoothstep(0.66, 0.34, abs(stripe - 0.5) * 3.0),
+            smoothstep(0.66, 0.34, abs(stripe - 0.833) * 3.0));
+          mask = mask * 0.85 + 0.35;
+
+          vec3 out3 = snow * mask;
+          out3 += band * 0.20;                       // the bar itself glows
+          // Scanline gaps, shallow. Deep ones read as corduroy at this size.
+          out3 *= 1.0 - 0.06 * step(0.5, fract(t.y * uCells.y * 0.5));
+          // Off the edge of the tube there is no picture at all.
+          float lit = step(0.0, t.x) * step(t.x, 1.0) * step(0.0, t.y) * step(t.y, 1.0);
+          out3 = pow(out3, vec3(0.78)) * 1.18 + 0.05;
+          diffuseColor.rgb = mix(vec3(0.03), out3, lit);
         }`);
   };
   face.material.needsUpdate = true;
-  return true;
+  return tube;
+}
+
+/**
+ * A tone ramp lifted off the mask's cheeks.
+ *
+ * Greying the rest of the chaser by formula gave it flat, even grey skin around
+ * a face full of modelled shadow, which read as two different materials stuck
+ * together. Its ears should be made of whatever its cheeks are made of, so this
+ * takes the cheeks apart into a lookup - for each brightness, what colour is the
+ * mask actually that bright? - and everything else is recoloured through it.
+ *
+ * The cheeks specifically, not the whole face: the sockets and the mouth are
+ * near black and would drag the dark end of the ramp somewhere no ear goes.
+ */
+function cheekRamp(canvas) {
+  const w = canvas.width, h = canvas.height;
+  const d = canvas.getContext("2d", { willReadFrequently: true })
+    .getImageData(0, 0, w, h).data;
+
+  const sums = new Float64Array(256 * 3);
+  const hits = new Uint32Array(256);
+  const patches = [[0.16, 0.44, 0.38, 0.74], [0.62, 0.44, 0.84, 0.74]];
+  for (const [x0, y0, x1, y1] of patches) {
+    for (let y = Math.floor(y0 * h); y < y1 * h; y++) {
+      for (let x = Math.floor(x0 * w); x < x1 * w; x++) {
+        const i = (y * w + x) * 4;
+        if (d[i + 3] < 200) continue;
+        const lum = Math.round(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
+        sums[lum * 3] += d[i];
+        sums[lum * 3 + 1] += d[i + 1];
+        sums[lum * 3 + 2] += d[i + 2];
+        hits[lum]++;
+      }
+    }
+  }
+
+  // Fill the brightnesses the cheeks never reached from their nearest neighbour,
+  // so the ramp is continuous across the whole range.
+  const ramp = new Uint8ClampedArray(256 * 3);
+  let last = -1;
+  for (let l = 0; l < 256; l++) {
+    if (hits[l]) {
+      ramp[l * 3] = sums[l * 3] / hits[l];
+      ramp[l * 3 + 1] = sums[l * 3 + 1] / hits[l];
+      ramp[l * 3 + 2] = sums[l * 3 + 2] / hits[l];
+      if (last < 0) for (let k = 0; k < l; k++) ramp.copyWithin(k * 3, l * 3, l * 3 + 3);
+      last = l;
+    } else if (last >= 0) {
+      ramp.copyWithin(l * 3, last * 3, last * 3 + 3);
+    }
+  }
+  return last < 0 ? null : ramp;
 }
 
 /**
@@ -626,7 +773,7 @@ function animateBellyTV(character) {
  * having to know which is which. Its purple body is not a skin tone and is left
  * exactly as it is.
  */
-function greyTheChaser(character) {
+function greyTheChaser(character, ramp) {
   let changed = 0;
   const done = new Map();
   for (const mesh of character.meshes) {
@@ -649,12 +796,19 @@ function greyTheChaser(character) {
       const r = d[i], g = d[i + 1], b = d[i + 2];
       // Warm and pale: the flesh on these sheets, and nothing else on them.
       if (!(r > 95 && r > b + 14 && r >= g && g > b - 10)) continue;
-      const lum = r * 0.299 + g * 0.587 + b * 0.114;
-      // Towards the mask: cold, desaturated, and a shade darker than the skin.
-      const grey = Math.min(255, lum * 0.86 + 8);
-      d[i] = grey * 0.99;
-      d[i + 1] = grey;
-      d[i + 2] = Math.min(255, grey * 1.05);
+      const lum = Math.round(r * 0.299 + g * 0.587 + b * 0.114);
+      if (ramp) {
+        // Whatever the mask's cheek is at this brightness, the ear is too.
+        const k = Math.min(255, Math.max(0, lum)) * 3;
+        d[i] = ramp[k];
+        d[i + 1] = ramp[k + 1];
+        d[i + 2] = ramp[k + 2];
+      } else {
+        const grey = Math.min(255, lum * 0.86 + 8);
+        d[i] = grey * 0.99;
+        d[i + 1] = grey;
+        d[i + 2] = Math.min(255, grey * 1.05);
+      }
       hits++;
     }
     if (!hits) continue;
@@ -710,11 +864,7 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
       }),
     ]);
 
-    // Grey first: it rewrites the sheets, and everything after this clones the
-    // materials that wear them.
-    const greyed = greyTheChaser(chaser.characters.tinkywinky);
     await wearHorrorFace(chaser.characters.tinkywinky);
-    console.info(`[tubbies] chaser desaturated on ${greyed} sheets`);
 
     // The guardian's eyeballs ship 456 units wide and 2500 below its feet, so
     // seatFacialParts had to shrink them a thousandfold and what came out the
@@ -735,14 +885,21 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
     }
 
     const characters = {};
-    let screens = 0;
+    const tubes = [];
     for (const rig of [chaser, players]) {
       for (const [kind, character] of Object.entries(rig.characters)) {
         characters[kind] = bakeStates(character, rig, CFG.tubby.height);
-        if (animateBellyTV(character)) screens++;
+        // A different tube per set, rolled fresh each time the game loads. The
+        // chaser always draws the worse of two rolls on every fault, so its
+        // screen is the one that looks wrong from across a clearing.
+        const tube = animateBellyTV(character, {
+          seed: (Math.random() * 0xffffff) | 0,
+          menace: kind === "tinkywinky" ? 1 : 0,
+        });
+        if (tube) tubes.push(`${kind} roll ${tube.rollSpeed.toFixed(2)}`);
       }
     }
-    console.info(`[tubbies] ${screens} belly screens playing static`);
+    console.info(`[tubbies] ${tubes.length} tubes: ${tubes.join(", ")}`);
 
     const short = Object.entries(characters)
       .filter(([, c]) => c.byState.size < 4)
