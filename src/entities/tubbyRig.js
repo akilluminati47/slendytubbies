@@ -1304,7 +1304,6 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
     const times = new Float32Array(frames);
     const quats = new Map(pairs.map(([tb]) => [tb, new Float32Array(frames * 4)]));
     const hipPos = hipParentInv ? new Float32Array(frames * 3) : null;
-    let travel = 0, lastSide = -1, lastBehind = 0;
 
     for (let f = 0; f < frames; f++) {
       const time = f * dt;
@@ -1423,32 +1422,6 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
         }
       }
 
-      // --- how fast is this clip actually walking? -------------------------
-      // The planted foot slides backwards past the hips at exactly the speed
-      // the body is travelling. Sampling that here, while the pose is already
-      // built, is what lets playback be matched to ground speed later instead
-      // of guessed at - a clip played slower than the body moves reads as low
-      // gravity, and faster reads as a scurry.
-      if (legs.length && hip) {
-        const hipZ = hip.getWorldPosition(tmp).z;
-        let lowest = Infinity, side = -1, behind = 0;
-        legs.forEach((L, n) => {
-          if (!L.t.toe) return;
-          L.t.toe.getWorldPosition(vFoot);
-          if (vFoot.y >= lowest) return;
-          lowest = vFoot.y;
-          side = n;
-          behind = vFoot.z - hipZ;
-        });
-        // Only while the same foot stays down: the instant the weight changes
-        // feet, the difference is a swap, not a stride.
-        // The planted foot slides towards -Z as the body advances, so the
-        // gain is the foot's own change, not its negation.
-        if (side >= 0 && side === lastSide) travel += behind - lastBehind;
-        lastSide = side;
-        lastBehind = behind;
-      }
-
       // --- record whatever the skeleton is now holding ---------------------
       for (const [bone, values] of quats) bone.quaternion.toArray(values, f * 4);
     }
@@ -1462,12 +1435,7 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
       tracks.push(new THREE.VectorKeyframeTrack(
         `.bones[${hip.name}].position`, times, hipPos));
     }
-    const made = new THREE.AnimationClip(clip.name, clip.duration, tracks);
-    // Metres a second this clip walks at its own pace. Negative or silly values
-    // mean it is not a locomotion clip at all, and callers should ignore it.
-    made.userData.groundSpeed = clip.duration > 0
-      ? +(travel / clip.duration).toFixed(3) : 0;
-    out.push(made);
+    out.push(new THREE.AnimationClip(clip.name, clip.duration, tracks));
   }
 
   mixer.stopAllAction();
@@ -1478,5 +1446,66 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const fit = scaleRig(character.scene, character.meshes, targetHeight);
   character.feet = fit.feet;
   character.clips = out;
+  for (const clip of out) measureGroundSpeed(character, clip);
   return out;
+}
+
+/**
+ * How fast a clip walks, in metres a second.
+ *
+ * Measured by playing it back on the finished character rather than while it is
+ * being baked, for two reasons. During the bake the rig is at its native size -
+ * 17 units tall on most of these skins, 5.5 on the guardian - so the answer
+ * comes out in whatever units that file happened to use, and the guardian's walk
+ * read 0.53 against everyone else's 1.92 for the same motion. And sampling at
+ * the bake's frame rate is too coarse to catch the foot's whole stance.
+ *
+ * The planted foot slides backwards past the hips at exactly the speed the body
+ * is travelling, so that slide, summed over the cycle, is the answer.
+ */
+function measureGroundSpeed(character, clip) {
+  const feet = [];
+  for (const side of ["R", "L"]) {
+    const toe = resolve(character.bones, `Toe ${side}`);
+    if (toe) feet.push(toe);
+  }
+  const hip = character.hip;
+  if (feet.length < 2 || !hip || clip.duration <= 0) {
+    clip.userData.groundSpeed = 0;
+    return 0;
+  }
+
+  const mixer = new THREE.AnimationMixer(character.target);
+  mixer.clipAction(clip).play();
+  const v = new THREE.Vector3(), h = new THREE.Vector3();
+  const steps = 120;
+  let travel = 0, lastSide = -1, lastX = 0, lastZ = 0;
+  for (let i = 0; i <= steps; i++) {
+    mixer.setTime((i / steps) * clip.duration * 0.9999);
+    character.scene.updateMatrixWorld(true);
+    hip.getWorldPosition(h);
+    let lowest = Infinity, side = -1, fx = 0, fz = 0;
+    feet.forEach((toe, n) => {
+      toe.getWorldPosition(v);
+      if (v.y >= lowest) return;
+      lowest = v.y;
+      side = n;
+      fx = v.x - h.x;
+      fz = v.z - h.z;
+    });
+    // Path length in the ground plane, not displacement along one axis. These
+    // rigs come through a wrapper rotation, so which way "forward" points in
+    // world terms is not something to assume - and a planted foot only ever
+    // slides one way, so its path and its displacement are the same number.
+    if (side === lastSide) travel += Math.hypot(fx - lastX, fz - lastZ);
+    lastSide = side;
+    lastX = fx;
+    lastZ = fz;
+  }
+  mixer.stopAllAction();
+  restoreBind(character.bones, character.bind);
+  character.scene.updateMatrixWorld(true);
+
+  clip.userData.groundSpeed = +(travel / clip.duration).toFixed(3);
+  return clip.userData.groundSpeed;
 }

@@ -13,6 +13,9 @@ assets/models/
 #            assets/game/face_tinkywinky.png) - never loaded.
 # - tubbies.glb / tubbies.json  artifacts of the old abandoned Blender bake.
 assets/game/rig/chaser/
+# donor/dipsy: the Garry's Mod biped the players used to ride. Everybody now
+# uses donor/tinkywinky, whose clips were made for this shape. 9MB unshipped.
+assets/game/rig/donor/dipsy/
 assets/game/tubbies.glb
 assets/game/tubbies.json
 

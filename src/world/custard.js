@@ -52,12 +52,46 @@ function build() {
     // than a white disc. toneMapped stays on so ACES can roll it off instead of
     // clipping the surface to paper white; the pool of light on the ground is a
     // separate thing entirely, owned by World.
+    // fog:false on the goop alone. Every dish exists from the moment the map is
+    // built, but fog reaches about 34m at night on a 220m map with the dishes
+    // 26m apart, so nine of the ten were being erased by distance and they
+    // seemed to arrive one at a time as you walked into them. A light source is
+    // the one thing that does carry through haze, so the goop now ignores fog
+    // while its bowl and rim do not: far away you see a purple ember with no
+    // dish around it, which is exactly what a lamp looks like across a field.
     matFill: new THREE.MeshStandardMaterial({
       color: 0xb843c8, emissive: 0xa32ebb, emissiveIntensity: 1.15,
-      roughness: 0.42, flatShading: true,
+      roughness: 0.42, flatShading: true, fog: false,
     }),
+    halo: haloTexture(),
   };
   return shared;
+}
+
+/**
+ * A soft round glow, drawn once into a canvas and shared by every dish.
+ *
+ * The goop already ignores fog, which is what lets a dish exist at 100m instead
+ * of being erased by haze - but existing is not the same as being findable. The
+ * dish is 30cm across, so at fifty metres it covers about five pixels: present,
+ * and no use to anybody looking for it. A halo holds a readable size long after
+ * the object making it has stopped being one, which is exactly how a distant
+ * light behaves and why it is the right cheat.
+ */
+function haloTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const ctx = c.getContext("2d");
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0.0, "rgba(255,190,255,0.95)");
+  g.addColorStop(0.25, "rgba(206,86,224,0.55)");
+  g.addColorStop(0.6, "rgba(150,40,180,0.16)");
+  g.addColorStop(1.0, "rgba(120,20,150,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /** One pickup. The glow comes from World, not from here. */
@@ -82,5 +116,18 @@ export function makeCustard() {
   // recompile every material in the scene and drops a fat frame right at the
   // moment the player is being chased. World owns a single light that follows
   // the nearest dish instead; see World#updateGlow.
-  return { group: g, meshes: [body, lip, bottom, custard], height: H };
+  // Additive and depth-tested but not depth-writing, so it reads as light
+  // sitting on the dish rather than a card standing in front of it.
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: s.halo, color: 0xffffff, transparent: true, fog: false,
+    blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.95,
+  }));
+  // Big enough that the dishes across the map still read. A sprite keeps its
+  // world size, so this is what decides whether the far ones are findable.
+  halo.scale.setScalar(2.4);
+  halo.position.y = H * 0.15;
+  halo.renderOrder = 2;
+  g.add(halo);
+
+  return { group: g, meshes: [body, lip, bottom, custard], halo, height: H };
 }

@@ -244,11 +244,12 @@ export class World {
         break;
       }
 
-      const { group: g, meshes, height } = makeCustard();
+      const { group: g, meshes, halo, height } = makeCustard();
       g.rotation.y = this.rand() * Math.PI * 2;   // hide the shared silhouette
       g.position.set(spot.x, heightAt(spot.x, spot.z) + height / 2, spot.z);
       this.scene.add(g);
-      this.custards.push({ group: g, meshes, pos: new THREE.Vector3(spot.x, 0, spot.z), taken: false });
+      this.custards.push({ group: g, meshes, halo,
+        pos: new THREE.Vector3(spot.x, 0, spot.z), taken: false });
     }
   }
 
@@ -281,6 +282,7 @@ export class World {
     if (!c || c.taken) return false;
     c.taken = true;
     for (const m of c.meshes) m.visible = false;
+    if (c.halo) c.halo.visible = false;
     return true;
   }
 

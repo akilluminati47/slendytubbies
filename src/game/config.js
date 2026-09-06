@@ -45,12 +45,14 @@ export const CFG = {
     useBakedRig: true,
     height: 1.85,
     radius: 0.45,
-    // Matched to the clips rather than picked: the walk carries the body at
-    // 1.92 m/s under its own steam, so patrolling at that speed plays it at 1x
-    // and the feet neither skate nor wade. See RiggedTubby.update.
-    patrolSpeed: 1.9,
-    investigateSpeed: 2.9,
-    chaseSpeed: 5.4,      // just under player sprint - you can outrun it, briefly
+    // Matched to the clips rather than picked. Tinky Winky's own walk carries
+    // the body 0.42 m/s and its run 2.11, both short-strided, so these are set
+    // where playback lands near 2.1x - a quick cadence on a short stride, which
+    // is what the thing looks like, and no skating at either end. See
+    // RiggedTubby.update, which does the division.
+    patrolSpeed: 0.9,
+    investigateSpeed: 2.2,
+    chaseSpeed: 4.6,      // under player sprint of 6 - you can outrun it
     fleeSpeed: 11.0,      // bolts when someone takes a dish - far faster than you
     fleeTime: 3.4,        // seconds of running before it settles back to hunting
     turnRate: 3.2,        // rad/s

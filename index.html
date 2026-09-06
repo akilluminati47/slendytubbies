@@ -63,7 +63,12 @@
   #gauges { display:flex; gap:clamp(10px,2.2vw,18px); }
   .gauge { position:relative; width:clamp(56px,12vw,78px); aspect-ratio:1;
     display:grid; place-items:center; }
-  .gauge svg { position:absolute; inset:0; width:100%; height:100%; }
+  /* overflow:visible, because an <svg> clips to its own box by default and the
+     drop-shadow was being cut off square at the edge of each dial. A glow that
+     stops on a straight line reads as a sprite, not as light. */
+  .gauge svg { position:absolute; inset:0; width:100%; height:100%;
+    overflow:visible; }
+  .gauge, #gauges, #hud-right { overflow:visible; }
   .gauge .track, .gauge .arc { fill:none; stroke-width:2.4;
     /* Start at 12 o'clock and run clockwise, like any dial worth reading. */
     transform:rotate(-90deg); transform-origin:50% 50%; }
@@ -81,18 +86,23 @@
      shape - while the ring goes flat again the moment it is off, which is how
      the sprint ring sits when you are not running. */
   #battery.lit .ico { stroke:#fff0cf;
-    filter:drop-shadow(0 0 6px rgba(255,226,160,.75)); }
+    filter:drop-shadow(0 0 7px rgba(255,226,160,.85))
+           drop-shadow(0 0 18px rgba(255,206,120,.45)); }
   #battery.lit .arc { stroke:#ffdf9e;
-    filter:drop-shadow(0 0 7px rgba(255,214,140,.8)); }
+    filter:drop-shadow(0 0 8px rgba(255,214,140,.85))
+           drop-shadow(0 0 22px rgba(255,190,100,.4)); }
   #stamina.lit .ico { stroke:#d8f2e0;
-    filter:drop-shadow(0 0 6px rgba(150,240,190,.7)); }
+    filter:drop-shadow(0 0 7px rgba(150,240,190,.8))
+           drop-shadow(0 0 18px rgba(110,230,170,.4)); }
   #stamina.lit .arc { stroke:#a6e0bd; }
   .gauge .ico, .gauge .arc { transition:stroke .18s ease, filter .18s ease; }
   #daylight .val { font-size:clamp(8px,1.5vw,10.5px); letter-spacing:0; }
   #daylight.lit .ico { stroke:#ffe9b4;
-    filter:drop-shadow(0 0 7px rgba(255,220,150,.8)); }
+    filter:drop-shadow(0 0 8px rgba(255,220,150,.85))
+           drop-shadow(0 0 20px rgba(255,200,110,.4)); }
   #daylight.lit .arc { stroke:#ffd98e;
-    filter:drop-shadow(0 0 7px rgba(255,210,130,.7)); }
+    filter:drop-shadow(0 0 8px rgba(255,210,130,.8))
+           drop-shadow(0 0 24px rgba(255,185,90,.35)); }
   #daylight .arc { stroke:#5d6a86; }
   .gauge .val { position:absolute; bottom:14%; font-family:var(--num);
     font-size:clamp(8px,1.7vw,10px); color:#8d8676; letter-spacing:0;

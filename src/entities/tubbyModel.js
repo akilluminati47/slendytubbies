@@ -865,10 +865,8 @@ function greyTheChaser(character, ramp) {
 /**
  * Build every character once, in the browser. There is no offline bake.
  *
- * Two donors, because the chaser and the players want different animation. The
- * players ride donor/dipsy for its 56 clips of ordinary locomotion; the chaser
- * rides donor/tinkywinky, which has 27 of its own, so Tinky Winky moves like
- * Tinky Winky. See tubbyRig.js for what had to be corrected in the skins first.
+ * One donor. See the note at the call, and tubbyRig.js for what had to be
+ * corrected in the skins before any of it would move at all.
  */
 /** Advance every belly screen. One uniform, however many tubbies are on it. */
 export function tickTV(dt) { tvClock.value += dt; }
@@ -883,23 +881,28 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
   }
   try {
     const t0 = performance.now();
-    const [chaser, players] = await Promise.all([
-      buildTubbyRigs(`${base}/donor/tinkywinky/scene.gltf`,
-        { tinkywinky: `${base}/skin/tinkywinky/scene.gltf` }),
-      buildTubbyRigs(`${base}/donor/dipsy/scene.gltf`, {
-        dipsy: `${base}/skin/dipsy/scene.gltf`,
-        laalaa: `${base}/skin/laalaa/scene.gltf`,
-        po: `${base}/skin/po/scene.gltf`,
-        guardian: `${base}/skin/guardian/scene.gltf`,
-      }),
-    ]);
+    // One donor for everybody. It used to be two - the players rode a Garry's
+    // Mod biped for its 56 clips - but that rig is a person, and every one of
+    // its habits had to be argued out of the tubbies one at a time: a waist
+    // that counter-rotates, hips a hand's width apart, a march with 92 degrees
+    // of knee in it. Tinky Winky's own set was animated by somebody who knew
+    // what shape the character is, and it needed none of that. It also halves
+    // the download, since donor/dipsy was 9MB of animation nobody now plays.
+    const rig = await buildTubbyRigs(`${base}/donor/tinkywinky/scene.gltf`, {
+      tinkywinky: `${base}/skin/tinkywinky/scene.gltf`,
+      dipsy: `${base}/skin/dipsy/scene.gltf`,
+      laalaa: `${base}/skin/laalaa/scene.gltf`,
+      po: `${base}/skin/po/scene.gltf`,
+      guardian: `${base}/skin/guardian/scene.gltf`,
+    });
+    const chaser = rig, players = rig;
 
-    await wearHorrorFace(chaser.characters.tinkywinky);
+    await wearHorrorFace(rig.characters.tinkywinky);
 
     // The guardian's eyeballs ship 456 units wide and 2500 below its feet, so
     // seatFacialParts had to shrink them a thousandfold and what came out the
     // other side was two flat smears. Its sockets get built eyes instead.
-    const guardian = players.characters.guardian;
+    const guardian = rig.characters.guardian;
     if (guardian && !guardian.eyesTrustworthy) {
       for (const m of guardian.meshes) {
         const driven = dominantBones(m);
@@ -916,7 +919,7 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
 
     const characters = {};
     const tubes = [];
-    for (const rig of [chaser, players]) {
+    {
       for (const [kind, character] of Object.entries(rig.characters)) {
         characters[kind] = bakeStates(character, rig, CFG.tubby.height);
         // A different tube per set, rolled fresh each time the game loads. The
@@ -1068,7 +1071,7 @@ class RiggedTubby {
       // Floor it well short of slow motion. A run clip played at much under
               // this stops reading as a run at all, and a little foot slide is a
               // cheaper lie than a monster wading towards you through treacle.
-              : THREE.MathUtils.clamp(speed / own, 0.82, 2.2);
+              : THREE.MathUtils.clamp(speed / own, 0.82, 2.45);
     this.mixer.update(dt);
     this.#plantFeet();
   }

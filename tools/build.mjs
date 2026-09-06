@@ -31,7 +31,9 @@ const INCLUDE = [
   // and the only thing we take from it is its face - already shipped above as
   // face_tinkywinky.png, byte for byte the same file.
   "assets/game/rig/skin",
-  "assets/game/rig/donor",
+  // Only the donor everybody rides. donor/dipsy is the Garry's Mod biped
+  // the players used to use, 9MB of animation nothing now plays.
+  "assets/game/rig/donor/tinkywinky",
 ];
 
 /**
