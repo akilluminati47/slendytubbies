@@ -32,6 +32,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildTubbyRigs, bakeClips, showRestPose } from "../src/entities/tubbyRig.js";
+import { loadTubbyAssets, makeTubby } from "../src/entities/tubbyModel.js";
 
 const q = new URLSearchParams(location.search);
 const CLIP = q.get("clip") ?? "walk1";
@@ -40,6 +41,8 @@ const CLIP = q.get("clip") ?? "walk1";
 const FREEZE = q.has("t") ? q.get("t").split(",").map(parseFloat) : null;
 const SKINS = (q.get("skins") ?? "po").split(",").filter(Boolean);
 const SHOW = (q.get("show") ?? "bind,anim").split(",").filter(Boolean);
+const STATE = q.get("state") ?? "walk";     // a game state, not a clip name
+const WALK_SPEED = parseFloat(q.get("speed") ?? "1.7");
 const DONOR = `../assets/models/donor/${q.get("donor") ?? "dipsy"}/scene.gltf`;
 const hud = document.getElementById("hud");
 
@@ -66,6 +69,7 @@ scene.add(new THREE.GridHelper(20, 20, 0x445066, 0x252b36));
 
 const clock = new THREE.Clock();
 const mixers = [];
+const models = [];
 const lines = [];
 
 function bounds(root) {
@@ -133,28 +137,22 @@ for (const kind of SKINS) {
   }
 
   if (SHOW.includes("anim")) {
+    // Deliberately the game's own path - loadTubbyAssets, makeTubby, the real
+    // RiggedTubby with its foot planting - rather than a second rig built here.
+    // A bench that builds its own models can agree with itself and still not
+    // agree with the game, which is the one thing it exists to rule out.
+    await loadTubbyAssets("../assets/game/rig");
     const phases = FREEZE ?? [null];
     for (const [n, phase] of phases.entries()) {
-      // Each phase needs its own copy of the rig, because one skeleton cannot
-      // hold two poses at once - and its own donor with it, since the bind
-      // snapshots are keyed by bone identity, not by name.
-      const own = n === 0 ? rig : await buildTubbyRigs(
-        DONOR,
-        { [kind]: `../assets/models/skin/${kind}/scene.gltf` });
-      const inst = own.characters[kind];
-      const ownClip = own.donor.animations.find((a) => a.name === clip.name);
-      const baked = bakeClips(inst, own, [ownClip]);
-      inst.scene.position.y = -inst.feet;
-      const mixer = new THREE.AnimationMixer(inst.target);
-      mixer.clipAction(baked[0]).play();
-      if (phase !== null) mixer.setTime(phase);
-      mixers.push({ mixer, phase });
-      place(inst.scene,
+      const model = makeTubby(kind);
+      model.play(STATE, 0);
+      model.root.position.set(0, 0, 0);
+      if (phase !== null) model.mixer?.setTime(phase);
+      model.update(0, WALK_SPEED);            // 0 to settle, not to advance
+      models.push({ model, phase });
+      place(model.root,
         `${kind} ${phase === null ? "playing" : `t=${phase.toFixed(2)}`}`);
-      if (n === 0) {
-        lines.push(`baked ${baked[0].tracks.length} tracks, ` +
-          `${baked[0].duration.toFixed(2)}s, clip ${clip.name.split("|").pop()}`);
-      }
+      if (n === 0) lines.push(`game path: ${model.constructor.name}, state ${STATE}`);
     }
   }
 }
@@ -199,6 +197,7 @@ addEventListener("resize", () => {
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   for (const { mixer, phase } of mixers) if (phase === null) mixer.update(dt);
+  for (const { model, phase } of models) if (phase === null) model.update(dt, WALK_SPEED);
   renderer.render(scene, camera);
   hud.textContent = [
     `clip  ${clip.name.split("|").pop()}`,

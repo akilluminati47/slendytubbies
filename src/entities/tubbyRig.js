@@ -95,18 +95,27 @@ const HIP_TARGET = "Body 1";
  * one of its 56 clips. Left alone, the tubby therefore holds a T-pose for the
  * whole walk cycle, arms rigidly out, which is exactly what it did.
  *
- * So we pick the skin's rest deliberately: arms down at its sides, turned in a
- * little, which is what a tubby should look like while the donor is holding its
- * saw. Everything the donor's arms then do on top of that comes through as it
- * should. Angles are degrees about a WORLD axis, applied outermost bone first so
- * the forearm and hand inherit the shoulder's swing.
+ * So we pick the skin's rest deliberately: arms down at its sides, which is what
+ * a tubby should look like while the donor is holding its saw. Everything the
+ * donor's arms then do on top of that comes through as it should.
+ *
+ * Angles are degrees about a WORLD axis and they ACCUMULATE down the chain, each
+ * bone being turned on top of the parent that has already moved. An earlier
+ * table read 74 / 8 / 4 as if they were independent and so put the arm 86
+ * degrees down, which on a body this round buries it: the arm is 0.83m long off
+ * a shoulder 0.235m out from the centre line, so at 86 degrees the hand lands at
+ * x 0.46 against a belly 0.45 wide. It disappeared inside the model.
+ *
+ * At 60 the hand sits at 0.68, comfortably clear, and the small negative steps
+ * at elbow and wrist let the forearm splay outward the way a slack arm does
+ * rather than curling back into the stomach.
  *
  * The model faces +Z with its arms along X, so its right hand is at -X and a
  * positive turn about Z drops that arm towards the ground.
  */
 const REST_POSE = [
-  ["Arm R1", 0, 0, 1, 74], ["Arm R2", 0, 0, 1, 8], ["Hand R", 0, 0, 1, 4],
-  ["Arm L1", 0, 0, 1, -74], ["Arm L2", 0, 0, 1, -8], ["Hand L", 0, 0, 1, -4],
+  ["Arm R1", 0, 0, 1, 60], ["Arm R2", 0, 0, 1, -6], ["Hand R", 0, 0, 1, -2],
+  ["Arm L1", 0, 0, 1, -60], ["Arm L2", 0, 0, 1, 6], ["Hand L", 0, 0, 1, 2],
 ];
 
 /**
@@ -324,6 +333,206 @@ function holeRims(mesh) {
 }
 
 /**
+ * Drop the shoulder joints onto the shoulders.
+ *
+ * fitSkeleton() scales the whole skeleton by one number so it spans the same
+ * height as its mesh, which is the best a single scale can do and is not enough
+ * here. A tubby is not shaped like the human-ish rig it was given: its head is
+ * enormous, so its shoulders sit far lower down the silhouette than the same
+ * skeleton would put them on a person. After the uniform fit the arm chain ends
+ * up at y 16.2 on a body 17.4 tall - level with the top of the head - while the
+ * arm geometry it drives is centred at 11.4. Every arm rotation was pivoting
+ * from somewhere inside the skull, which is why the arms read as detached from
+ * the shoulder however good the angle was.
+ *
+ * In a T-pose the upper arm runs horizontally, so the vertices it dominates are
+ * spread either side of where its joint belongs: their centroid is the answer,
+ * and it needs no constant. Move the bone there and the elbow and hand follow,
+ * landing within 0.1 of their own geometry.
+ *
+ * Only the shoulders. A thigh joint legitimately sits above the middle of the
+ * leg it drives, so the same reasoning would drag it down into the knee - the
+ * legs measured 2.5 out for exactly that reason and are correct as they are.
+ *
+ * The bind pose is preserved the same way fitSkeleton preserves it: whatever a
+ * bone contributed to skinning before, `boneWorld * boneInverse`, it contributes
+ * afterwards too. Only the pivot moves.
+ */
+function alignShoulders(scene, meshes) {
+  scene.updateMatrixWorld(true);
+  const skeleton = meshes[0].skeleton;
+  const bones = skeleton.bones;
+  const body = meshes.reduce((a, b) =>
+    b.geometry.attributes.position.count > a.geometry.attributes.position.count ? b : a);
+
+  const before = bones.map((b, i) =>
+    new THREE.Matrix4().multiplyMatrices(b.matrixWorld, skeleton.boneInverses[i]));
+
+  const v = new THREE.Vector3();
+  const moved = [];
+  for (const side of ["R", "L"]) {
+    const bone = resolve(bones, `Arm ${side}1`);
+    if (!bone) continue;
+    const index = bones.indexOf(bone);
+
+    const centre = new THREE.Vector3();
+    let n = 0;
+    const si = body.geometry.attributes.skinIndex;
+    const sw = body.geometry.attributes.skinWeight;
+    for (let i = 0; i < body.geometry.attributes.position.count; i++) {
+      let best = -1, bestW = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k);
+        if (w > bestW) { bestW = w; best = si.getComponent(i, k); }
+      }
+      if (best !== index) continue;
+      body.getVertexPosition(i, v);
+      centre.add(v.applyMatrix4(body.matrixWorld));
+      n++;
+    }
+    if (n < 6) continue;
+    centre.divideScalar(n);
+
+    // Height and depth only. The joint's distance out from the centre line is
+    // already right - it measured within 0.3 of the geometry - and forcing it to
+    // the centroid would pull the shoulder out into the middle of the bicep.
+    const at = bone.getWorldPosition(v.clone());
+    const drop = new THREE.Vector3(0, centre.y - at.y, centre.z - at.z);
+    if (drop.lengthSq() < 1e-8) continue;
+
+    // The target is world-space; a bone's position is read in its parent's.
+    bone.position.copy(bone.parent.worldToLocal(at.clone().add(drop)));
+    scene.updateMatrixWorld(true);
+    moved.push({ bone: bone.name, by: +drop.length().toFixed(2) });
+  }
+  if (!moved.length) return null;
+
+  for (let i = 0; i < bones.length; i++) {
+    skeleton.boneInverses[i] = new THREE.Matrix4()
+      .copy(bones[i].matrixWorld).invert().multiply(before[i]);
+  }
+  skeleton.update();
+  return moved;
+}
+
+/**
+ * Put the head aerial back on the head.
+ *
+ * Every skin ships its aerial, and each is the right shape - Dipsy's straight
+ * rod, Laa-Laa's curl, Po's ring, Tinky Winky's triangle - but all four are
+ * authored at about 4% of body height and parked at chest level, so they spend
+ * the whole game inside the torso where nobody has ever seen them.
+ *
+ * The aerial cannot be moved the way the eyes were. That trick rewrites a bone's
+ * inverse bind, and the aerial hangs off the head bone, which also drives the
+ * entire head; shifting it would take the face along. So the geometry itself is
+ * moved instead. A vertex currently draws at `M * v`, where M is the head's
+ * skinning matrix, so to make it draw at `T * M * v` for some placement T the
+ * raw vertex has to become `M^-1 * T * M * v`. Done once at load, before any
+ * clone shares the buffer.
+ *
+ * The guardian is skipped for free: its top hat hangs off a Hat bone of its own,
+ * so it is not head-dominated, and it was never misplaced anyway.
+ */
+function seatAerial(scene, meshes) {
+  scene.updateMatrixWorld(true);
+  const skeleton = meshes[0].skeleton;
+  const head = resolve(skeleton.bones, "Head");
+  if (!head) return null;
+  const headIndex = skeleton.bones.indexOf(head);
+
+  const body = meshes.reduce((a, b) =>
+    b.geometry.attributes.position.count > a.geometry.attributes.position.count ? b : a);
+
+  // The aerial is the small mesh the head bone drives on its own. The face, the
+  // lids and the eyes answer to eye and mouth bones; the hat, where there is
+  // one, answers to a hat bone.
+  let aerial = null;
+  for (const m of meshes) {
+    if (m === body) continue;
+    const count = m.geometry.attributes.position.count;
+    if (count > 400) continue;
+    const si = m.geometry.attributes.skinIndex, sw = m.geometry.attributes.skinWeight;
+    if (!si || !sw) continue;
+    let head_ = 0;
+    for (let i = 0; i < count; i++) {
+      let best = -1, bestW = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k);
+        if (w > bestW) { bestW = w; best = si.getComponent(i, k); }
+      }
+      if (best === headIndex) head_++;
+    }
+    if (head_ > count * 0.9) { aerial = m; break; }
+  }
+  if (!aerial) return null;
+
+  // --- where it is now ------------------------------------------------------
+  const v = new THREE.Vector3();
+  const now = new THREE.Box3();
+  const pos = aerial.geometry.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    aerial.getVertexPosition(i, v);
+    now.expandByPoint(v.applyMatrix4(aerial.matrixWorld));
+  }
+  const size = now.getSize(new THREE.Vector3());
+  const tall = Math.max(size.x, size.y, size.z);
+  if (tall < 1e-6) return null;
+
+  // --- where it belongs -----------------------------------------------------
+  const shell = new THREE.Box3();
+  const bp = body.geometry.attributes.position;
+  for (let i = 0; i < bp.count; i++) {
+    body.getVertexPosition(i, v);
+    shell.expandByPoint(v.applyMatrix4(body.matrixWorld));
+  }
+  const height = shell.max.y - shell.min.y;
+  const crown = shell.max.y;
+
+  // The crown is not the middle of the model: the head leans forward of the
+  // body's centre line, so take the average of whatever is in the top slice.
+  const cx = new THREE.Vector3();
+  let n = 0;
+  for (let i = 0; i < bp.count; i++) {
+    body.getVertexPosition(i, v).applyMatrix4(body.matrixWorld);
+    if (v.y < crown - height * 0.045) continue;
+    cx.add(v);
+    n++;
+  }
+  if (n) cx.divideScalar(n); else cx.set(0, crown, 0);
+
+  // A Teletubby aerial reads at roughly a sixth of the figure. Uniform, so a
+  // rod stays a rod and a ring stays a ring.
+  const AERIAL_HEIGHT = 0.17;
+  const scale = (height * AERIAL_HEIGHT) / tall;
+  const grown = size.clone().multiplyScalar(scale);
+
+  const T = new THREE.Matrix4()
+    // Sit the base a little into the scalp so it reads as planted, not balanced.
+    .makeTranslation(cx.x, crown - height * 0.012 + grown.y / 2, cx.z)
+    .multiply(new THREE.Matrix4().makeScale(scale, scale, scale))
+    .multiply(new THREE.Matrix4().makeTranslation(
+      ...now.getCenter(new THREE.Vector3()).multiplyScalar(-1).toArray()));
+
+  // v' = M^-1 * T * M * v, so the same skinning draws it in the new place.
+  const M = new THREE.Matrix4()
+    .multiplyMatrices(head.matrixWorld, skeleton.boneInverses[headIndex]);
+  const A = new THREE.Matrix4().copy(M).invert().multiply(T).multiply(M);
+
+  const arr = aerial.geometry.attributes.position;
+  for (let i = 0; i < arr.count; i++) {
+    v.fromBufferAttribute(arr, i).applyMatrix4(A);
+    arr.setXYZ(i, v.x, v.y, v.z);
+  }
+  arr.needsUpdate = true;
+  aerial.geometry.computeBoundingBox();
+  aerial.geometry.computeBoundingSphere();
+
+  return { mesh: aerial.name, scaled: +scale.toFixed(2),
+    height: +grown.y.toFixed(2), onto: +crown.toFixed(2) };
+}
+
+/**
  * Put the eyeballs back in their sockets.
  *
  * These rips draw the face with two empty hexagonal holes and the eyeballs
@@ -446,7 +655,29 @@ function seatFacialParts(scene, meshes) {
     moved.push({ bone: bone.name, scaled: +s.toFixed(3) });
   }
   skeleton.update();
-  return { moved: moved.length, sockets: Object.keys(socket).length,
+
+  // Hand the sockets out. They are holes in the mesh, so nothing painted on the
+  // sheet can ever cover them - whatever sits in them has to be geometry. Kept
+  // in the head bone's own frame so they survive the rig being scaled later.
+  const head = resolve(bones, "Head");
+  const out = [];
+  if (head) {
+    const headScale = new THREE.Vector3().setFromMatrixScale(head.matrixWorld).x || 1;
+    for (const side of ["R", "L"]) {
+      if (!socket[side]) continue;
+      out.push({
+        side,
+        local: head.worldToLocal(socket[side].clone()),
+        radius: socketRadius[side] / headScale,
+        // Which way the face points, in the head bone's frame. Needed because
+        // the head joint sits up at the crown, so "outward from the joint"
+        // points down the face rather than out of it.
+        forward: new THREE.Vector3(0, 0, 1)
+          .transformDirection(head.matrixWorld.clone().invert()).normalize(),
+      });
+    }
+  }
+  return { moved: moved.length, sockets: out, head,
     scale: moved[0]?.scaled ?? 1 };
 }
 
@@ -607,7 +838,9 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
     // Make the joints line up with the geometry before anything reads or poses
     // them. See fitSkeleton() - without this every rotation tears the mesh.
     const fitted = fitSkeleton(scene, meshes);
+    const shoulders = alignShoulders(scene, meshes);
     const eyes = seatFacialParts(scene, meshes);
+    const aerial = seatAerial(scene, meshes);
 
     // Build the map for THIS skin; every skin has the same rig, but resolve
     // against its own bones so a renamed joint fails loudly rather than silently.
@@ -641,12 +874,23 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
       nativeHeight: poseHeight(meshes).height,
       feet: 0,
       clips: null,
+      // Where the eye sockets are and which bone they ride on, for whoever wants
+      // to put something in them. See seatFacialParts.
+      sockets: eyes.sockets,
+      head: eyes.head,
+      // The guardian's eye geometry is 456 units wide on a body 4.8 tall and
+      // buried 2500 below its feet; a rescale that extreme means the mesh cannot
+      // be trusted, whatever we move it to.
+      eyesTrustworthy: eyes.scale > 0.25 && eyes.scale < 4,
     };
     console.info(`[rig] ${kind}: ${targetBones.length} joints, ` +
       `${pairs.length}/${map.pairs.length} mapped, ` +
       `native ${characters[kind].nativeHeight.toFixed(2)}, ` +
       `skeleton grown x${fitted.k} to span ${fitted.boneSpan}/${fitted.meshSpan}, ` +
-      `${eyes.moved} facial parts seated x${eyes.scale}`);
+      `${eyes.moved} facial parts seated x${eyes.scale}` +
+      (eyes.scale > 0.25 && eyes.scale < 4 ? "" : " (DISTRUSTED)") +
+      (shoulders ? `, shoulders dropped ${shoulders[0].by}` : "") +
+      (aerial ? `, aerial x${aerial.scaled} onto the crown` : ", no aerial"));
   }
 
   return { donor, characters, sourceBones, donorMesh: donorMeshes[0],
@@ -654,50 +898,194 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
 }
 
 /**
+ * The donor's resting pose, measured from its own animation.
+ *
+ * Retargeting transfers how far a bone has turned from its rig's rest, so that
+ * rest has to be the pose the rig actually holds. The node transforms these
+ * files ship are not it: on donor/dipsy the upper arm sits 70 degrees away from
+ * where all 56 of its clips put it, because the node pose is a leftover and
+ * every clip has it holding a chainsaw. Measuring from the node pose therefore
+ * handed the tubby a permanent 70 degree shrug and folded its arms into its
+ * chest, which is exactly what it looked like.
+ *
+ * Averaging the clip gives the pose the donor really lives in - for a walk, a
+ * mid-stride stance, which is the right neutral for a swing to be measured
+ * against. Quaternions are averaged by summing with their signs aligned and
+ * renormalising: crude in general, exact enough across one locomotion cycle.
+ */
+function donorReference(rig, clip, bones) {
+  const mixer = new THREE.AnimationMixer(rig.donor.scene);
+  mixer.clipAction(clip).play();
+
+  const rot = new Map(bones.map((b) => [b, [0, 0, 0, 0]]));
+  const pos = new Map(bones.map((b) => [b, new THREE.Vector3()]));
+  const anchor = new Map();
+  const q = new THREE.Quaternion(), t = new THREE.Vector3(), s = new THREE.Vector3();
+
+  const SAMPLES = 24;
+  for (let i = 0; i < SAMPLES; i++) {
+    mixer.setTime((i / SAMPLES) * clip.duration * 0.999);
+    rig.donor.scene.updateMatrixWorld(true);
+    for (const bone of bones) {
+      bone.matrixWorld.decompose(t, q, s);
+      if (!anchor.has(bone)) anchor.set(bone, q.clone());
+      const a = anchor.get(bone);
+      // q and -q are the same rotation; align the signs or the sum cancels.
+      const sign = (q.x * a.x + q.y * a.y + q.z * a.z + q.w * a.w) < 0 ? -1 : 1;
+      const acc = rot.get(bone);
+      acc[0] += q.x * sign; acc[1] += q.y * sign;
+      acc[2] += q.z * sign; acc[3] += q.w * sign;
+      pos.get(bone).add(t);
+    }
+  }
+  mixer.stopAllAction();
+
+  const out = { rot: new Map(), pos: new Map() };
+  for (const [bone, a] of rot) {
+    out.rot.set(bone, new THREE.Quaternion(a[0], a[1], a[2], a[3]).normalize());
+    out.pos.set(bone, pos.get(bone).divideScalar(SAMPLES));
+  }
+  return out;
+}
+
+/**
+ * Two-bone IK. Where must the upper and lower segment point for the joint at the
+ * end of the chain to land on `target`?
+ *
+ * Writes into the caller's scratch vectors and returns false when the target is
+ * unreachable or degenerate, which the caller reads as "leave the leg alone".
+ */
+function twoBone(root, target, pole, l1, l2, sc) {
+  const reach = sc.reach.subVectors(target, root);
+  const d = THREE.MathUtils.clamp(reach.length(),
+    Math.abs(l1 - l2) + 1e-4, l1 + l2 - 1e-4);
+  if (d < 1e-5) return false;
+  reach.normalize();
+
+  // The bend plane is spanned by the reach line and the knee hint.
+  const axis = sc.axis.crossVectors(reach, pole);
+  if (axis.lengthSq() < 1e-8) return false;
+  axis.normalize();
+
+  // Law of cosines for the angle between the reach line and the upper segment.
+  const cos = THREE.MathUtils.clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
+  sc.upper.copy(reach).applyAxisAngle(axis, -Math.acos(cos));
+  sc.knee.copy(root).addScaledVector(sc.upper, l1);
+  sc.lower.subVectors(target, sc.knee);
+  if (sc.lower.lengthSq() < 1e-10) return false;
+  sc.lower.normalize();
+  return true;
+}
+
+/**
+ * Turn `bone` so the limb axis it points along lands on `want`, keeping whatever
+ * twist the rotation retarget already gave it, and write the result as a local.
+ */
+function aimBone(bone, axis, want, current, sc) {
+  sc.have.copy(axis).applyQuaternion(current).normalize();
+  const world = sc.world.setFromUnitVectors(sc.have, want).multiply(current);
+  bone.parent.matrixWorld.decompose(sc.t, sc.parentQ, sc.s);
+  bone.quaternion.copy(sc.parentQ.invert().multiply(world));
+  bone.updateMatrixWorld(true);
+  return world.clone();
+}
+
+/**
  * Bake donor clips onto one character.
  *
- * This is a hand-rolled retarget rather than SkeletonUtils.retargetClip, because
- * that one cannot survive these files. It converts a world rotation into bone
- * space with `bone.parent.matrixWorld.invert() * global` and then decomposes the
- * result, and these Sketchfab rips carry scale all the way down the chain: Body 1
- * sits at 100, its parent Move_All at 0.27, the wrappers at 0.01. The parent's
- * scale therefore lands in bone.scale, which retargetClip never writes a track
- * for, so nothing restores it and the rig inflates the moment a clip plays. It
- * also calls skeleton.pose(), which on these files is destructive on its own.
+ * A hand-rolled retarget rather than SkeletonUtils.retargetClip, which cannot
+ * survive these files: it converts world rotations into bone space through the
+ * parent's full matrix and decomposes the result, so the scale these Sketchfab
+ * hierarchies carry lands in bone.scale, which it never writes a track for, and
+ * the rig inflates the moment a clip plays. It also calls skeleton.pose(), which
+ * on these files is destructive on its own.
  *
- * What we do instead transfers the DELTA from each rig's own bind pose:
+ * Rotations transfer as a delta from each rig's own reference pose:
  *
- *     D         = srcWorldQ(t) * srcBindWorldQ^-1     // how far the donor turned
- *     dstWorldQ = D * dstBindWorldQ                   // turn the skin that far
- *     dstLocalQ = parentWorldQ(t)^-1 * dstWorldQ      // back into bone space
+ *     D         = srcNow * srcRef^-1     // how far the donor turned
+ *     dstWorldQ = D * dstRefQ            // turn the skin that far
  *
- * Every term is a quaternion, so scale cannot enter at any point, and because it
- * is a delta the two rigs need not share bone axes, which they do not - one is a
- * 3ds Max biped. Bones we did not map hold their bind rotation, and bone.position
- * and bone.scale are never touched at all.
+ * All quaternions, so scale cannot enter, and being a delta the two rigs need
+ * not share bone axes, which they do not - one is a 3ds Max biped.
+ *
+ * That part is exact: measured against the donor, every leg bone comes out
+ * deviating from its bind by the donor's own angle to within a tenth of a
+ * degree. Exact angles are not the same as a walk, though, because these two are
+ * different animals. The tubby's foot is 18% of its height against the donor's
+ * 10%, its shin is shorter and its thigh longer, so identical joint angles threw
+ * its toe to half a metre where the donor lifts 22cm, and left the foot cocked
+ * upward through the whole stance instead of ever planting.
+ *
+ * Feet are the thing an audience actually reads, so the legs are solved by
+ * position instead of by angle:
+ *
+ *   - the ankle goes where the donor's ankle goes, as a fraction of leg length,
+ *     so stride and step height scale to the body doing the walking;
+ *   - the foot then aims along the donor's own ankle-to-toe direction, so the
+ *     sole goes flat at the moment the donor's does.
+ *
+ * Arms keep the pure rotation path. Nothing they do has to meet the ground, and
+ * their reference pose is the whole point of REST_POSE.
  */
 export function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const { bind, bones, pairs, hip } = character;
-  const srcBind = rig.donorBind;
-  const mixer = new THREE.AnimationMixer(rig.donor.scene);
-
-  // Parents before children, so a bone's parent world rotation is already known.
+  const sourceOf = new Map(pairs);
   const order = bones.slice().sort((a, b) => bind.get(a).depth - bind.get(b).depth);
-  const sourceOf = new Map(pairs);            // target bone -> donor bone
 
-  // Donor travel is in donor units; the skin is baked at its native size.
+  character.scene.updateMatrixWorld(true);
+  rig.donor.scene.updateMatrixWorld(true);
+  const P = (b) => b.getWorldPosition(new THREE.Vector3());
+
+  // --- the leg chains, if this rig has them --------------------------------
+  const legs = [];
+  for (const side of ["R", "L"]) {
+    const t = {
+      thigh: resolve(bones, `Leg ${side}1`), shin: resolve(bones, `Leg ${side}2`),
+      foot: resolve(bones, `Foot ${side}`), toe: resolve(bones, `Toe ${side}`),
+    };
+    const s = {
+      thigh: sourceOf.get(t.thigh), shin: sourceOf.get(t.shin),
+      foot: sourceOf.get(t.foot), toe: sourceOf.get(t.toe),
+    };
+    if (!t.thigh || !t.shin || !t.foot || !s.thigh || !s.shin || !s.foot) continue;
+
+    const bq = (b) => bind.get(b).worldQ.clone().invert();
+    legs.push({
+      t, s,
+      l1: P(t.thigh).distanceTo(P(t.shin)),
+      l2: P(t.shin).distanceTo(P(t.foot)),
+      srcLen: P(s.thigh).distanceTo(P(s.shin)) + P(s.shin).distanceTo(P(s.foot)),
+      // Each bone's own "down the limb" axis in its bind frame, so an aim can be
+      // expressed without caring which way the artist pointed the joint.
+      axThigh: P(t.shin).sub(P(t.thigh)).normalize().applyQuaternion(bq(t.thigh)),
+      axShin: P(t.foot).sub(P(t.shin)).normalize().applyQuaternion(bq(t.shin)),
+      axFoot: t.toe && s.toe
+        ? P(t.toe).sub(P(t.foot)).normalize().applyQuaternion(bq(t.foot)) : null,
+    });
+  }
+
+  const mixer = new THREE.AnimationMixer(rig.donor.scene);
   const k = character.nativeHeight / rig.donorHeight;
   const srcHip = hip ? sourceOf.get(hip) : null;
   const hipParentInv = hip && hip.parent && srcHip
     ? hip.parent.matrixWorld.clone().invert() : null;
 
-  const worldQ = new Map();
-  const q = new THREE.Quaternion(), sq = new THREE.Quaternion();
-  const inv = new THREE.Quaternion();
+  const sc = {
+    reach: new THREE.Vector3(), axis: new THREE.Vector3(), upper: new THREE.Vector3(),
+    lower: new THREE.Vector3(), knee: new THREE.Vector3(), have: new THREE.Vector3(),
+    world: new THREE.Quaternion(), parentQ: new THREE.Quaternion(),
+    t: new THREE.Vector3(), s: new THREE.Vector3(),
+  };
+  const q = new THREE.Quaternion(), sq = new THREE.Quaternion(), inv = new THREE.Quaternion();
   const t = new THREE.Vector3(), s = new THREE.Vector3();
+  const worldQ = new Map();
+  const dHip = new THREE.Vector3(), dAnkle = new THREE.Vector3(), dKnee = new THREE.Vector3();
+  const myHip = new THREE.Vector3(), along = new THREE.Vector3();
+  const pole = new THREE.Vector3(), target = new THREE.Vector3(), tmp = new THREE.Vector3();
 
   const out = [];
   for (const clip of clips) {
+    const ref = donorReference(rig, clip, [...sourceOf.values()].filter(Boolean));
     mixer.stopAllAction();
     mixer.clipAction(clip).reset().play();
 
@@ -715,24 +1103,21 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
       mixer.setTime(Math.min(time, clip.duration - 1e-5));
       rig.donor.scene.updateMatrixWorld(true);
 
+      // --- pass one: the rotation retarget, written onto the skeleton ------
       worldQ.clear();
       for (const bone of order) {
         const b = bind.get(bone);
         const parentQ = (bone.parent && worldQ.get(bone.parent)) || b.parentWorldQ;
         const src = sourceOf.get(bone);
-
         if (src) {
           src.matrixWorld.decompose(t, sq, s);
-          // D = srcNow * srcBind^-1, applied to the skin's own bind rotation.
-          inv.copy(srcBind.get(src).worldQ).invert();
+          inv.copy(ref.rot.get(src) ?? b.worldQ).invert();
           q.copy(sq).multiply(inv).multiply(b.refQ);
           worldQ.set(bone, q.clone());
-          // Back into bone space using the parent's rotation only.
-          inv.copy(parentQ).invert().multiply(q).toArray(quats.get(bone), f * 4);
+          bone.quaternion.copy(inv.copy(parentQ).invert().multiply(q));
         } else {
-          // Unmapped bones hold whatever the reference pose left them at,
-          // expressed relative to their parent there, so a fixed shoulder does
-          // not drag unmapped children back towards the T-pose.
+          // Unmapped bones hold their reference local, so a corrected shoulder
+          // does not drag its children back towards the T-pose.
           const parentRef = bone.parent && bind.get(bone.parent)
             ? bind.get(bone.parent).refQ : b.parentWorldQ;
           worldQ.set(bone, parentQ.clone()
@@ -740,17 +1125,60 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
         }
       }
 
+      // The hip's travel, in the skin's units, applied before the legs are
+      // solved because the IK needs the hip where it will finally sit.
       if (hipPos) {
-        // Where the donor's pelvis has travelled, converted to the skin's units
-        // and added to where the skin's own pelvis rests, then expressed in the
-        // hip's parent frame - which is what a .position track is read in.
-        new THREE.Vector3().setFromMatrixPosition(srcHip.matrixWorld)
-          .sub(srcBind.get(srcHip).worldP)
+        tmp.setFromMatrixPosition(srcHip.matrixWorld)
+          .sub(ref.pos.get(srcHip))
           .multiplyScalar(k)
           .add(bind.get(hip).worldP)
-          .applyMatrix4(hipParentInv)
-          .toArray(hipPos, f * 3);
+          .applyMatrix4(hipParentInv);
+        hip.position.copy(tmp);
+        tmp.toArray(hipPos, f * 3);
       }
+      character.scene.updateMatrixWorld(true);
+
+      // --- pass two: put the feet where the donor's feet are ---------------
+      for (const L of legs) {
+        L.t.thigh.getWorldPosition(myHip);
+        L.s.thigh.getWorldPosition(dHip);
+        L.s.foot.getWorldPosition(dAnkle);
+        L.s.shin.getWorldPosition(dKnee);
+
+        // Ankle offset from the hip, as a fraction of the donor's leg, applied
+        // to the length of the leg this character actually has.
+        target.subVectors(dAnkle, dHip)
+          .multiplyScalar((L.l1 + L.l2) / L.srcLen)
+          .add(myHip);
+
+        // Knee hint: where the donor puts its knee, off the hip-to-ankle line.
+        along.subVectors(dAnkle, dHip).normalize();
+        pole.subVectors(dKnee, dHip);
+        pole.addScaledVector(along, -pole.dot(along));
+        if (pole.lengthSq() < 1e-8) pole.set(0, 0, 1);
+        pole.normalize();
+
+        if (!twoBone(myHip, target, pole, L.l1, L.l2, sc)) continue;
+        const upper = sc.upper.clone(), lower = sc.lower.clone();
+
+        worldQ.set(L.t.thigh,
+          aimBone(L.t.thigh, L.axThigh, upper, worldQ.get(L.t.thigh) ?? bind.get(L.t.thigh).worldQ, sc));
+        worldQ.set(L.t.shin,
+          aimBone(L.t.shin, L.axShin, lower, worldQ.get(L.t.shin) ?? bind.get(L.t.shin).worldQ, sc));
+
+        // The foot points exactly where the donor's foot points, which is what
+        // makes the sole go flat on time rather than a shoe size late.
+        if (L.axFoot) {
+          L.s.foot.getWorldPosition(tmp);
+          L.s.toe.getWorldPosition(dKnee);
+          const want = dKnee.sub(tmp).normalize();
+          worldQ.set(L.t.foot,
+            aimBone(L.t.foot, L.axFoot, want, worldQ.get(L.t.foot) ?? bind.get(L.t.foot).worldQ, sc));
+        }
+      }
+
+      // --- record whatever the skeleton is now holding ---------------------
+      for (const [bone, values] of quats) bone.quaternion.toArray(values, f * 4);
     }
 
     const tracks = [];

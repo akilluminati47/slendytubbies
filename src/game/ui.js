@@ -246,6 +246,24 @@ export class UI {
     this.flashTimer = setTimeout(() => p.classList.remove("on"), ms);
   }
 
+  /**
+   * The pickup call-out: how many dishes are still out there.
+   *
+   * Separate from flash(), which borrows the prompt line at the bottom of the
+   * screen. This one is the moment the run turns, so it gets the display face
+   * and the top of the screen to itself.
+   */
+  tally(remaining) {
+    const el = $("tally");
+    if (!el) return;
+    el.textContent = remaining > 0
+      ? `${remaining} Custard${remaining === 1 ? "" : "s"} Remaining . . .`
+      : "That was the last one . . .";
+    el.classList.add("on");
+    clearTimeout(this.tallyTimer);
+    this.tallyTimer = setTimeout(() => el.classList.remove("on"), 2200);
+  }
+
   /** True while a flash owns the prompt line. */
   get flashing() { return performance.now() < (this.flashUntil || 0); }
 

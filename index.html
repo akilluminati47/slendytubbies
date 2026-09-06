@@ -35,7 +35,11 @@
 
   /* ------------------------------------------------------------------ HUD */
   #hud { position:fixed; inset:0; pointer-events:none; user-select:none; }
-  body.menu-open #hud { opacity:0; }
+  /* Driven by data-screen rather than the menu-open class, because the title is
+     the screen we boot into and so show() never runs for it - the class is not
+     stamped until the first navigation. That went unnoticed while the screens
+     were opaque and covered the HUD anyway. */
+  body:not([data-screen="game"]) #hud { opacity:0; }
   #crosshair { position:absolute; left:50%; top:50%; width:3px; height:3px;
     margin:-1.5px 0 0 -1.5px; background:var(--ink); opacity:.35; border-radius:50%; }
   /* The whole left HUD is ONE absolutely-positioned column; its children are in
@@ -104,6 +108,30 @@
   /* --------------------------------------------------------------- screens */
   .screen { position:fixed; inset:0; background:#050505; z-index:10;
     display:grid; place-content:center; text-align:center; gap:26px; padding:40px; }
+
+  /* Front of house. These three sit over the cast walking past, so they give up
+     their solid backdrop; the words move onto a panel of their own instead. */
+  .screen.glass { background:transparent; }
+  /* A scrim under the panel as well as the blur. The parade is lit, and a pale
+     tubby crossing behind unbacked text would win; this costs nothing and,
+     unlike the blur, every browser has it. */
+  .screen.glass::before { content:""; position:absolute; inset:0; z-index:0;
+    background:radial-gradient(125% 85% at 50% 42%,
+      rgba(5,5,7,.42) 0%, rgba(4,4,6,.82) 100%); }
+  .card { position:relative; z-index:1; display:grid; gap:26px;
+    justify-items:center; text-align:center;
+    padding:clamp(26px,4.2vw,46px) clamp(24px,4.6vw,54px);
+    max-width:min(580px,92vw);
+    border:1px solid rgba(226,220,204,.10); border-radius:20px;
+    background:rgba(10,10,13,.44);
+    -webkit-backdrop-filter:blur(20px) saturate(118%);
+    backdrop-filter:blur(20px) saturate(118%);
+    box-shadow:0 30px 80px -34px #000, inset 0 1px 0 rgba(255,255,255,.05); }
+  /* Blur is the nicety, legibility is not: without backdrop-filter the panel
+     simply becomes opaque. */
+  @supports not (backdrop-filter:blur(1px)) {
+    .card { background:rgba(7,7,9,.93); }
+  }
   h1 { font-size:clamp(28px,6.6vw,60px); letter-spacing:.01em; font-weight:400;
     line-height:1.3; }
   .sub { font-size:13px; line-height:1.9; letter-spacing:.03em; color:#98907f; }
@@ -165,7 +193,9 @@
   /* ----------------------------------------------------------------- lobby */
   #lobby { align-content:start; padding-top:7vh; overflow-y:auto; gap:0; }
   #lobby h2 { margin-bottom:20px; }
-  #lobby > * { justify-self:center; width:min(430px,88vw); }
+  #lobby .card { gap:0; max-width:none; width:min(478px,94vw);
+    padding:clamp(22px,3.4vw,32px) clamp(18px,3vw,26px); }
+  #lobby .card > * { justify-self:center; width:min(430px,88vw); }
 
   /* A real tab-and-panel pair, not two buttons floating above some fields.
      The selected tab shares the panel's fill and drops its own bottom border so
@@ -256,6 +286,19 @@
   body.spectating #prompt { display:none; }
   body.spectating #vignette { box-shadow:inset 0 0 260px 90px #000; }
 
+  /* The pickup call-out. Upper middle, in the display face, clear of the HUD
+     column on the left and of anything a phone puts under a thumb. */
+  #tally { position:fixed; z-index:6; left:0; right:0;
+    top:calc(clamp(64px,11vh,124px) + env(safe-area-inset-top));
+    text-align:center; pointer-events:none;
+    font-family:var(--hand); font-size:clamp(19px,3.5vw,34px);
+    letter-spacing:.01em; color:var(--ink);
+    text-shadow:0 2px 18px #000, 0 0 42px rgba(0,0,0,.9);
+    opacity:0; transform:translateY(-8px);
+    transition:opacity .28s ease, transform .28s ease; }
+  #tally.on { opacity:1; transform:none; }
+  body.spectating #tally { display:none; }
+
   /* Centred across the full width, but the HUD column lives at the left, so on
      a narrow screen the banner drops below it rather than running into the
      custard counter. */
@@ -321,6 +364,11 @@
   </div>
   <div id="prompt">Walk over the custard to take it</div>
 
+  <!-- Reads out the count on every pickup, big and brief. Its own element and
+       not the prompt line, because the prompt is a hint that lives at the
+       bottom and this is a beat that belongs across the top. -->
+  <div id="tally"></div>
+
   <!-- Standing banner while dead in a lobby. Set in the game's own face, up top,
        where a title belongs - not as a transient line by the reticle. -->
   <div id="spectate-banner">
@@ -331,62 +379,68 @@
 </div>
 
 <!-- 1. Title. Any input begins, and that gesture is what unlocks audio. -->
-<div class="screen" id="title">
-  <h1>Slendytubbies</h1>
-  <p class="press">Press anything to begin</p>
+<div class="screen glass" id="title">
+  <div class="card">
+    <h1>Slendytubbies</h1>
+    <p class="press">Press anything to begin</p>
+  </div>
 </div>
 
 <!-- 2. Mode select. -->
-<div class="screen hide" id="mode">
-  <h1>Slendytubbies</h1>
-  <div class="row">
-    <button class="btn" id="play-solo">Singleplayer</button>
-    <button class="btn" id="play-multi">Multiplayer</button>
+<div class="screen glass hide" id="mode">
+  <div class="card">
+    <h1>Slendytubbies</h1>
+    <div class="row">
+      <button class="btn" id="play-solo">Singleplayer</button>
+      <button class="btn" id="play-multi">Multiplayer</button>
+    </div>
+    <p class="sub">Alone against Tinky Winky, or with up to three friends.</p>
+    <div class="row"><button class="btn" id="vr" hidden>Enter in VR</button></div>
+    <p id="note"></p>
   </div>
-  <p class="sub">Alone against Tinky Winky, or with up to three friends.</p>
-  <div class="row"><button class="btn" id="vr" hidden>Enter in VR</button></div>
-  <p id="note"></p>
 </div>
 
 <!-- 3. Multiplayer. Public lobbies have a name; private ones have a password. -->
-<div class="screen hide" id="lobby">
-  <h2>Multiplayer</h2>
+<div class="screen glass hide" id="lobby">
+  <div class="card">
+    <h2>Multiplayer</h2>
 
-  <label class="field">
-    <span>Your name</span>
-    <input id="lobby-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Tubby">
-  </label>
-
-  <div class="tabs">
-    <button class="tab on" data-tab="public">Public</button>
-    <button class="tab" data-tab="private">Private</button>
-  </div>
-
-  <div class="pane" id="pane-public">
-    <div id="public-list" class="lobby-list">Looking for lobbies…</div>
     <label class="field">
-      <span>Lobby name</span>
-      <input id="lobby-title" maxlength="32" autocomplete="off" placeholder="Late night jumpscares">
+      <span>Your name</span>
+      <input id="lobby-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Tubby">
     </label>
-    <div class="row">
-      <button class="btn" id="public-host">Host public lobby</button>
-      <button class="btn ghost" id="lobby-back">Back</button>
-    </div>
-    <p class="foot">Open to anyone. You host as the Guardian.</p>
-  </div>
 
-  <div class="pane hide" id="pane-private">
-    <label class="field">
-      <span>Password</span>
-      <input id="lobby-pass" maxlength="48" autocomplete="off" spellcheck="false" placeholder="a word only your friends know">
-    </label>
-    <div id="lobby-status" class="status">Enter a password to see who is in there.</div>
-    <div class="row">
-      <button class="btn" id="lobby-join" disabled>Join</button>
-      <button class="btn" id="lobby-create" disabled>Create</button>
-      <button class="btn ghost" id="lobby-back2">Back</button>
+    <div class="tabs">
+      <button class="tab on" data-tab="public">Public</button>
+      <button class="tab" data-tab="private">Private</button>
     </div>
-    <p class="foot">Unlisted. Only the password finds it. You host as the Guardian.</p>
+
+    <div class="pane" id="pane-public">
+      <div id="public-list" class="lobby-list">Looking for lobbies…</div>
+      <label class="field">
+        <span>Lobby name</span>
+        <input id="lobby-title" maxlength="32" autocomplete="off" placeholder="Late night jumpscares">
+      </label>
+      <div class="row">
+        <button class="btn" id="public-host">Host public lobby</button>
+        <button class="btn ghost" id="lobby-back">Back</button>
+      </div>
+      <p class="foot">Open to anyone. You host as the Guardian.</p>
+    </div>
+
+    <div class="pane hide" id="pane-private">
+      <label class="field">
+        <span>Password</span>
+        <input id="lobby-pass" maxlength="48" autocomplete="off" spellcheck="false" placeholder="a word only your friends know">
+      </label>
+      <div id="lobby-status" class="status">Enter a password to see who is in there.</div>
+      <div class="row">
+        <button class="btn" id="lobby-join" disabled>Join</button>
+        <button class="btn" id="lobby-create" disabled>Create</button>
+        <button class="btn ghost" id="lobby-back2">Back</button>
+      </div>
+      <p class="foot">Unlisted. Only the password finds it. You host as the Guardian.</p>
+    </div>
   </div>
 </div>
 

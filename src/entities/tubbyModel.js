@@ -29,7 +29,11 @@ import { buildTubbyRigs, bakeClips } from "./tubbyRig.js";
  * is a single flat colour and the face is desaturated bone-white, so a plain
  * saturation test separates them cleanly with no halo.
  */
-const FACE_URL = "./assets/game/face_tinkywinky.png";
+// Resolved against this module, not against whatever page imported it. The
+// page-relative form worked from index.html and 404ed from tools/rigcheck.html,
+// which then quietly fell back to the procedural stand-ins - so the bench was
+// showing something other than the game while claiming to show the game.
+const FACE_URL = new URL("../../assets/game/face_tinkywinky.png", import.meta.url).href;
 let facePromise = null;
 
 export function loadFaceTexture() {
@@ -88,7 +92,9 @@ let rigCache = null;
  * they cannot collide with anything in the other donor's 56.
  */
 const CLIP_FOR = {
-  idle:        ["idle_lookaround", "idle_pose", "idle1", "_idle", "idle"],
+  // IDLE_POSE, not IDLE_LOOKAROUND: the lookaround leaves the chaser's head
+  // cranked to one side at t=0, so it stood in the menu parade facing sideways.
+  idle:        ["idle_pose", "idle1", "_idle", "idle"],
   walk:        ["tinky_walking", "walk_main", "walk1", "_walk", "walk"],
   investigate: ["tinky_walking", "walk_main", "walk1", "_walk", "walk"],
   chase:       ["tinky_running_armed", "run_main", "run1", "_run", "run"],
@@ -170,6 +176,119 @@ function contentBox(data, w, h, accept) {
 }
 
 /**
+ * Derive a normal map for the chaser's mask from the mask itself.
+ *
+ * The face arrives as a flat photograph and gets painted onto the tubby's own
+ * head, which is a smooth infant sphere. Lit like that it reads as a sticker:
+ * the brow, the hollow sockets and the open jaw are all drawn, and none of them
+ * catch the light, so the shading fights the picture. The mask needs relief of
+ * its own, and the picture already contains it - on a bone-white face the bright
+ * parts are what stands proud (cheekbones, brow, the bridge of the nose) and the
+ * dark parts are what falls away (the sockets, the mouth).
+ *
+ * So read luminance as a height field and take its slope. Blurred first, or the
+ * texture's own grain turns into a rash of bumps.
+ *
+ * Only the face gets relief. The same sheet carries the belly TV and the trim
+ * around it, which are flat and must stay flat, so everything outside `box` is
+ * written as the neutral normal.
+ */
+function maskNormalMap(source, box, strength = 2.6) {
+  const w = source.width, h = source.height;
+  const read = source.getContext("2d", { willReadFrequently: true })
+    .getImageData(0, 0, w, h).data;
+
+  // Luminance, box-blurred by one pixel each way.
+  const height = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const i = (yy * w + xx) * 4;
+          sum += (read[i] * 0.299 + read[i + 1] * 0.587 + read[i + 2] * 0.114) / 255;
+          n++;
+        }
+      }
+      height[y * w + x] = sum / n;
+    }
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const out = ctx.createImageData(w, h);
+  const at = (x, y) => height[Math.min(h - 1, Math.max(0, y)) * w +
+    Math.min(w - 1, Math.max(0, x))];
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const inside = box && x >= box.x && x < box.x + box.w &&
+        y >= box.y && y < box.y + box.h;
+      if (!inside) {
+        out.data[i] = 128; out.data[i + 1] = 128; out.data[i + 2] = 255; out.data[i + 3] = 255;
+        continue;
+      }
+      // Sobel, which is a slope estimate that survives a low-resolution source.
+      const dx = (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1))
+               - (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1));
+      const dy = (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1))
+               - (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
+      let nx = -dx * strength, ny = -dy * strength, nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len; ny /= len; nz /= len;
+      out.data[i] = (nx * 0.5 + 0.5) * 255;
+      out.data[i + 1] = (ny * 0.5 + 0.5) * 255;
+      out.data[i + 2] = (nz * 0.5 + 0.5) * 255;
+      out.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+  return canvas;
+}
+
+/**
+ * Put something solid in the eye sockets.
+ *
+ * The sockets are holes cut clean through the head, so nothing painted on the
+ * texture can ever cover them - on the chaser they showed as two purple
+ * hexagons straight through the mask. Whatever fills them has to be geometry.
+ *
+ * They ride on the head bone, in its own frame, so they follow every clip for
+ * free and survive being cloned with the rest of the rig.
+ */
+function fillSockets(character, { sclera, pupil, bulge = 1.15 }) {
+  if (!character.sockets?.length || !character.head) return 0;
+  let n = 0;
+  for (const socket of character.sockets) {
+    const r = socket.radius * bulge;
+    const eye = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 14, 12),
+      new THREE.MeshStandardMaterial({ color: sclera, roughness: 0.42 }));
+    eye.position.copy(socket.local);
+    eye.frustumCulled = false;
+    character.head.add(eye);
+    n++;
+
+    if (pupil === undefined) continue;
+    const iris = new THREE.Mesh(
+      new THREE.SphereGeometry(r * 0.52, 12, 10),
+      new THREE.MeshStandardMaterial({ color: pupil, roughness: 0.3 }));
+    // Out of the face, not away from the joint: the head bone sits at the crown,
+    // so its radial direction runs down the cheek instead of forwards.
+    iris.position.copy(socket.local)
+      .addScaledVector(socket.forward ?? new THREE.Vector3(0, 0, 1), r * 0.62);
+    iris.frustumCulled = false;
+    character.head.add(iris);
+  }
+  return n;
+}
+
+/**
  * Give the chaser the face off the TinkyWinkyNPC rip.
  *
  * That rip is the one model in the set with no skeleton at all - 6 meshes, 0
@@ -247,8 +366,23 @@ async function wearHorrorFace(character) {
   tex.anisotropy = base.map.anisotropy;
   tex.needsUpdate = true;
 
+  // The mask gets relief of its own rather than inheriting the tubby's smooth
+  // infant face, which is what made it read as a sticker. See maskNormalMap.
+  const normal = new THREE.CanvasTexture(maskNormalMap(sheet, to));
+  normal.flipY = base.map.flipY;
+  normal.wrapS = base.map.wrapS;
+  normal.wrapT = base.map.wrapT;
+  normal.needsUpdate = true;
+
   for (const m of faces) {
-    if (m.material.map) m.material.map = tex;
+    if (!m.material.map) continue;
+    // Cloned so the four friendly tubbies, who share this material through
+    // SkeletonUtils, do not inherit the chaser's face.
+    m.material = m.material.clone();
+    m.material.map = tex;
+    m.material.normalMap = normal;
+    m.material.normalScale = new THREE.Vector2(1.15, 1.15);
+    m.material.roughness = Math.min(1, (m.material.roughness ?? 1) * 0.92);
     m.material.needsUpdate = true;
   }
   // The rip paints its eyes straight into the sheet, as two black sockets. The
@@ -265,8 +399,14 @@ async function wearHorrorFace(character) {
     hidden++;
   }
 
+  // The sockets are holes; the mask cannot cover them and showed two purple
+  // hexagons straight through the face. Black spheres read as the hollows the
+  // mask is painted with.
+  const filled = fillSockets(character, { sclera: 0x07070a, bulge: 1.2 });
+
   console.info(`[tubbies] chaser wears the horror face ` +
-    `(${from.w}x${from.h} onto ${to.w}x${to.h}), ${hidden} eye meshes hidden`);
+    `(${from.w}x${from.h} onto ${to.w}x${to.h}), ${hidden} eye meshes hidden, ` +
+    `${filled} sockets filled, mask normal map generated`);
   return true;
 }
 
@@ -300,6 +440,24 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
     ]);
 
     await wearHorrorFace(chaser.characters.tinkywinky);
+
+    // The guardian's eyeballs ship 456 units wide and 2500 below its feet, so
+    // seatFacialParts had to shrink them a thousandfold and what came out the
+    // other side was two flat smears. Its sockets get built eyes instead.
+    const guardian = players.characters.guardian;
+    if (guardian && !guardian.eyesTrustworthy) {
+      for (const m of guardian.meshes) {
+        const driven = dominantBones(m);
+        const names = guardian.target.skeleton.bones;
+        if (driven.size && [...driven].every((i) => /^eye(lid)?[_ ]/i.test(names[i]?.name ?? ""))) {
+          m.visible = false;
+        }
+      }
+      // 1.45 is the ratio the four intact skins ship: their eyeball stands
+      // that much prouder than the hole it looks through.
+      const n = fillSockets(guardian, { sclera: 0xf2efe6, pupil: 0x141017, bulge: 1.45 });
+      console.info(`[tubbies] guardian given ${n} built eyes`);
+    }
 
     const characters = {};
     for (const rig of [chaser, players]) {

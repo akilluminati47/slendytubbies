@@ -10,6 +10,7 @@ import { HINTS } from "./game/hints.js";
 import { Settings } from "./game/settings.js";
 import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
+import { Showcase } from "./game/showcase.js";
 import { MenuNav } from "./game/menuNav.js";
 import { Spectator } from "./game/spectate.js";
 import { NetClient, seedFromKey, ROLE_LABEL } from "./net/client.js";
@@ -41,6 +42,7 @@ addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  showcase?.resize(innerWidth, innerHeight);
 });
 
 const input = new Input(renderer.domElement, renderer, rig);
@@ -50,6 +52,11 @@ const net = new NetClient();
 settings.apply(renderer, audio);
 
 const hasBakedAssets = Boolean(await loadTubbyAssets());
+
+// The menu backdrop. Built after the rigs so it has something to parade, and
+// before anything else so the title screen is never empty.
+const showcase = new Showcase();
+showcase.resize(innerWidth, innerHeight);
 
 /* -------------------------------------------------------------- game state */
 
@@ -251,6 +258,7 @@ net.addEventListener("took", (e) => {
     $("found").textContent = game.found;
     audio.pickup();
     const who = net.peers.get(e.detail.by);
+    ui.tally(game.total - game.found);
     if (who) ui.flash(`${who.name} found custard: ${game.found}/${game.total}`);
   }
 });
@@ -399,7 +407,12 @@ function frame() {
   if (nav.start && running) paused ? resume() : pause();
   if (input.intent.menu && running) paused ? resume() : pause();
 
-  if (!running || paused || !player) { renderer.render(scene, camera); return; }
+  if (!running || paused || !player) {
+    // On the front screens the cast walks past instead; anywhere else - paused,
+    // or reading the end card - the real world stays behind the panel.
+    if (!showcase.draw(dt, renderer, running)) renderer.render(scene, camera);
+    return;
+  }
   game.elapsed += dt;
 
   if (spectating) {
@@ -437,6 +450,7 @@ function frame() {
     world.take(got);
     game.found++;
     $("found").textContent = game.found;
+    ui.tally(game.total - game.found);
     audio.pickup();
     input.gamepad.rumble(0.5, game.elapsed);
     input.xr.pulse(0.4, 90);
