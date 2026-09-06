@@ -1,0 +1,209 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rig check</title>
+<style>
+  html,body { margin:0; height:100%; background:#14171c; color:#cfd6e4;
+               font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; }
+  canvas { display:block; }
+  #hud { position:fixed; left:10px; top:10px; white-space:pre; pointer-events:none;
+         text-shadow:0 1px 2px #000; }
+</style>
+<div id="hud">loading...</div>
+<script type="importmap">
+{ "imports": {
+  "three": "../vendor/three/build/three.module.js",
+  "three/addons/": "../vendor/three/examples/jsm/"
+} }
+</script>
+<script type="module">
+/**
+ * A bare bench for looking at the rig, with no game attached.
+ *
+ * Verifying an animation means watching it, and watching it inside the game
+ * meant the chaser walked over and ended the run every time. This page has a
+ * camera, a light and a floor, and nothing else that can interrupt.
+ *
+ * Query string:
+ *   ?clip=walk1        which donor clip to bake  (substring match)
+ *   &t=0.4             freeze at this time, or leave it off to play
+ *   &skins=po,dipsy    which skins to show
+ *   &show=bind,anim    bind pose, retargeted animation, donor, donor animated
+ */
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { buildTubbyRigs, bakeClips, showRestPose } from "../src/entities/tubbyRig.js";
+
+const q = new URLSearchParams(location.search);
+const CLIP = q.get("clip") ?? "walk1";
+// t may be a list: one copy of the character per phase, side by side, which is
+// how you read a walk cycle without having to watch it.
+const FREEZE = q.has("t") ? q.get("t").split(",").map(parseFloat) : null;
+const SKINS = (q.get("skins") ?? "po").split(",").filter(Boolean);
+const SHOW = (q.get("show") ?? "bind,anim").split(",").filter(Boolean);
+const hud = document.getElementById("hud");
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14171c);
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
+
+scene.add(new THREE.HemisphereLight(0xbcd0ff, 0x2a2620, 2.2));
+const key = new THREE.DirectionalLight(0xfff3e0, 2.6);
+key.position.set(3, 6, 5);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x88aaff, 1.4);
+rim.position.set(-4, 3, -5);
+scene.add(rim);
+
+// A floor with a metre grid, so "standing on the ground" is something you can
+// see rather than something a number has to tell you.
+scene.add(new THREE.GridHelper(20, 20, 0x445066, 0x252b36));
+
+const clock = new THREE.Clock();
+const mixers = [];
+const lines = [];
+
+function bounds(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i += 3) {
+      o.getVertexPosition(i, v);
+      box.expandByPoint(v.applyMatrix4(o.matrixWorld));
+    }
+  });
+  return box;
+}
+
+const fmt = (b) => `${(b.max.x - b.min.x).toFixed(2)}w ` +
+  `${(b.max.y - b.min.y).toFixed(2)}h ${(b.max.z - b.min.z).toFixed(2)}d`;
+
+/** Scale a raw glTF scene to 1.85 and stand it on y=0. */
+function fitLoose(root, height = 1.85) {
+  const b0 = bounds(root);
+  root.scale.multiplyScalar(height / Math.max(b0.max.y - b0.min.y, 1e-6));
+  const b1 = bounds(root);
+  root.position.y -= b1.min.y;
+  root.traverse((o) => { if (o.isSkinnedMesh) o.frustumCulled = false; });
+  return root;
+}
+
+const slots = [];
+function place(root, label) {
+  slots.push({ root, label });
+  scene.add(root);
+}
+
+const rig = await buildTubbyRigs("../assets/models/donor/dipsy/scene.gltf",
+  Object.fromEntries(SKINS.map((s) => [s, `../assets/models/skin/${s}/scene.gltf`])));
+
+const clip = rig.donor.animations.find((a) => a.name.toLowerCase().includes(CLIP))
+  ?? rig.donor.animations[0];
+
+for (const kind of SKINS) {
+  const c = rig.characters[kind];
+  if (!c) continue;
+
+  if (SHOW.includes("bind")) {
+    // A second, untouched copy: bakeClips with no clips only restores and scales.
+    const solo = await buildTubbyRigs("../assets/models/donor/dipsy/scene.gltf",
+      { [kind]: `../assets/models/skin/${kind}/scene.gltf` });
+    bakeClips(solo.characters[kind], solo, []);
+    solo.characters[kind].scene.position.y = -solo.characters[kind].feet;
+    place(solo.characters[kind].scene, `${kind} bind`);
+  }
+
+  if (SHOW.includes("ref")) {
+    // The reference pose on its own: what the skin holds while the donor is at
+    // rest. If this looks wrong, nothing downstream of it can look right.
+    const solo = await buildTubbyRigs("../assets/models/donor/dipsy/scene.gltf",
+      { [kind]: `../assets/models/skin/${kind}/scene.gltf` });
+    const sc = solo.characters[kind];
+    bakeClips(sc, solo, []);
+    showRestPose(sc);
+    sc.scene.position.y = -sc.feet;
+    place(sc.scene, `${kind} rest pose`);
+  }
+
+  if (SHOW.includes("anim")) {
+    const phases = FREEZE ?? [null];
+    for (const [n, phase] of phases.entries()) {
+      // Each phase needs its own copy of the rig, because one skeleton cannot
+      // hold two poses at once - and its own donor with it, since the bind
+      // snapshots are keyed by bone identity, not by name.
+      const own = n === 0 ? rig : await buildTubbyRigs(
+        "../assets/models/donor/dipsy/scene.gltf",
+        { [kind]: `../assets/models/skin/${kind}/scene.gltf` });
+      const inst = own.characters[kind];
+      const ownClip = own.donor.animations.find((a) => a.name === clip.name);
+      const baked = bakeClips(inst, own, [ownClip]);
+      inst.scene.position.y = -inst.feet;
+      const mixer = new THREE.AnimationMixer(inst.target);
+      mixer.clipAction(baked[0]).play();
+      if (phase !== null) mixer.setTime(phase);
+      mixers.push({ mixer, phase });
+      place(inst.scene,
+        `${kind} ${phase === null ? "playing" : `t=${phase.toFixed(2)}`}`);
+      if (n === 0) {
+        lines.push(`baked ${baked[0].tracks.length} tracks, ` +
+          `${baked[0].duration.toFixed(2)}s, clip ${clip.name.split("|").pop()}`);
+      }
+    }
+  }
+}
+
+if (SHOW.includes("donor")) {
+  const g = await new GLTFLoader().loadAsync("../assets/models/donor/dipsy/scene.gltf");
+  place(fitLoose(g.scene), "donor bind");
+}
+if (SHOW.includes("donoranim")) {
+  const g = await new GLTFLoader().loadAsync("../assets/models/donor/dipsy/scene.gltf");
+  place(fitLoose(g.scene), "donor " + clip.name.split("|").pop());
+  const mixer = new THREE.AnimationMixer(g.scene);
+  mixer.clipAction(g.animations.find((a) => a.name === clip.name)).play();
+  if (FREEZE) mixer.setTime(FREEZE[0]);
+  mixers.push({ mixer, phase: FREEZE ? FREEZE[0] : null });
+}
+if (SHOW.includes("donorpose")) {
+  // The donor as its inverseBindMatrices describe it, rather than as its node
+  // transforms leave it - the two disagree, and which one is the real bind pose
+  // is the whole question.
+  const g = await new GLTFLoader().loadAsync("../assets/models/donor/dipsy/scene.gltf");
+  g.scene.updateMatrixWorld(true);
+  let sk = null;
+  g.scene.traverse((o) => { if (!sk && o.isSkinnedMesh) sk = o; });
+  sk.skeleton.pose();
+  place(fitLoose(g.scene), "donor pose()");
+}
+
+// Space them out and frame them all.
+const gap = 1.7;
+slots.forEach((s, i) => { s.root.position.x = (i - (slots.length - 1) / 2) * gap; });
+const span = Math.max(slots.length * gap, 2.4);
+camera.position.set(0, 1.15, span * 0.95 + 1.6);
+camera.lookAt(0, 0.95, 0);
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  for (const { mixer, phase } of mixers) if (phase === null) mixer.update(dt);
+  renderer.render(scene, camera);
+  hud.textContent = [
+    `clip  ${clip.name.split("|").pop()}`,
+    ...lines,
+    ...slots.map((s) => `${s.label.padEnd(22)} ${fmt(bounds(s.root))}`),
+  ].join("\n");
+});
+window.__bench = { rig, scene, camera, slots, mixers, bounds, THREE };
+</script>
