@@ -6,10 +6,13 @@ assets/models/
 # Local editor/debug config
 .claude/
 
-# Baked rig: large, and currently broken (see README "Known issue").
-# Rig source, staged locally for the in-browser binder. Not shipped while
-# CFG.tubby.useBakedRig is false; re-stage from assets/models when needed.
-assets/game/rig/
+# The rigged models the game ships: the in-browser retargeter (src/entities/
+# tubbyRig.js) loads skin/ and donor/ at runtime, so they are committed and
+# deployed. Only the parts the game never loads stay ignored:
+# - chaser/  the static no-skeleton TinkyWinkyNPC rip (face already shipped as
+#            assets/game/face_tinkywinky.png) - never loaded.
+# - tubbies.glb / tubbies.json  artifacts of the old abandoned Blender bake.
+assets/game/rig/chaser/
 assets/game/tubbies.glb
 assets/game/tubbies.json
 
