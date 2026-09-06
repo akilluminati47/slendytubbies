@@ -120,6 +120,40 @@ function custardMask() {
   return mask;
 }
 
+/**
+ * Everyone the monster could be hunting, in the shape the AI expects.
+ *
+ * Remotes carry less than the local player does - the wire has position, facing
+ * and speed on it, and nothing about torches - so what is missing is estimated
+ * rather than left undefined, which would silently make a guest invisible or
+ * uncatchable. Only the host builds this; guests do their own proximity check
+ * against the monster the host broadcasts.
+ */
+const _quarry = [];
+function quarries() {
+  _quarry.length = 0;
+  if (player?.alive) {
+    _quarry.push({
+      id: "me", remote: null, alive: true, pos: player.pos,
+      torchOn: player.torchOn, noise: player.noise,
+      vel: player.vel, input,
+    });
+  }
+  for (const r of remotes.values()) {
+    if (r.dead) continue;
+    _quarry.push({
+      id: r.id ?? r.name, remote: r, alive: true, pos: r.current,
+      // Not on the wire. A moving guest is assumed to be making walking noise,
+      // a still one almost none, which is the shape of the real thing.
+      torchOn: false,
+      noise: r.speed > 0.6 ? CFG.noise.walk : CFG.noise.walk * 0.25,
+      vel: { x: 0, z: 0 },
+      input: { yaw: r.yaw ?? 0 },
+    });
+  }
+  return _quarry;
+}
+
 function threatPoints() {
   _threats.length = 0;
   _threats.push(player.pos);
@@ -515,7 +549,13 @@ function frame() {
     }
     const watching = spectator.update(dt, input.intent);
     for (const [i, t] of tubbies.entries()) {
-      if (host) t.update(dt, player, threatPoints());
+      if (host) {
+        // Still the host's monster to run, even with the host dead: the guests
+        // it is now hunting are relying on it. Nothing to declare here - the
+        // host cannot be caught twice.
+        const q = t.chooseQuarry(quarries());
+        if (q) t.update(dt, q, threatPoints());
+      }
       else { const w = netWorld?.tubby?.[i]; t.netApply(w?.p, w?.f, w?.s, dt); }
     }
     for (const r of remotes.values()) r.update(dt, camera);
@@ -561,7 +601,14 @@ function frame() {
   const threats = threatPoints();      // built once, shared by every tubby
   for (const [i, t] of tubbies.entries()) {
     if (host) {
-      if (t.update(dt, player, threats) === "kill" && player.alive) {
+      // Hunt whoever is the best answer right now. A catch needs no special
+      // case: the person it took stops being a candidate, and on the next tick
+      // the next nearest is the best answer.
+      const q = t.chooseQuarry(quarries());
+      const got = q ? t.update(dt, q, threats) : null;
+      // Only the host's own death is the host's to declare. A guest runs the
+      // same proximity check against the monster it is being sent.
+      if (got === "kill" && q.remote === null && player.alive) {
         beginScare(t);
         return;
       }

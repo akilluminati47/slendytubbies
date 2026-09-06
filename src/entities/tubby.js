@@ -25,6 +25,7 @@ export class Tubby {
     this.heading = Math.random() * Math.PI * 2;
     this.facing = this.heading;   // rendered orientation, smoothed toward motion
     this.state = "patrol";
+    this.quarryId = null;      // who it is currently hunting; see chooseQuarry
     this.target = this.#wanderPoint();
     this.lostFor = 0;
     this.fleeLeft = 0;
@@ -176,6 +177,41 @@ export class Tubby {
       return "kill";
     }
     return null;
+  }
+
+  /**
+   * Pick who to hunt, out of everyone still standing.
+   *
+   * The AI only ever saw the local player, which in a lobby meant the host was
+   * the only person it could ever want - guests were scenery it happened to
+   * walk through. Choosing every frame also means a catch re-paths it for free:
+   * the person it was chasing simply stops being a candidate, and the next
+   * nearest becomes the best answer on the very next tick.
+   *
+   * Seeing beats hearing beats proximity, and whoever it is already on gets a
+   * small bonus so it does not dither between two people equally far away.
+   */
+  chooseQuarry(candidates) {
+    let best = null, bestScore = -Infinity;
+    for (const q of candidates) {
+      if (!q.alive) continue;
+      const d = Math.hypot(q.pos.x - this.pos.x, q.pos.z - this.pos.z);
+      let score = -d;
+      if (this.#sees(q)) score += 1000;
+      else if (this.#hears(q)) score += 500;
+      if (q.id && q.id === this.quarryId) score += 14;
+      if (score > bestScore) { bestScore = score; best = q; }
+    }
+    // Losing the one it was on is what a catch looks like from here, so drop
+    // the state that would otherwise have it stand over the body.
+    if (best && best.id !== this.quarryId) {
+      this.quarryId = best.id;
+      this.lostFor = 0;
+      if (this.state === "chase" || this.state === "investigate") {
+        this.target.set(best.pos.x, 0, best.pos.z);
+      }
+    }
+    return best;
   }
 
   /**
