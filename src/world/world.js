@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { CFG } from "../game/config.js";
+import { Sky } from "./sky.js";
 import { makeCustard } from "./custard.js";
 
 /** Deterministic PRNG so a seed always rebuilds the same wasteland. */
@@ -31,9 +32,10 @@ export class World {
     this.maxSpace = 0;      // largest footprint placed so far
 
     scene.fog = new THREE.Fog(0x0a0c0a, CFG.world.fogNear, CFG.world.fogFar);
-    scene.background = new THREE.Color(0x05070a);
 
-    this.#lights();
+    // The sky owns the lighting as well as the backdrop: the two have to agree
+    // about what time it is, and there is only one answer to that.
+    this.sky = new Sky(scene, this.rand);
     // Created once, before any dish exists, and never removed.
     this.custardGlow = new THREE.PointLight(0xf070ee, 0, 9, 2);
     scene.add(this.custardGlow);
@@ -42,12 +44,45 @@ export class World {
     this.#custard();
   }
 
-  #lights() {
-    // Almost nothing. The torch is meant to be your only real light.
-    this.scene.add(new THREE.HemisphereLight(0x2e3a4e, 0x0d1109, 0.9));
-    const moon = new THREE.DirectionalLight(0x9db4d4, 0.7);
-    moon.position.set(-40, 60, 25);
-    this.scene.add(moon);
+  /**
+   * Mark where somebody died, for the rest of the round.
+   *
+   * A few overlapping discs rather than one, dropped along the terrain so they
+   * follow it instead of hovering over a slope, and drawn with a polygon offset
+   * so they never fight the ground for depth. Nothing removes them - a restart
+   * reloads the page, so "the rest of the round" needs no bookkeeping.
+   */
+  stain(x, z, size = 1) {
+    if (!this.stains) {
+      this.stains = new THREE.Group();
+      this.scene.add(this.stains);
+    }
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x3d0508, roughness: 1, metalness: 0,
+      transparent: true, opacity: 0.92,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+      depthWrite: false,
+    });
+
+    const blobs = 5 + Math.floor(this.rand() * 4);
+    for (let i = 0; i < blobs; i++) {
+      const r = size * (0.35 + this.rand() * 0.75);
+      const geo = new THREE.CircleGeometry(r, 14);
+      geo.rotateX(-Math.PI / 2);
+      // Ride the ground rather than a plane through it.
+      const pos = geo.attributes.position;
+      const ox = x + (this.rand() - 0.5) * size * 2.4;
+      const oz = z + (this.rand() - 0.5) * size * 2.4;
+      for (let v = 0; v < pos.count; v++) {
+        pos.setY(v, heightAt(ox + pos.getX(v), oz + pos.getZ(v)) + 0.015 + i * 0.002);
+      }
+      geo.computeVertexNormals();
+      const disc = new THREE.Mesh(geo, mat);
+      disc.position.set(ox, 0, oz);
+      disc.renderOrder = 1;
+      this.stains.add(disc);
+    }
+    return this.stains.children.length;
   }
 
   #ground() {

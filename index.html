@@ -55,8 +55,13 @@
   #objective b { font-family:var(--hand); font-size:clamp(19px,4.2vw,27px);
     letter-spacing:0; display:block; margin-top:4px; color:var(--ink); }
 
-  #gauges { display:flex; gap:clamp(8px,2vw,14px); }
-  .gauge { position:relative; width:clamp(40px,9vw,52px); aspect-ratio:1;
+  /* Top right, mirroring the custard counter across the screen, and sized to
+     carry the same weight as it. They are the three things you check. */
+  #hud-right { position:absolute; right:clamp(14px,3.2vw,26px);
+    top:clamp(12px,2.4vh,22px); display:flex;
+    gap:clamp(10px,2.2vw,18px); align-items:flex-start; }
+  #gauges { display:flex; gap:clamp(10px,2.2vw,18px); }
+  .gauge { position:relative; width:clamp(56px,12vw,78px); aspect-ratio:1;
     display:grid; place-items:center; }
   .gauge svg { position:absolute; inset:0; width:100%; height:100%; }
   .gauge .track, .gauge .arc { fill:none; stroke-width:2.4;
@@ -83,6 +88,12 @@
     filter:drop-shadow(0 0 6px rgba(150,240,190,.7)); }
   #stamina.lit .arc { stroke:#a6e0bd; }
   .gauge .ico, .gauge .arc { transition:stroke .18s ease, filter .18s ease; }
+  #daylight .val { font-size:clamp(8px,1.5vw,10.5px); letter-spacing:0; }
+  #daylight.lit .ico { stroke:#ffe9b4;
+    filter:drop-shadow(0 0 7px rgba(255,220,150,.8)); }
+  #daylight.lit .arc { stroke:#ffd98e;
+    filter:drop-shadow(0 0 7px rgba(255,210,130,.7)); }
+  #daylight .arc { stroke:#5d6a86; }
   .gauge .val { position:absolute; bottom:14%; font-family:var(--num);
     font-size:clamp(8px,1.7vw,10px); color:#8d8676; letter-spacing:0;
     font-weight:400; }
@@ -323,7 +334,7 @@
   body.touch #crosshair { opacity:.5; }
 
   /* Spectating: no crosshair, no gauges, no prompt - none of it is yours. */
-  body.spectating #crosshair, body.spectating #gauges,
+  body.spectating #crosshair, body.spectating #hud-right,
   body.spectating #prompt { display:none; }
   body.spectating #vignette { box-shadow:inset 0 0 260px 90px #000; }
 
@@ -357,6 +368,8 @@
     text-transform:uppercase; color:#5d564a; }
   body.touch #hud-left { left:calc(14px + env(safe-area-inset-left));
     top:calc(12px + env(safe-area-inset-top)); }
+  body.touch #hud-right { right:calc(14px + env(safe-area-inset-right));
+    top:calc(12px + env(safe-area-inset-top)); }
 </style>
 <script type="importmap">
 { "imports": {
@@ -375,6 +388,10 @@
        can ever land on top of each other at any resolution. -->
   <div id="hud-left">
     <div id="objective">Custard recovered<b><span id="found">0</span> / <span id="total">10</span></b></div>
+  </div>
+  <!-- Torch, legs, and the hour. Top right, mirroring the counter across the
+       screen: these are the three things you check while you are running. -->
+  <div id="hud-right">
     <div id="gauges">
       <div class="gauge" id="battery">
         <svg viewBox="0 0 40 40" aria-hidden="true">
@@ -391,6 +408,7 @@
         </svg>
         <b class="val">100</b>
       </div>
+
       <div class="gauge" id="stamina">
         <svg viewBox="0 0 40 40" aria-hidden="true">
           <circle class="track" cx="20" cy="20" r="17"/>
@@ -404,8 +422,24 @@
         </svg>
         <b class="val">100</b>
       </div>
+
+      <!-- The hour. Its ring sweeps once per in-game hour, so it is always
+           moving; the sun and the clock underneath say which hour it is. -->
+      <div class="gauge" id="daylight">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <circle class="track" cx="20" cy="20" r="17"/>
+          <circle class="arc" cx="20" cy="20" r="17"/>
+        </svg>
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.1"/>
+          <path d="M12 2.6v2.4M12 19v2.4M2.6 12h2.4M19 12h2.4"/>
+          <path d="M5.4 5.4 7 7M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/>
+        </svg>
+        <b class="val">00:00</b>
+      </div>
     </div>
   </div>
+
   <div id="prompt">Walk over the custard to take it</div>
 
   <!-- Reads out the count on every pickup, big and brief. Its own element and

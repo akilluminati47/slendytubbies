@@ -438,6 +438,7 @@ function checkSpotted(dt) {
 
 function beginScare(tubby) {
   player.alive = false;
+  world?.stain(player.pos.x, player.pos.z, 1.15);
   // No synth sting under it. The recording is the whole joke and a sawtooth
   // drone across it just muddies both.
   tubby.model.play?.("attack", 0.08);
@@ -470,6 +471,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   input.update(dt);
   tickTV(dt);        // the belly screens run whether or not the game does
+  if (running && !paused) world?.sky?.update(dt);
 
   // The title screen listens for DOM events, but a gamepad produces none.
   if (!running && !game.over && input.gamepad.anyPressed()) ui.padPressed();
@@ -613,6 +615,7 @@ function frame() {
 const ARC = 2 * Math.PI * 17;
 const gBattery = { el: null, arc: null, val: null, last: -1 };
 const gStamina = { el: null, arc: null, val: null, last: -1 };
+const gDaylight = { el: null, arc: null, val: null, last: -1 };
 
 function bindGauge(g, id) {
   g.el = $(id);
@@ -622,12 +625,32 @@ function bindGauge(g, id) {
 }
 bindGauge(gBattery, "battery");
 bindGauge(gStamina, "stamina");
+bindGauge(gDaylight, "daylight");
 
 /**
  * Drive one ring. Skips the DOM entirely when nothing visible has changed -
  * these run every frame, and writing identical strings 60 times a second is
  * free layout work for no reason.
  */
+/**
+ * The hour ring.
+ *
+ * It sweeps once per in-game hour rather than showing the whole day, because a
+ * day-long ring would creep too slowly to read as moving at all - and a dial
+ * that is always turning tells you the world is on a clock without anyone
+ * having to explain it. The face underneath says which hour, and the whole
+ * thing lights while the sun is up and goes cold once it is down.
+ */
+function clockGauge(g, sky) {
+  if (!g.el || !sky) return;
+  const pct = sky.hourFraction;
+  g.arc.style.strokeDasharray = `${pct * ARC} ${ARC}`;
+  if (g.val.textContent !== sky.clock) g.val.textContent = sky.clock;
+  g.el.classList.toggle("lit", sky.daylight);
+  // Weather rides the same dial: heavier skies pull the ring back.
+  g.el.classList.toggle("low", sky.weather === "rain");
+}
+
 function gauge(g, v, lit) {
   const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
   if (pct !== g.last) {
@@ -657,6 +680,7 @@ function hud(threat) {
 
   input.touch.setTorch(player.torchOn);
   gauge(gBattery, bat, player.torchOn);
+  clockGauge(gDaylight, world?.sky);
   // Lit while the legs are actually going, which is what drains it.
   gauge(gStamina, sta, player.sprinting);
 
