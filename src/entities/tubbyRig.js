@@ -333,6 +333,105 @@ function holeRims(mesh) {
 }
 
 /**
+ * Blur the skin weights so joints bend instead of creasing.
+ *
+ * These rips are rigidly bound: 767 of Po's 993 body vertices answer to exactly
+ * one bone at full weight, nothing anywhere has more than two influences, and 18
+ * of the 31 vertices around the shoulder are rigid. That is fine while the model
+ * stands in its T-pose and ruinous the moment an arm comes down - the arm's
+ * vertices swing and the body's neighbours, one edge away, do not, so the shell
+ * tears into the hard spike that reads where a round tubby shoulder should be.
+ *
+ * The fix is the standard one: average each vertex's weights with those of the
+ * vertices it shares an edge with, a couple of passes, so a hard boundary
+ * becomes a gradient a few millimetres wide. Nothing else about the rig changes.
+ *
+ * Two details that matter here:
+ *
+ *   - Vertices are merged by position first. The exporter splits them along UV
+ *     seams, and a seam whose two halves get different weights cracks open the
+ *     moment the joint moves, which is worse than the crease being fixed.
+ *   - Only four influences survive, because that is all a glTF skin can carry.
+ *     The smallest are dropped and the rest renormalised.
+ */
+function smoothSkinWeights(meshes, { passes = 2, strength = 0.5 } = {}) {
+  let touched = 0;
+  for (const mesh of meshes) {
+    const geo = mesh.geometry;
+    const si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight;
+    const pos = geo.attributes.position;
+    if (!si || !sw || pos.count < 8) continue;
+
+    // --- merge by position so seams move together -------------------------
+    const canon = new Map(), idOf = new Int32Array(pos.count);
+    let groups = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const key = `${pos.getX(i).toFixed(4)},${pos.getY(i).toFixed(4)},${pos.getZ(i).toFixed(4)}`;
+      let id = canon.get(key);
+      if (id === undefined) { id = groups++; canon.set(key, id); }
+      idOf[i] = id;
+    }
+
+    // --- weights as a sparse map per merged vertex ------------------------
+    let weights = Array.from({ length: groups }, () => new Map());
+    for (let i = 0; i < pos.count; i++) {
+      const m = weights[idOf[i]];
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k);
+        if (w <= 0.0001) continue;
+        const b = si.getComponent(i, k);
+        m.set(b, Math.max(m.get(b) ?? 0, w));
+      }
+    }
+
+    // --- who touches whom -------------------------------------------------
+    const index = geo.index;
+    const n = index ? index.count : pos.count;
+    const at = (i) => (index ? index.getX(i) : i);
+    const near = Array.from({ length: groups }, () => new Set());
+    for (let i = 0; i < n; i += 3) {
+      const t = [idOf[at(i)], idOf[at(i + 1)], idOf[at(i + 2)]];
+      for (let a = 0; a < 3; a++) {
+        for (let b = 0; b < 3; b++) if (a !== b) near[t[a]].add(t[b]);
+      }
+    }
+
+    for (let pass = 0; pass < passes; pass++) {
+      const next = weights.map((own, v) => {
+        const neighbours = near[v];
+        if (!neighbours.size) return own;
+        const avg = new Map();
+        for (const other of neighbours) {
+          for (const [bone, w] of weights[other]) {
+            avg.set(bone, (avg.get(bone) ?? 0) + w / neighbours.size);
+          }
+        }
+        const out = new Map();
+        for (const [bone, w] of own) out.set(bone, w * (1 - strength));
+        for (const [bone, w] of avg) out.set(bone, (out.get(bone) ?? 0) + w * strength);
+        return out;
+      });
+      weights = next;
+    }
+
+    // --- back into the four slots a glTF skin has -------------------------
+    for (let i = 0; i < pos.count; i++) {
+      const sorted = [...weights[idOf[i]]].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const total = sorted.reduce((a, [, w]) => a + w, 0) || 1;
+      for (let k = 0; k < 4; k++) {
+        const [bone, w] = sorted[k] ?? [0, 0];
+        si.setComponent(i, k, bone);
+        sw.setComponent(i, k, w / total);
+      }
+    }
+    si.needsUpdate = true;
+    sw.needsUpdate = true;
+    touched++;
+  }
+  return touched;
+}
+
+/**
  * Drop the shoulder joints onto the shoulders.
  *
  * fitSkeleton() scales the whole skeleton by one number so it spans the same
@@ -841,6 +940,9 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
     const shoulders = alignShoulders(scene, meshes);
     const eyes = seatFacialParts(scene, meshes);
     const aerial = seatAerial(scene, meshes);
+    // Last, because everything above classifies vertices by which single bone
+    // dominates them, and this is the step that stops that being true.
+    smoothSkinWeights(meshes);
 
     // Build the map for THIS skin; every skin has the same rig, but resolve
     // against its own bones so a renamed joint fails loudly rather than silently.
@@ -967,9 +1069,15 @@ function twoBone(root, target, pole, l1, l2, sc) {
   if (axis.lengthSq() < 1e-8) return false;
   axis.normalize();
 
-  // Law of cosines for the angle between the reach line and the upper segment.
+  // Law of cosines for the angle between the reach line and the upper segment,
+  // turned TOWARDS the pole. The sign matters and is easy to get backwards: with
+  // reach pointing down and the pole forward, axis = reach x pole points to the
+  // model's left, and a positive turn about it swings the thigh forward so the
+  // knee leads. Negating it put every knee behind the hip-ankle line - both
+  // donors carry their knee 0.08 to 0.51 of a leg length in FRONT of that line,
+  // and the retarget was coming out at -0.03 to -0.15. Backwards knees.
   const cos = THREE.MathUtils.clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
-  sc.upper.copy(reach).applyAxisAngle(axis, -Math.acos(cos));
+  sc.upper.copy(reach).applyAxisAngle(axis, Math.acos(cos));
   sc.knee.copy(root).addScaledVector(sc.upper, l1);
   sc.lower.subVectors(target, sc.knee);
   if (sc.lower.lengthSq() < 1e-10) return false;
