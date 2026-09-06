@@ -287,7 +287,8 @@ export class UI {
    */
   showEnd(headline, detail, multi = null) {
     $("end-title").textContent = headline;
-    $("end-detail").innerHTML = detail;
+    $("end-detail").innerHTML = detail ?? "";
+    $("end-detail").hidden = !detail;
 
     const retry = $("retry");
     const wait = $("end-wait");
@@ -308,9 +309,14 @@ export class UI {
       wait.hidden = true;
       leave.hidden = false;
     } else {
-      retry.hidden = true;
+      // A guest sees the button, greyed. Hiding it made the card look like it
+      // was missing something; showing it dead says who the round is waiting on.
+      retry.hidden = false;
+      retry.disabled = true;
+      retry.textContent = "Try again";
+      retry.onclick = null;
       wait.hidden = false;
-      wait.textContent = "Waiting for the host to start another run…";
+      wait.textContent = "Waiting For Lobby Host . . .";
       leave.hidden = false;
     }
     $("end-leave").onclick = () => this.hooks.onRestart();

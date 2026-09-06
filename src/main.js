@@ -278,9 +278,7 @@ net.addEventListener("dead", (e) => {
 });
 
 net.addEventListener("over", () => {
-  const detail = `Your lobby recovered ${game.found} of ${game.total} dishes.<br>` +
-    `Tinky Winky got everyone.`;
-  endGame("dead", "All caught", detail);
+  endGame("dead", "All caught", "");
 });
 
 net.addEventListener("restart", () => {
@@ -446,8 +444,9 @@ function beginScare(tubby) {
   const finish = () => {
     scare = null;
     if (online) { beginSpectating(); return; }
-    endGame("dead", "Caught",
-      `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
+    // Nothing under it. You know what happened; the card exists to get you
+    // back in, not to read you a report.
+    endGame("dead", "Caught", "");
   };
 
   // If the recording never arrives - blocked, missing, undecodable - do not
@@ -471,7 +470,9 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   input.update(dt);
   tickTV(dt);        // the belly screens run whether or not the game does
-  if (running && !paused) world?.sky?.update(dt);
+  // The sky keeps its own time whether or not you are playing. Standing in a
+  // pause menu should not hold the sun still.
+  if (running) world?.sky?.update(dt);
 
   // The title screen listens for DOM events, but a gamepad produces none.
   if (!running && !game.over && input.gamepad.anyPressed()) ui.padPressed();
@@ -580,7 +581,7 @@ function frame() {
       if (player.alive &&
           Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z) < CFG.tubby.killRange) {
         if (online) { beginSpectating(); break; }
-        endGame("dead", "Caught", `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
+        endGame("dead", "Caught", "");
         return;
       }
     }

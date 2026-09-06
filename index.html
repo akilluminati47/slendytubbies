@@ -163,6 +163,12 @@
     background:none; color:var(--ink); font-size:14px; padding:15px 26px;
     letter-spacing:.01em; }
   .btn:hover { background:#12100c; }
+  /* A guest's Try again: present, so the card is not missing a control, but
+     plainly not theirs to press. */
+  .btn:disabled { cursor:default; opacity:.38; border-color:#221f19; }
+  .btn:disabled:hover { background:none; }
+  #end-wait { font-family:var(--hand); font-size:clamp(13px,2.4vw,17px);
+    letter-spacing:.02em; color:#8b8373; margin-top:-6px; }
   .row { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
   #note { font-size:11.5px; color:#6a6152; letter-spacing:.05em; }
 
@@ -541,11 +547,13 @@
   <div class="card">
     <h1 id="end-title">Caught</h1>
     <p class="sub" id="end-detail"></p>
-    <p class="sub" id="end-wait" hidden></p>
     <div class="row">
       <button class="btn" id="retry">Try again</button>
       <button class="btn ghost" id="end-leave" hidden>Leave lobby</button>
     </div>
+    <!-- Under the button it belongs to, so it reads as the reason that button
+         is dead rather than as a heading. -->
+    <p class="sub" id="end-wait" hidden></p>
   </div>
 </div>
 
