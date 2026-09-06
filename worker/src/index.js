@@ -116,7 +116,8 @@ export class Lobby {
     ws.accept();
     const id = this.nextId++;
     const { role, isHost } = this.#freeRole();
-    const me = { ws, id, name, role, isHost, pos: [0, 0, 0], yaw: 0, anim: "idle", dead: false };
+    const me = { ws, id, name, role, isHost, pos: [0, 0, 0], yaw: 0, pitch: 0,
+                 anim: "idle", lit: 0, dead: false };
     this.players.set(id, me);
     if (isHost) this.hostId = id;
 
@@ -157,8 +158,12 @@ export class Lobby {
   #roster(exceptId) {
     return [...this.players.values()]
       .filter((p) => p.id !== exceptId)
+      // The full transform, not just position: somebody joining mid-run should
+      // see the others already lit and already facing where they are facing,
+      // rather than a row of dark tubbies staring north until they next move.
       .map((p) => ({ id: p.id, name: p.name, role: p.role, isHost: p.isHost,
-                     pos: p.pos, yaw: p.yaw, anim: p.anim, dead: p.dead }));
+                     pos: p.pos, yaw: p.yaw, pitch: p.pitch, anim: p.anim,
+                     lit: p.lit, dead: p.dead }));
   }
 
   #onMessage(me, event) {
@@ -172,8 +177,11 @@ export class Lobby {
         // an authoritative simulation in a co-op fan game.
         if (Array.isArray(msg.pos) && msg.pos.length === 3) me.pos = msg.pos;
         if (typeof msg.yaw === "number") me.yaw = msg.yaw;
+        if (typeof msg.pitch === "number") me.pitch = msg.pitch;
         if (typeof msg.anim === "string") me.anim = msg.anim.slice(0, 16);
-        this.#broadcast({ t: "state", id: me.id, pos: me.pos, yaw: me.yaw, anim: me.anim }, me.id);
+        if (typeof msg.lit === "number") me.lit = msg.lit ? 1 : 0;
+        this.#broadcast({ t: "state", id: me.id, pos: me.pos, yaw: me.yaw,
+                          pitch: me.pitch, anim: me.anim, lit: me.lit }, me.id);
         break;
 
       case "world":

@@ -185,7 +185,10 @@ export class NetClient extends EventTarget {
         break;
       case "state": {
         const p = this.peers.get(msg.id);
-        if (p) { p.pos = msg.pos; p.yaw = msg.yaw; p.anim = msg.anim; }
+        if (p) {
+          p.pos = msg.pos; p.yaw = msg.yaw; p.pitch = msg.pitch;
+          p.anim = msg.anim; p.lit = msg.lit;
+        }
         this.#emit("state", msg);
         break;
       }
@@ -206,10 +209,27 @@ export class NetClient extends EventTarget {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
   }
 
-  /** Called on a timer, not every frame - 15 Hz is plenty for walking speed. */
-  sendState(pos, yaw, anim) {
-    this.#send({ t: "state", pos: [+pos.x.toFixed(2), +pos.y.toFixed(2), +pos.z.toFixed(2)],
-                 yaw: +yaw.toFixed(3), anim });
+  /**
+   * Called on a timer, not every frame - 15 Hz is plenty for walking speed.
+   *
+   * The middle of `pos` is height above the ground, not world Y. Everyone
+   * generates the same terrain from the lobby key, so shipping an absolute
+   * height would be sending a number the receiver can already work out - and
+   * the one thing it cannot work out is whether you are in the air. So the slot
+   * carries the jump instead, and the receiver adds it to its own ground.
+   */
+  sendState({ pos, lift = 0, yaw, pitch = 0, anim = "idle", torch = false }) {
+    this.#send({
+      t: "state",
+      pos: [+pos.x.toFixed(2), +lift.toFixed(2), +pos.z.toFixed(2)],
+      yaw: +yaw.toFixed(3),
+      pitch: +pitch.toFixed(3),
+      anim,
+      // One bit. A torch is the loudest thing about you visually and the AI
+      // already widens its sight cone for it, so it has to be on the wire or a
+      // guest with a torch lit is invisible in a way the host never is.
+      lit: torch ? 1 : 0,
+    });
   }
 
   /** Host only; the server drops these from anyone else. */

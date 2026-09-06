@@ -54,7 +54,6 @@ settings.apply(renderer, audio);
 
 audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
 audio.preload("scream", "./assets/game/scream.mp3");
-audio.preload("heartbeat", "./assets/game/heartbeat.mp3");
 
 const hasBakedAssets = Boolean(await loadTubbyAssets());
 
@@ -123,10 +122,11 @@ function custardMask() {
 /**
  * Everyone the monster could be hunting, in the shape the AI expects.
  *
- * Remotes carry less than the local player does - the wire has position, facing
- * and speed on it, and nothing about torches - so what is missing is estimated
- * rather than left undefined, which would silently make a guest invisible or
- * uncatchable. Only the host builds this; guests do their own proximity check
+ * Everyone in this list is described the same way, and that is the point. The
+ * wire now carries the torch, the look angle and enough position history for a
+ * real velocity, so a guest presents the monster with exactly the surface the
+ * host does - seen the same way, heard the same way, and able to escape the
+ * same way. Only the host builds this; guests run the same catch test locally
  * against the monster the host broadcasts.
  */
 const _quarry = [];
@@ -143,12 +143,15 @@ function quarries() {
     if (r.dead) continue;
     _quarry.push({
       id: r.id ?? r.name, remote: r, alive: true, pos: r.current,
-      // Not on the wire. A moving guest is assumed to be making walking noise,
-      // a still one almost none, which is the shape of the real thing.
-      torchOn: false,
-      noise: r.speed > 0.6 ? CFG.noise.walk : CFG.noise.walk * 0.25,
-      vel: { x: 0, z: 0 },
-      input: { yaw: r.yaw ?? 0 },
+      // All of this is now real rather than estimated. The guesses that used to
+      // stand here were what made a guest a different kind of prey: a torch
+      // assumed off never widened the sight cone, and a velocity of zero meant
+      // canTake() could never see anybody running away, so guests were caught
+      // on contact in situations a host walks out of.
+      torchOn: r.torchOn,
+      noise: r.noise,
+      vel: r.vel,
+      input: { yaw: r.viewYaw },
     });
   }
   return _quarry;
@@ -292,6 +295,10 @@ function applyCustardMask(mask) {
 net.addEventListener("took", (e) => {
   const c = world?.custards[e.detail.i];
   if (!world?.take(c)) return;
+  // Taking a dish is loud, and it is loud whoever does it. Without this the
+  // monster heard the host grab one from across the map and never heard a guest
+  // at all.
+  remotes.get(e.detail.by)?.heard(CFG.noise.pickup);
   // The count is the lobby's, not yours - everyone is filling the same ten.
   if (e.detail.by !== net.id) {
     game.found++;
@@ -305,6 +312,12 @@ net.addEventListener("took", (e) => {
 net.addEventListener("dead", (e) => {
   const r = remotes.get(e.detail.id);
   if (!r) return;
+  // The same mark the local death leaves, in the same place, for the rest of
+  // the round. Everyone generates the same terrain from the lobby key, so the
+  // stain lands identically on every screen without a byte of it travelling -
+  // and walking back into a clearing you have already lost somebody in is most
+  // of what the mark is for.
+  world?.stain(r.current.x, r.current.z, 1.15);
   r.setDead(true);
   ui.flash(`${r.name} was caught`);
   // If we were watching them, move on rather than staring at a body.
@@ -403,7 +416,6 @@ function beginSpectating() {
   player.alive = false;
   player.torch.intensity = 0;
   input.gamepad.stop();
-  net.sendDead();
   spectator.start(survivors);
   document.body.classList.add("spectating");
 }
@@ -443,8 +455,6 @@ function endGame(kind, headline, detail) {
  * time would be wallpaper. It fires on the turn: close, hunting, and now inside
  * your view. Once per chase, so glancing back and forth does not machine-gun it.
  */
-let heartTimer = null;
-
 function checkSpotted(dt) {
   if (!player?.alive || spectating) return;
   for (const t of tubbies) {
@@ -456,21 +466,22 @@ function checkSpotted(dt) {
     if (look < Math.cos(CFG.tubby.lookAngle * Math.PI / 180)) continue;
     t.seenCue = true;
     input.gamepad.rumble(0.7, game.elapsed);
-    // The heart comes in over the back half of the shock and carries on after
-    // it, so the fright trails rather than stopping dead with the noise.
-    audio.playSample("jumpscare", 0.8).then((seconds) => {
-      if (!seconds) return;
-      clearTimeout(heartTimer);
-      heartTimer = setTimeout(() => {
-        if (player?.alive && running) audio.playSample("heartbeat", 0.65);
-      }, seconds * 500);
-    });
+    // Just the shock. The heart underneath it is synthesised and already
+    // running - it tracks the threat continuously and speeds up as the thing
+    // closes, which a recording cannot do, and laying a fixed loop over the top
+    // only fought it.
+    audio.playSample("jumpscare", 0.8);
   }
 }
 
 function beginScare(tubby) {
   player.alive = false;
   world?.stain(player.pos.x, player.pos.z, 1.15);
+  // Tell the lobby now, not when the sequence ends. The close-up runs for about
+  // two seconds and nothing goes out on the wire while it does, so announcing it
+  // at the end left the monster standing over a body everyone else still saw
+  // walking - and left it hunting somebody it had already caught.
+  if (online) net.sendDead();
   // No synth sting under it. The recording is the whole joke and a sawtooth
   // drone across it just muddies both.
   tubby.model.play?.("attack", 0.08);
@@ -527,7 +538,18 @@ function frame() {
     for (const t of tubbies) t.model.update(dt, 0);
     // The dread overlay is at its loudest when the thing is on top of you, which
     // is exactly when it would bleach out the one shot of the mask. Pull it off.
-    $("dread").style.opacity = String(0.55 * (1 - scare.push));
+    //
+    // Re-checked, because scare.update() is what runs the sequence's own
+    // completion callback and that callback clears `scare` - so on the last
+    // frame of the sequence it is already gone by the time we reach here.
+    // Reading through it threw an uncaught TypeError on every single death,
+    // which cost that frame its render and left both overlays wherever they
+    // happened to be.
+    const fade = scare ? 0.55 * (1 - scare.push) : 0;
+    $("dread").style.opacity = String(fade);
+    // The grey goes with it. The mask is the one thing in the game worth
+    // looking at in colour.
+    setDrain(fade);
     renderer.render(scene, camera);
     return;
   }
@@ -625,10 +647,15 @@ function frame() {
         t.netSeen = true;
       }
       t.netApply(w?.p, w?.f, w?.s, dt);
-      if (player.alive &&
-          Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z) < CFG.tubby.killRange) {
-        if (online) { beginSpectating(); break; }
-        endGame("dead", "Caught", "");
+      // Tubby.takes, the same predicate the host's AI returns "kill" from, so a
+      // guest is caught under exactly the conditions a host is - and, just as
+      // importantly, escapes under exactly the same ones. This used to be a
+      // bare distance test, which took guests on contact while the host could
+      // sprint away with their back turned and live.
+      if (t.takes(player)) {
+        // And the same sequence, too: the turn, the mask, the mark on the
+        // ground. Guests used to be cut straight to spectating with none of it.
+        beginScare(t);
         return;
       }
     }
@@ -643,8 +670,14 @@ function frame() {
     netAccum += dt;
     if (netAccum >= 1 / 15) {           // 15 Hz is ample for walking speed
       netAccum = 0;
-      const moving = Math.hypot(player.vel.x, player.vel.z) > 0.6;
-      net.sendState(player.pos, player.viewYaw(), moving ? "walk" : "idle");
+      net.sendState({
+        pos: player.pos,
+        lift: player.lift,
+        yaw: player.viewYaw(),
+        pitch: input.pitch,
+        anim: player.motion,
+        torch: player.torchOn,
+      });
       if (host) net.sendWorld(tubbies.map((t) => t.netState()), custardMask());
     }
   }
@@ -699,6 +732,25 @@ function clockGauge(g, sky) {
   g.el.classList.toggle("low", sky.weather === "rain");
 }
 
+/**
+ * The colour draining out of the world, 0 to 1.
+ *
+ * Two numbers rather than an opacity: `--g` is how much saturation is left and
+ * `--r` is how far out from the middle of the view it has got, which is what
+ * makes it a sweep. The layer is taken out of the document entirely at rest -
+ * a full-screen backdrop-filter still costs a snapshot of the frame even when
+ * the filter it is applying is the identity.
+ */
+let drainOn = false;
+function setDrain(amount) {
+  const el = $("drain");
+  const on = amount > 0.004;
+  if (on !== drainOn) { el.classList.toggle("on", on); drainOn = on; }
+  if (!on) return;
+  el.style.setProperty("--g", amount.toFixed(3));
+  el.style.setProperty("--r", `${(12 + amount * 60).toFixed(1)}%`);
+}
+
 function gauge(g, v, lit) {
   const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
   if (pct !== g.last) {
@@ -714,6 +766,7 @@ function gauge(g, v, lit) {
 /** Spectating: a standing banner, plus who you are on. */
 function specHud(watching) {
   $("dread").style.opacity = 0;
+  setDrain(0);
   $("spec-who").textContent = watching ? watching.name : "Nobody left to watch";
 }
 
@@ -735,6 +788,8 @@ function hud(threat) {
   const dread = $("dread");
   dread.classList.toggle("beam", player.torchOn);
   dread.style.opacity = (threat * CFG.dread.maxOpacity).toFixed(3);
+
+  setDrain(threat * CFG.dread.drainMax);
 }
 
 // setAnimationLoop, not requestAnimationFrame: WebXR drives the frame clock from

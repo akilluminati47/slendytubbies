@@ -74,6 +74,20 @@ export class Player {
     return Math.atan2(-_dir.x, -_dir.z);
   }
 
+  /**
+   * What this body is visibly doing, in one word.
+   *
+   * This is what travels to the other players - they cannot see our intent
+   * flags, our stamina or our velocity, only the result - so it is derived here
+   * once rather than guessed at both ends.
+   */
+  get motion() {
+    if (!this.grounded || this.lift > 0.02) return "jump";
+    const speed = Math.hypot(this.vel.x, this.vel.z);
+    if (speed < 0.6) return "idle";
+    return this.sprinting ? "run" : "walk";
+  }
+
   get sprinting() {
     return this.input.intent.sprint && this.stamina > 0.05 && this.vel.lengthSq() > 0.5;
   }
@@ -99,6 +113,14 @@ export class Player {
       this.vy = CFG.player.jumpSpeed;
       this.grounded = false;
       this.sinceGrounded = CFG.player.coyoteTime;   // no double jump
+      // A hop is a breath and a shout at the same time. It hands back a tenth
+      // of the sprint bar, which is what makes it a way to keep running rather
+      // than a way to clear a rock - and it is the loudest thing in the game,
+      // so keeping it up means never being unheard again. The noise goes out on
+      // the launch, not the landing: the cost should land before the benefit.
+      this.stamina = Math.min(CFG.player.staminaMax,
+                              this.stamina + CFG.player.jumpStamina);
+      this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.jump);
     }
     if (!this.grounded || this.lift > 0) {
       this.vy -= CFG.player.gravity * dt;

@@ -124,19 +124,58 @@
      Torch ON (.beam): the red pulls back to a ring around the light, so the one
      thing you can actually see keeps its own colour. Switching the torch is
      therefore a real visual trade, not just a light toggle. */
+  /* Two layers, in this order on purpose: the world loses its colour first and
+     the red is painted over the top of that, so the warning never gets drained
+     along with everything else.
+
+     Neither uses mix-blend-mode. It does not reach the WebGL canvas here - a
+     div set to multiply-by-white, which is arithmetically a no-op, still washed
+     the whole scene pale, so the blend was being ignored and the overlay simply
+     painted. That is what the old white-centred gradient really was: not a
+     multiply that left the beam alone, but a white disc composited straight
+     over the middle of the screen every time something got close. Hence the
+     flash. backdrop-filter does reach the canvas, so the drain is a real filter
+     and the red is a deliberately dark paint that can only darken. */
+
+  /* The colour going out of the world. grayscale() takes the saturation out of
+     what is already on screen without touching how bright it is, which is the
+     whole difference between dread and a torch in the face. The mask grows with
+     the threat so it reads as a sweep out from the middle of your view rather
+     than a filter snapping on, and the layer is display:none at rest because a
+     full-screen backdrop-filter is not free even at zero strength.
+     Registering the two custom properties is what lets them ease. */
+  @property --r { syntax:"<percentage>"; inherits:false; initial-value:12%; }
+  @property --g { syntax:"<number>"; inherits:false; initial-value:0; }
+  #drain { position:absolute; inset:0; display:none; --r:12%; --g:0;
+    transition:--r .5s ease-out, --g .5s ease-out;
+    backdrop-filter:grayscale(var(--g));
+    -webkit-backdrop-filter:grayscale(var(--g));
+    -webkit-mask-image:radial-gradient(ellipse 92% 82% at 50% 56%,
+      #000 0%, #000 var(--r), transparent calc(var(--r) + 34%));
+    mask-image:radial-gradient(ellipse 92% 82% at 50% 56%,
+      #000 0%, #000 var(--r), transparent calc(var(--r) + 34%)); }
+  #drain.on { display:block; }
+
+  /* Torch OFF: the red owns the whole screen, centre included - there is no
+     beam to protect and nothing to see anyway.
+     Torch ON (.beam): the red pulls back to a ring around the light, so the one
+     thing you can actually see keeps its own colour. Switching the torch is
+     therefore a real visual trade, not just a light toggle. Every stop is a
+     dark red: this paints normally, so anything pale here would lift the scene
+     rather than close it in. */
   #dread { position:absolute; inset:0; opacity:0;
-    transition:opacity .35s, background .3s; mix-blend-mode:multiply;
+    transition:opacity .35s, background .3s;
     background:radial-gradient(ellipse 78% 68% at 50% 56%,
-      #cf9a9a 0%,
-      #c48c8c 45%,
-      #b06a6a 100%); }
+      rgba(74,16,18,.55) 0%,
+      rgba(64,12,14,.78) 45%,
+      rgba(46,8,10,1) 100%); }
   #dread.beam {
     background:radial-gradient(ellipse 78% 68% at 50% 56%,
-      #ffffff 0%,
-      #ffffff 34%,
-      #f0cfcf 58%,
-      #d09090 78%,
-      #b06a6a 100%); }
+      rgba(74,16,18,0) 0%,
+      rgba(74,16,18,0) 34%,
+      rgba(70,14,16,.45) 58%,
+      rgba(58,10,12,.8) 78%,
+      rgba(46,8,10,1) 100%); }
 
   /* --------------------------------------------------------------- screens */
   .screen { position:fixed; inset:0; background:#050505; z-index:10;
@@ -398,6 +437,7 @@
 
 <div id="hud">
   <div id="vignette"></div>
+  <div id="drain"></div>
   <div id="dread"></div>
   <div id="crosshair"></div>
   <!-- One HUD column. Everything stacks in flow with a gap, so no two blocks

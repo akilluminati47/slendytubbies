@@ -25,6 +25,11 @@ export const CFG = {
     jumpSpeed: 4.6,       // m/s launch
     gravity: 16.0,        // m/s^2 - snappier than real gravity, like a shooter
     coyoteTime: 0.12,     // grace period to still jump after leaving the ground
+    // Stamina refunded per hop. The gauge reads 0-100, so a tenth of the bar -
+    // and the bar is six seconds of sprint, hence 0.6. Hopping is therefore a
+    // real way to keep running, paid for in noise (CFG.noise.jump) rather than
+    // in time.
+    jumpStamina: 0.6,
     // Head bob. Deliberately subtle: it should register as weight underfoot,
     // never as something you notice or have to look past.
     bobWalk: 0.016,       // metres of vertical travel while walking
@@ -100,12 +105,21 @@ export const CFG = {
   },
   dread: {
     maxOpacity: 0.5,    // how red the screen can ever get
+    // How far the colour can drain out of the world. Short of 1 on purpose -
+    // the custard glow is the one colour worth keeping, and a fully grey screen
+    // is also a screen you cannot spot a dish on.
+    drainMax: 0.8,
   },
   noise: {
     idle: 0.15,
     walk: 1.0,
     sprint: 2.4,
     pickup: 26,           // one-shot metres of noise when a tank is taken
+    // The loudest signal in the game, louder than taking a dish, and it fires
+    // on the launch rather than the landing so the cost lands before the
+    // benefit does. Jumping buys stamina back (player.jumpStamina) - this is
+    // what it costs: everything within this radius knows exactly where you are.
+    jump: 34,
     land: 14,             // one-shot metres of noise on landing a jump
     torchBonus: 4,        // metres added to tubby sight range when your torch is on
   },

@@ -40,7 +40,12 @@ The tubby never cheats. It finds you two ways and only two ways:
 
 * **Sight** — a ~100° cone out to 26 m, blocked by tree trunks. Your torch adds 4 m.
 * **Hearing** — a radius set by what you are doing: standing still 1.4 m, walking 9 m,
-  sprinting 22 m. Landing a jump is a 14 m burst, and **taking a dish is a 26 m burst**.
+  sprinting 22 m. Landing is a 14 m burst, taking a dish is a 26 m burst, and
+  **jumping is the loudest thing in the game at 34 m**.
+
+Jumping also hands back a tenth of the stamina bar, per hop. That is deliberate: you can
+keep sprinting indefinitely by hopping, and the price is that you are never unheard again
+while you do it. Bunny-hopping across the map works, and everything on it will know.
 
 Walk over a dish to take it — no button, no hold. It is loud, and everything hunting you
 turns and **bolts** — 11 m/s, far faster than you can run, away from every player at once,
@@ -97,6 +102,19 @@ anyone else, so clients cannot fight over where the monster is. If the host leav
 longest-standing survivor is promoted and inherits the Guardian role.
 
 ### Dying with friends
+
+Everyone in a lobby is the same kind of prey. The wire carries each player's look angle,
+torch, jump height and whether they are walking or sprinting, so the monster sees, hears
+and catches a guest by exactly the rules it uses on the host — including the escape:
+`Tubby.takes()` is one predicate, run by the host for its own death and by each guest for
+theirs. It used to be written twice and the two copies disagreed, so a guest sprinting away
+with their back turned was taken on contact while the host walked out of it.
+
+The visible half of that is the same idea: torches light the world for everyone who can see
+them, jumps leave the ground, sprinting looks different from walking, heads turn to where
+their player is actually looking rather than tracking the body, and the mark left where
+somebody died is on every screen — placed from the shared seed, so not one byte of it
+travels.
 
 Caught alone, the run ends. Caught in a lobby, you drop into **third-person
 spectating** on a survivor — camera control only, jump to cycle who you watch. The run is
@@ -165,8 +183,9 @@ vendor/three/  the five three.js files the game imports, so it deploys standalon
 tools/         serve.py · fetch_sketchfab.py · rig_transfer.py · gen_credits.py
 ```
 
-Sound is synthesised at runtime (no audio files): wind, a heartbeat that tracks how close
-the tubby is, and stingers. Browsers refuse to start an AudioContext without a user
+Sound is synthesised at runtime apart from two recordings (the shock and the scream):
+wind, a heartbeat that tracks how close the tubby is and quickens as it closes, and
+stingers. Browsers refuse to start an AudioContext without a user
 gesture, which is exactly what the title screen is for — any key, click, tap or pad button
 both begins the game and unlocks audio in the same press.
 
@@ -242,7 +261,7 @@ code path serves two rips with no shared naming convention.
 The rig source models are staged locally into `assets/game/rig/` and are gitignored; re-stage
 them from `assets/models/` when picking this back up.
 
-## Debug## Debug
+## Debug
 
 `window.__dbg` in the console:
 
@@ -253,6 +272,30 @@ __dbg.here(6)      // warp a tubby 6 m in front of you
 __dbg.overlaps()   // placement sanity check - must be 0
 __dbg.stopRumble() // kill a stuck controller vibration
 ```
+
+## Not built yet
+
+The environment list, in the order it is meant to happen. Everything here is
+scenery and weather — none of it changes how the game plays, which is why it
+keeps getting bumped.
+
+**Ground cover and scenery.** Grass, bark, evergreen branches and rocks, as
+instanced meshes with per-instance variation driven by a seeded hash: real-world
+height distributions, trunk taper, bark roughness that varies with age. Diversity
+out of one draw call per species rather than out of more models.
+
+**Daylight.** White cloud and a sun in a blue sky. The dome
+([`src/world/sky.js`](src/world/sky.js)) already runs a full 24 hours in
+48 minutes and already carries a sun disc and its glow, but the palette was
+tuned for a game that starts between 18:00 and 02:00 and daytime currently
+reads as a washed-out night. Clouds do not exist at all — `uHaze` fades the
+whole sky towards the horizon colour, which is overcast as a single flat number
+rather than as anything with a shape.
+
+**Rain.** A named weather state (`clear / hazy / overcast / rain`) already
+drives fog, star density and light level, and the hour ring on the HUD already
+goes cold when it rains. What is missing is the rain itself: nothing falls, and
+nothing is wet.
 
 ## Licence / credits
 

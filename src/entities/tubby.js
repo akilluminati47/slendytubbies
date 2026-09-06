@@ -171,12 +171,23 @@ export class Tubby {
       : this.speedNow > 0.15 ? "walk" : "idle");
     this.model.update(dt, this.speedNow);
 
-    if (player.alive && this.state === "chase" && !fleeing &&
-        Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < T.killRange &&
-        this.canTake(player)) {
-      return "kill";
-    }
-    return null;
+    return this.takes(player) ? "kill" : null;
+  }
+
+  /**
+   * Is this person caught, right now?
+   *
+   * One definition, used by the host running the AI and by a guest checking
+   * itself against the monster the host broadcasts. It used to be written out
+   * twice and the two copies did not agree: the guest's was a bare distance
+   * test, so a guest sprinting away with their back turned was taken on contact
+   * while the host doing exactly the same thing was stalked and left alive. The
+   * escape is the best mechanic in the game and half the lobby did not have it.
+   */
+  takes(player) {
+    if (!player?.alive || this.state !== "chase") return false;
+    const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
+    return d < T.killRange && this.canTake(player);
   }
 
   /**

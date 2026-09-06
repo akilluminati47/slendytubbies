@@ -70,6 +70,14 @@ export function loadFaceTexture() {
 }
 
 const _v = new THREE.Vector3();
+// Scratch for the head twist. It runs once per drawn tubby per frame and
+// allocating four quaternions each time was pure garbage for no benefit.
+const _axis = new THREE.Vector3();
+const _pq = new THREE.Quaternion();
+const _dq = new THREE.Quaternion();
+const _dq2 = new THREE.Quaternion();
+const _scr = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
 // A hair of sink so the sole meets the ground rather than hovering on it.
 const FOOT_SINK = 0.01;
 
@@ -1018,6 +1026,8 @@ class RiggedTubby {
     this.current = null;
     this.currentName = null;
     this.spec = spec;
+    this.lookYaw = 0;
+    this.lookPitch = 0;
     this.play("idle", 0);
   }
 
@@ -1044,6 +1054,56 @@ class RiggedTubby {
       return this.headBone.localToWorld(out);
     }
     return this.headWorld(out);
+  }
+
+  /**
+   * Point the head somewhere other than straight ahead.
+   *
+   * Offsets, not absolutes: `yaw` is measured from wherever the body is facing,
+   * so a player walking north while looking east is one number rather than two
+   * that have to agree. Held rather than applied, because the mixer rewrites
+   * every bone it owns on each update and anything written before that is gone.
+   */
+  look(yaw = 0, pitch = 0) {
+    // A neck, not a turret. Past this the head detaches from the shoulders and
+    // the whole model reads as broken rather than as somebody looking behind
+    // them - and at that point the body is turning anyway.
+    this.lookYaw = THREE.MathUtils.clamp(yaw, -1.3, 1.3);
+    this.lookPitch = THREE.MathUtils.clamp(pitch, -0.55, 0.55);
+  }
+
+  /**
+   * Apply the held look, in world space.
+   *
+   * Not in the bone's own frame: these donors arrive under wrapper rotations
+   * and no two joints agree on which local axis is up, so "rotate about local X"
+   * means something different on every rig and tilted heads sideways on most of
+   * them. A world-space delta pushed back through the parent
+   * (L' = P-1 . D . P . L) is immune to all of that - it rotates the head about
+   * a world axis whatever the bone thinks it is doing.
+   */
+  #turnHead() {
+    const bone = this.headBone;
+    if (!bone || (!this.lookYaw && !this.lookPitch)) return;
+
+    // The model faces +Z at yaw 0, so a body at yaw t faces (sin t, 0, cos t)
+    // and its right hand points along (-cos t, 0, sin t).
+    const t = this.root.rotation.y;
+    _axis.set(-Math.cos(t), 0, Math.sin(t));
+    // Pitch in the body's own frame first, then swing the result by the look
+    // yaw: D = Qyaw . Qpitch, which applied to a vector is yaw(pitch(v)).
+    _dq.setFromAxisAngle(UP, this.lookYaw);
+    _dq2.setFromAxisAngle(_axis, this.lookPitch);
+    _dq.multiply(_dq2);
+
+    bone.parent.updateWorldMatrix(true, false);
+    bone.parent.matrixWorld.decompose(_scr, _pq, _v);
+    // decompose, not setFromRotationMatrix: there is scale on these chains and
+    // reading a rotation straight off a scaled matrix is nonsense.
+    bone.quaternion
+      .premultiply(_pq)
+      .premultiply(_dq)
+      .premultiply(_pq.invert());
   }
 
   play(name, fade = 0.25) {
@@ -1074,6 +1134,9 @@ class RiggedTubby {
               : THREE.MathUtils.clamp(speed / own, 0.82, 2.45);
     this.mixer.update(dt);
     this.#plantFeet();
+    // After the mixer, always: it owns the head bone during every clip and
+    // anything written before it runs is overwritten the same frame.
+    this.#turnHead();
   }
 
   /**
@@ -1200,9 +1263,17 @@ class ProcTubby {
 
     this.t = 0;
     this.state = "idle";
+    this.lookYaw = 0;
+    this.lookPitch = 0;
   }
 
   play(name) { this.state = name; }
+
+  /** Same contract as the rigged model; the stand-in's head is a bare sphere. */
+  look(yaw = 0, pitch = 0) {
+    this.lookYaw = THREE.MathUtils.clamp(yaw, -1.3, 1.3);
+    this.lookPitch = THREE.MathUtils.clamp(pitch, -0.55, 0.55);
+  }
 
   update(dt, speed = 0) {
     this.t += dt;
@@ -1216,6 +1287,11 @@ class ProcTubby {
     }
     this.rig.position.y = Math.abs(Math.sin(this.t * stride)) * 0.05 * amp;
     this.head.rotation.z = Math.sin(this.t * 1.3) * 0.05;
+    // This head faces +Z with no wrapper rotation, so the offsets go straight
+    // on. Pitch is negated: rotating +Z about local +X by a positive angle
+    // drops the face, and a positive look pitch means looking up.
+    this.head.rotation.y = this.lookYaw ?? 0;
+    this.head.rotation.x = -(this.lookPitch ?? 0);
   }
 }
 
