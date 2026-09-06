@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CFG } from "./game/config.js";
 import { Input } from "./engine/input.js";
-import { World } from "./world/world.js";
+import { World, heightAt } from "./world/world.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
 import { loadTubbyAssets } from "./entities/tubbyModel.js";
@@ -11,6 +11,7 @@ import { Settings } from "./game/settings.js";
 import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
+import { Jumpscare } from "./game/jumpscare.js";
 import { MenuNav } from "./game/menuNav.js";
 import { Spectator } from "./game/spectate.js";
 import { NetClient, seedFromKey, ROLE_LABEL } from "./net/client.js";
@@ -51,6 +52,8 @@ const settings = new Settings();
 const net = new NetClient();
 settings.apply(renderer, audio);
 
+audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
+
 const hasBakedAssets = Boolean(await loadTubbyAssets());
 
 // The menu backdrop. Built after the rigs so it has something to parade, and
@@ -73,6 +76,7 @@ let netWorld = null;
 let netAccum = 0;
 let spectating = false;
 let spectator = null;
+let scare = null;        // the capture sequence, while it is playing
 
 const tubbies = [];
 const remotes = new Map();
@@ -368,7 +372,6 @@ function beginSpectating() {
   net.sendDead();
   spectator.start(survivors);
   document.body.classList.add("spectating");
-  audio.caught();
 }
 
 function endGame(kind, headline, detail) {
@@ -380,7 +383,8 @@ function endGame(kind, headline, detail) {
   input.release();
   input.touch.setInGame(false);
   document.exitPointerLock?.();
-  if (kind === "dead" && !spectating) audio.caught();
+  // Nothing synthesised when you are caught: the recording already played over
+  // the jumpscare and a drone on top of it only muddies both.
   if (kind === "won") audio.won();
   spectating = false;
   spectator?.stop();
@@ -389,6 +393,43 @@ function endGame(kind, headline, detail) {
   // otherwise drop out of a lobby everyone else is still sitting in.
   ui.showEnd(headline, detail, online ? { host, onAgain: () => net.sendRestart() } : null);
   if (input.xr.presenting) input.xr.pulse(1, 400);
+}
+
+/**
+ * Hand the camera over and let the player watch it happen.
+ *
+ * The mask is the best thing in the game and the old cut to a black card never
+ * showed it. The recording sets the length: the push holds on the face until the
+ * sound stops, and the card lands in the silence afterwards.
+ */
+function beginScare(tubby) {
+  player.alive = false;
+  // No synth sting under it. The recording is the whole joke and a sawtooth
+  // drone across it just muddies both.
+  tubby.model.play?.("attack", 0.08);
+
+  const finish = () => {
+    scare = null;
+    if (online) { beginSpectating(); return; }
+    endGame("dead", "Caught",
+      `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
+  };
+
+  // If the recording never arrives - blocked, missing, undecodable - do not
+  // strand the player staring at the floor waiting for a sound.
+  const guard = setTimeout(() => {
+    if (!scare) { console.warn("[scare] no recording, cutting straight to the card"); finish(); }
+  }, 900);
+
+  // playSample resolves with the recording's length once it has decoded, so the
+  // sequence is built the moment we know how long to hold on the mask.
+  audio.playSample("jumpscare", 0.9).then((seconds) => {
+    clearTimeout(guard);
+    console.info(`[scare] holding ${seconds.toFixed(2)}s on the mask`);
+    scare = new Jumpscare({
+      camera, rig, input, tubby, seconds, onDone: finish,
+    });
+  });
 }
 
 function frame() {
@@ -406,6 +447,18 @@ function frame() {
   if (inMenu) menuNav.update(nav, input.gamepad.connected);
   if (nav.start && running) paused ? resume() : pause();
   if (input.intent.menu && running) paused ? resume() : pause();
+
+  if (scare) {
+    scare.update(dt);
+    // Only the model advances - no AI, no steering. The chaser holds the spot it
+    // caught you on until the card lands, or it wanders out of its own close-up.
+    for (const t of tubbies) t.model.update(dt, 0);
+    // The dread overlay is at its loudest when the thing is on top of you, which
+    // is exactly when it would bleach out the one shot of the mask. Pull it off.
+    $("dread").style.opacity = String(0.55 * (1 - scare.push));
+    renderer.render(scene, camera);
+    return;
+  }
 
   if (!running || paused || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
@@ -470,8 +523,7 @@ function frame() {
   for (const [i, t] of tubbies.entries()) {
     if (host) {
       if (t.update(dt, player, threats) === "kill" && player.alive) {
-        if (online) { beginSpectating(); break; }
-        endGame("dead", "Caught", `You recovered ${game.found} of ${game.total} dishes.<br>It heard you.`);
+        beginScare(t);
         return;
       }
     } else {
@@ -569,7 +621,8 @@ function hud(threat) {
 
   input.touch.setTorch(player.torchOn);
   gauge(gBattery, bat, player.torchOn);
-  gauge(gStamina, sta, false);
+  // Lit while the legs are actually going, which is what drains it.
+  gauge(gStamina, sta, player.sprinting);
 
   const dread = $("dread");
   dread.classList.toggle("beam", player.torchOn);
@@ -591,6 +644,18 @@ window.__dbg = {
   get paused() { return paused; },
   get online() { return online; },
   get spectating() { return spectating; },
+  get scare() { return scare; },
+  // Stage the capture on demand. Waiting for the AI to corner you is a poor way
+  // to look at a one-second sequence.
+  scareNow: (dist = 1.15) => {
+    const t = tubbies[0];
+    if (!t || !player?.alive) return "not in a run";
+    const yaw = input.yaw;
+    t.pos.set(player.pos.x - Math.sin(yaw) * dist, 0, player.pos.z - Math.cos(yaw) * dist);
+    t.root.position.set(t.pos.x, heightAt(t.pos.x, t.pos.z), t.pos.z);
+    beginScare(t);
+    return "staged";
+  },
   spectator: () => spectator,
   get host() { return host; },
   get role() { return myRole; },

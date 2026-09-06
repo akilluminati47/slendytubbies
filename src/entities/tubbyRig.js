@@ -278,13 +278,19 @@ function holeRims(mesh) {
   // Merge coincident vertices so a rim reads as one loop.
   const v = new THREE.Vector3();
   const canon = new Map(), idOf = new Int32Array(geo.attributes.position.count);
-  const points = [];
+  const points = [], uvs = [];
+  const uvAttr = geo.attributes.uv;
   for (let i = 0; i < geo.attributes.position.count; i++) {
     mesh.getVertexPosition(i, v);
     v.applyMatrix4(mesh.matrixWorld);
     const key = `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`;
     let id = canon.get(key);
-    if (id === undefined) { id = points.length; canon.set(key, id); points.push(v.clone()); }
+    if (id === undefined) {
+      id = points.length;
+      canon.set(key, id);
+      points.push(v.clone());
+      uvs.push(uvAttr ? new THREE.Vector2(uvAttr.getX(i), uvAttr.getY(i)) : null);
+    }
     idOf[i] = id;
   }
 
@@ -327,7 +333,19 @@ function holeRims(mesh) {
     centre.divideScalar(group.length);
     let radius = 0;
     for (const g of group) radius = Math.max(radius, points[g].distanceTo(centre));
-    rims.push({ centre, count: group.length, radius });
+    // Where this hole sits on the texture sheet, which is what lets a face
+    // painted for another head be lined up with the holes in this one.
+    // Not `seen`: that name is the visited-set for the walk above, in this very
+    // block, and shadowing it here put the Set into the temporal dead zone. The
+    // whole rig build threw and fell back to the procedural stand-ins.
+    let uv = null, uvCount = 0;
+    for (const g of group) {
+      if (!uvs[g]) continue;
+      uv = uv ? uv.add(uvs[g]) : uvs[g].clone();
+      uvCount++;
+    }
+    if (uv && uvCount) uv.divideScalar(uvCount);
+    rims.push({ centre, count: group.length, radius, uv });
   }
   return rims;
 }
@@ -694,7 +712,7 @@ function seatFacialParts(scene, meshes) {
   // Where they belong: the two sockets, taken as the holes nearest each eye bone.
   const face = meshes.find((m) => /face/i.test(m.material?.name ?? "")) ?? meshes[0];
   const rims = holeRims(face).filter((r) => r.count >= 4);
-  const socket = {}, socketRadius = {};
+  const socket = {}, socketRadius = {}, socketUV = {};
   for (const side of ["R", "L"]) {
     const eye = targets.find((t) => t.side === side && /^eye[_ ]/i.test(t.bone.name));
     if (!eye) continue;
@@ -707,7 +725,11 @@ function seatFacialParts(scene, meshes) {
       const d = r.centre.distanceTo(at);
       if (d < bestD) { bestD = d; best = r; }
     }
-    if (best) { socket[side] = best.centre; socketRadius[side] = best.radius; }
+    if (best) {
+      socket[side] = best.centre;
+      socketRadius[side] = best.radius;
+      socketUV[side] = best.uv;
+    }
   }
 
   const centroid = new Map(), radius = new Map();
@@ -776,7 +798,7 @@ function seatFacialParts(scene, meshes) {
       });
     }
   }
-  return { moved: moved.length, sockets: out, head,
+  return { moved: moved.length, sockets: out, head, socketUV,
     scale: moved[0]?.scaled ?? 1 };
 }
 
@@ -979,6 +1001,7 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
       // Where the eye sockets are and which bone they ride on, for whoever wants
       // to put something in them. See seatFacialParts.
       sockets: eyes.sockets,
+      socketUV: eyes.socketUV,
       head: eyes.head,
       // The guardian's eye geometry is 456 units wide on a body 4.8 tall and
       // buried 2500 below its feet; a rescale that extreme means the mesh cannot

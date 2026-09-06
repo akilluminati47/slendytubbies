@@ -1,5 +1,7 @@
 /**
- * All sound is synthesised - no audio files to load, ship, or cache-bust.
+ * Nearly all sound is synthesised - no audio files to load, ship, or cache-bust.
+ * The one exception is the jumpscare, which is a recording and could not be
+ * anything else; see preload() and playSample().
  *
  * Browsers refuse to start an AudioContext without a user gesture, which is the
  * real reason the title screen exists: the first key, click, tap or button press
@@ -12,6 +14,60 @@ export class Audio {
     this.ready = false;
     this.volume = 0.7;
     this.nodes = {};
+    // name -> ArrayBuffer while we are waiting for a gesture, then AudioBuffer.
+    this.samples = new Map();
+    this.pending = new Map();
+  }
+
+  /**
+   * Fetch a sound file now and decode it later.
+   *
+   * Decoding needs an AudioContext and there is no context until the player
+   * touches something, but the download can happen immediately, so the bytes are
+   * on hand the moment the context exists. A jumpscare that arrives a beat late
+   * is not a jumpscare.
+   */
+  preload(name, url) {
+    this.pending.set(name, fetch(url)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+      .catch((err) => {
+        console.warn(`[audio] ${url} did not load:`, err.message);
+        return null;
+      }));
+    return this.pending.get(name);
+  }
+
+  async #decode(name) {
+    if (this.samples.has(name)) return this.samples.get(name);
+    const bytes = await this.pending.get(name);
+    if (!bytes || !this.ctx) return null;
+    try {
+      // decodeAudioData detaches the buffer, so hand it a copy - a second
+      // playthrough would otherwise find an empty ArrayBuffer.
+      const buf = await this.ctx.decodeAudioData(bytes.slice(0));
+      this.samples.set(name, buf);
+      return buf;
+    } catch (err) {
+      console.warn(`[audio] could not decode ${name}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Play a preloaded file. Returns its length in seconds, or 0 if it is not
+   * available, so a caller timing something against it has a number either way.
+   */
+  async playSample(name, gain = 1) {
+    if (!this.ready) return 0;
+    const buf = await this.#decode(name);
+    if (!buf) return 0;
+    const src = this.ctx.createBufferSource();
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.buffer = buf;
+    src.connect(g).connect(this.nodes.master);
+    src.start(this.ctx.currentTime);
+    return buf.duration;
   }
 
   /** Must be called from inside a real user-gesture handler. */

@@ -227,8 +227,8 @@ function maskNormalMap(source, box, strength = 2.6) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
-      const inside = box && x >= box.x && x < box.x + box.w &&
-        y >= box.y && y < box.y + box.h;
+      const inside = !box || (x >= box.x && x < box.x + box.w &&
+        y >= box.y && y < box.y + box.h);
       if (!inside) {
         out.data[i] = 128; out.data[i + 1] = 128; out.data[i + 2] = 255; out.data[i + 3] = 255;
         continue;
@@ -289,6 +289,117 @@ function fillSockets(character, { sclera, pupil, bulge = 1.15 }) {
 }
 
 /**
+ * Build the chaser a mask, as an actual object worn over its face.
+ *
+ * Painting the rip's face onto the tubby's own head never worked and could not:
+ * that head is a baby's, with a snout, a brow and a small mouth slot moulded
+ * into it, and two eye sockets cut clean through the shell in places that have
+ * nothing to do with where the mask's eyes are drawn. The result had two sets of
+ * eyes - the mask's, painted, and the holes lower down - and a nose ridge
+ * running through the middle of somebody else's face.
+ *
+ * So the mask stops being a texture on that head and becomes a smooth shell of
+ * its own, curved to sit on the skull and carrying the rip's face and nothing
+ * else. It covers the sockets, so the holes stop showing, and its relief comes
+ * from a normal map derived from the face rather than from the head underneath.
+ *
+ * The shell is a plane bent onto the head's own sphere, which keeps the texture
+ * coordinates trivial - a plane already has the UVs we want, and a spherical cap
+ * does not.
+ */
+function buildMaskPlate(character, { face, normalMap }) {
+  const skeleton = character.target.skeleton;
+  const head = character.head;
+  if (!head || !character.sockets?.length) return null;
+
+  const body = character.meshes.reduce((a, b) =>
+    b.geometry.attributes.position.count > a.geometry.attributes.position.count ? b : a);
+  const headIndex = skeleton.bones.indexOf(head);
+  character.scene.updateMatrixWorld(true);
+
+  // --- the skull the mask has to sit on ------------------------------------
+  const v = new THREE.Vector3();
+  const box = new THREE.Box3();
+  const si = body.geometry.attributes.skinIndex;
+  const sw = body.geometry.attributes.skinWeight;
+  for (let i = 0; i < body.geometry.attributes.position.count; i++) {
+    let best = -1, bestW = 0;
+    for (let k = 0; k < 4; k++) {
+      const w = sw.getComponent(i, k);
+      if (w > bestW) { bestW = w; best = si.getComponent(i, k); }
+    }
+    if (best !== headIndex) continue;
+    body.getVertexPosition(i, v);
+    box.expandByPoint(v.applyMatrix4(body.matrixWorld));
+  }
+  if (box.isEmpty()) return null;
+  const centre = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const radius = Math.max(size.x, size.y) * 0.5;
+
+  // --- where the face points, and how wide it is ---------------------------
+  const mid = new THREE.Vector3();
+  for (const s of character.sockets) mid.add(s.local);
+  mid.divideScalar(character.sockets.length);
+  head.localToWorld(mid);
+
+  const forward = character.sockets[0].forward.clone()
+    .transformDirection(head.matrixWorld).normalize();
+  // A mask spans a good deal wider than the gap between the eyes.
+  const gap = character.sockets.length > 1
+    ? head.localToWorld(character.sockets[0].local.clone())
+        .distanceTo(head.localToWorld(character.sockets[1].local.clone()))
+    : radius;
+  // Wide enough to bury the sockets and the snout, no wider: bent onto a sphere,
+  // a plate much past the head's own radius wraps round towards the ears.
+  const width = Math.max(gap * 2.3, radius * 1.3);
+  const height = width * 1.16;
+
+  // --- a plane, bent onto that sphere --------------------------------------
+  const SEG = 20;
+  const geo = new THREE.PlaneGeometry(width, height, SEG, SEG);
+  const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
+  const up = new THREE.Vector3().crossVectors(forward, right).normalize();
+  // Sit the plate on the eye line rather than the middle of the skull, or the
+  // mask rides high and the jaw hangs off the bottom of it.
+  const pole = new THREE.Vector3().copy(centre)
+    .addScaledVector(forward, radius)
+    .addScaledVector(up, (mid.y - centre.y) * 0.55);
+
+  const pos = geo.attributes.position;
+  const q = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    q.copy(pole)
+      .addScaledVector(right, pos.getX(i))
+      .addScaledVector(up, pos.getY(i));
+    // Out onto the skull, proud enough that the moulded nose underneath cannot
+    // poke back through the middle of somebody else's face.
+    q.sub(centre).setLength(radius * 1.035).add(centre);
+    pos.setXYZ(i, q.x, q.y, q.z);
+  }
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({
+    map: face,
+    normalMap,
+    normalScale: new THREE.Vector2(1.35, 1.35),
+    transparent: true,
+    // Cut rather than blend: a blended edge over a head this dark haloes.
+    alphaTest: 0.45,
+    roughness: 0.62,
+    side: THREE.DoubleSide,
+  });
+
+  const plate = new THREE.Mesh(geo, mat);
+  plate.frustumCulled = false;
+  plate.renderOrder = 3;
+  // Into the head bone's frame, so it wears the mask through every clip.
+  plate.applyMatrix4(new THREE.Matrix4().copy(head.matrixWorld).invert());
+  head.add(plate);
+  return { width: +width.toFixed(2), radius: +radius.toFixed(2) };
+}
+
+/**
  * Give the chaser the face off the TinkyWinkyNPC rip.
  *
  * That rip is the one model in the set with no skeleton at all - 6 meshes, 0
@@ -303,13 +414,6 @@ function fillSockets(character, { sclera, pupil, bulge = 1.15 }) {
  * has to survive untouched.
  */
 async function wearHorrorFace(character) {
-  const faces = character.meshes.filter((m) => /face/i.test(m.material?.name ?? ""));
-  const base = faces.find((m) => m.material?.map?.image)?.material;
-  if (!base) {
-    console.warn("[tubbies] chaser has no face texture to replace");
-    return false;
-  }
-
   const img = await new Promise((resolve, reject) => {
     const i = new Image();
     i.onload = () => resolve(i);
@@ -317,78 +421,55 @@ async function wearHorrorFace(character) {
     i.src = FACE_URL;
   });
 
-  // --- the horror face, cut off its purple field ---------------------------
+  // --- the face, cut off its purple field ---------------------------------
   const cut = document.createElement("canvas");
   cut.width = img.width;
   cut.height = img.height;
   const cutCtx = cut.getContext("2d", { willReadFrequently: true });
   cutCtx.drawImage(img, 0, 0);
-  const face = cutCtx.getImageData(0, 0, cut.width, cut.height);
-  for (let i = 0; i < face.data.length; i += 4) {
-    const r = face.data[i], g = face.data[i + 1], b = face.data[i + 2];
+  const px = cutCtx.getImageData(0, 0, cut.width, cut.height);
+  for (let i = 0; i < px.data.length; i += 4) {
+    const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
     // Strongly purple: blue and red high, green well below both.
-    if (b > 90 && r > 70 && g < r * 0.62 && g < b * 0.62) face.data[i + 3] = 0;
+    if (b > 90 && r > 70 && g < r * 0.62 && g < b * 0.62) px.data[i + 3] = 0;
   }
-  cutCtx.putImageData(face, 0, 0);
-  const from = contentBox(face.data, cut.width, cut.height, (r, g, b, a) => a > 8);
+  cutCtx.putImageData(px, 0, 0);
 
-  // --- the skin's own sheet, and where its face sits on it -----------------
-  const src = base.map.image;
-  const sheet = document.createElement("canvas");
-  sheet.width = src.width ?? src.videoWidth;
-  sheet.height = src.height ?? src.videoHeight;
-  const ctx = sheet.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(src, 0, 0);
-  const px = ctx.getImageData(0, 0, sheet.width, sheet.height);
-  // The TV is grey noise, so its channels sit on top of each other; the face is
-  // pink, so red leads blue by a wide margin.
-  const to = contentBox(px.data, sheet.width, sheet.height,
-    (r, g, b) => r - b > 26 && r > 90);
-
-  if (!from || !to) {
-    console.warn("[tubbies] could not locate a face on one of the sheets");
+  const box = contentBox(px.data, cut.width, cut.height, (r, g, b, a) => a > 8);
+  if (!box) {
+    console.warn("[tubbies] no face found on the rip's sheet");
     return false;
   }
 
-  // Paint over the old face first: the horror face is a narrower oval and would
-  // otherwise leave the friendly one's cheeks showing round the edge. The colour
-  // comes from the rip's own skin tone at the top of its face.
-  const edge = cutCtx.getImageData(from.x + (from.w >> 1), from.y + 2, 1, 1).data;
-  ctx.fillStyle = `rgb(${edge[0]},${edge[1]},${edge[2]})`;
-  ctx.fillRect(to.x, to.y, to.w, to.h);
-  ctx.drawImage(cut, from.x, from.y, from.w, from.h, to.x, to.y, to.w, to.h);
+  // Trimmed to the face itself, so the plate's own texture coordinates land it
+  // squarely without anyone having to know where it sat on the original sheet.
+  const mask = document.createElement("canvas");
+  mask.width = box.w;
+  mask.height = box.h;
+  mask.getContext("2d").drawImage(cut, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
 
-  const tex = new THREE.CanvasTexture(sheet);
-  tex.colorSpace = base.map.colorSpace;
-  tex.flipY = base.map.flipY;
-  tex.wrapS = base.map.wrapS;
-  tex.wrapT = base.map.wrapT;
-  tex.anisotropy = base.map.anisotropy;
-  tex.needsUpdate = true;
+  const faceTex = new THREE.CanvasTexture(mask);
+  faceTex.colorSpace = THREE.SRGBColorSpace;
+  faceTex.anisotropy = 4;
+  // The rip is drawn mouth-above-eyes, the way the tubby's own sheet is, because
+  // the head's UVs turn it over. The plate's UVs do not, and CanvasTexture flips
+  // once by default, so leaving flipY on served the mask upside down - a grin
+  // across the brow and the sockets down by the jaw.
+  faceTex.flipY = false;
+  faceTex.needsUpdate = true;
 
-  // The mask gets relief of its own rather than inheriting the tubby's smooth
-  // infant face, which is what made it read as a sticker. See maskNormalMap.
-  const normal = new THREE.CanvasTexture(maskNormalMap(sheet, to));
-  normal.flipY = base.map.flipY;
-  normal.wrapS = base.map.wrapS;
-  normal.wrapT = base.map.wrapT;
-  normal.needsUpdate = true;
+  const normalMap = new THREE.CanvasTexture(maskNormalMap(mask, null));
+  normalMap.flipY = false;
+  normalMap.needsUpdate = true;
 
-  for (const m of faces) {
-    if (!m.material.map) continue;
-    // Cloned so the four friendly tubbies, who share this material through
-    // SkeletonUtils, do not inherit the chaser's face.
-    m.material = m.material.clone();
-    m.material.map = tex;
-    m.material.normalMap = normal;
-    m.material.normalScale = new THREE.Vector2(1.15, 1.15);
-    m.material.roughness = Math.min(1, (m.material.roughness ?? 1) * 0.92);
-    m.material.needsUpdate = true;
+  const plate = buildMaskPlate(character, { face: faceTex, normalMap });
+  if (!plate) {
+    console.warn("[tubbies] could not fit the mask to the chaser's head");
+    return false;
   }
-  // The rip paints its eyes straight into the sheet, as two black sockets. The
-  // skin's own eyeballs and lids therefore have to go: left in place they stand
-  // proud of the face as a pair of cartoon googly eyes floating over the horror
-  // one's empty sockets, which is worse than either face on its own.
+
+  // The tubby's own eyes go. The mask has its own, painted, and the sockets it
+  // covers are holes - anything left in them shows through as a second pair.
   const bones = character.target.skeleton.bones;
   const isEye = (i) => /^eye(lid)?[_ ]/i.test(bones[i]?.name ?? "");
   let hidden = 0;
@@ -399,14 +480,13 @@ async function wearHorrorFace(character) {
     hidden++;
   }
 
-  // The sockets are holes; the mask cannot cover them and showed two purple
-  // hexagons straight through the face. Black spheres read as the hollows the
-  // mask is painted with.
-  const filled = fillSockets(character, { sclera: 0x07070a, bulge: 1.2 });
+  // Small black plugs sit behind the mask, so no light finds its way through
+  // the empty sockets from the side.
+  fillSockets(character, { sclera: 0x05050a, bulge: 0.85 });
 
-  console.info(`[tubbies] chaser wears the horror face ` +
-    `(${from.w}x${from.h} onto ${to.w}x${to.h}), ${hidden} eye meshes hidden, ` +
-    `${filled} sockets filled, mask normal map generated`);
+  console.info(`[tubbies] chaser wears a mask plate ${plate.width} across ` +
+    `on a head of ${plate.radius}, ${hidden} eye meshes hidden, ` +
+    `relief from a generated normal map`);
   return true;
 }
 
@@ -538,12 +618,44 @@ class RiggedTubby {
     });
     this.soleDrop = this.#measureSoleDrop();
 
+    // The jumpscare needs to know where to point the camera.
+    this.sockets = mine.sockets;
+    this.headBone = null;
+    this.inner.traverse((o) => {
+      if (!this.headBone && o.isBone && /^head[_ ]/i.test(o.name)) this.headBone = o;
+    });
+
     this.mixer = new THREE.AnimationMixer(mine.target);
     this.byState = mine.byState;
     this.current = null;
     this.currentName = null;
     this.spec = spec;
     this.play("idle", 0);
+  }
+
+  /** Where the head JOINT is, in world space. */
+  headWorld(out) {
+    if (this.headBone) return this.headBone.getWorldPosition(out);
+    return out.copy(this.root.position).setY(this.root.position.y + 1.55);
+  }
+
+  /**
+   * Where the FACE is, which is not the same thing and is what a camera wants.
+   *
+   * The head joint on these rigs sits at the crown, level with the very top of
+   * the skull, so pointing a lens at it frames the aerial and cuts the mask off
+   * at the bottom of the shot. The eye sockets are already measured when the
+   * eyes are seated, and their midpoint is the middle of the face by
+   * definition.
+   */
+  faceWorld(out) {
+    if (this.headBone && this.sockets?.length) {
+      out.set(0, 0, 0);
+      for (const s of this.sockets) out.add(s.local);
+      out.divideScalar(this.sockets.length);
+      return this.headBone.localToWorld(out);
+    }
+    return this.headWorld(out);
   }
 
   play(name, fade = 0.25) {
@@ -611,6 +723,10 @@ class RiggedTubby {
 /* ------------------------------------------------------- procedural stand-in -- */
 
 class ProcTubby {
+  /** Same contract as the rigged model, so the jumpscare works on either. */
+  headWorld(out) { return this.head.getWorldPosition(out); }
+  faceWorld(out) { return this.head.getWorldPosition(out); }
+
   constructor(spec) {
     const skin = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.85 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x14100d, roughness: 1 });

@@ -70,7 +70,14 @@
   .gauge .ico { position:absolute; inset:0; margin:auto; width:38%; height:38%;
     transform:translateY(-14%); fill:none; stroke:#8d8676; stroke-width:1.8;
     stroke-linecap:round; stroke-linejoin:round; }
-  #battery.lit .ico { stroke:#fff0cf; }
+  /* Both icons come alive when their meter is being spent: the torch when it is
+     on, the runner while the legs are actually going. */
+  #battery.lit .ico { stroke:#fff0cf;
+    filter:drop-shadow(0 0 6px rgba(255,226,160,.75)); }
+  #stamina.lit .ico { stroke:#d8f2e0;
+    filter:drop-shadow(0 0 6px rgba(150,240,190,.7)); }
+  #stamina.lit .arc { stroke:#a6e0bd; }
+  .gauge .ico { transition:stroke .18s ease, filter .18s ease; }
   .gauge .val { position:absolute; bottom:14%; font-family:var(--num);
     font-size:clamp(8px,1.7vw,10px); color:#8d8676; letter-spacing:0;
     font-weight:400; }
@@ -164,16 +171,45 @@
   body[data-screen="lobby"] #byline { display:block; }
 
   /* ----------------------------------------------------------------- pause */
-  #pause { background:rgba(5,5,5,.94); align-content:start; justify-content:center;
+  /* Pause and the end card sit over a live world rather than the parade, so
+     their scrim is heavier - enough to stop the forest competing with the
+     buttons, not so much that you forget the game is still there. */
+  #pause.glass::before, #end.glass::before {
+    background:radial-gradient(130% 90% at 50% 45%,
+      rgba(4,4,6,.72) 0%, rgba(3,3,4,.93) 100%); }
+  #pause { align-content:start; justify-content:center;
     padding-top:8vh; overflow-y:auto; }
+  #pause .card { max-width:min(560px,94vw); gap:18px; }
+  #end .card { min-width:min(360px,88vw); }
   #pause h2, #lobby h2 { font-size:21px; letter-spacing:.01em; font-weight:400;
     margin-bottom:10px; }
-  #settings { width:min(460px,86vw); display:grid; gap:2px; margin:14px 0 22px; }
+  /* The settings list reads as one inset panel rather than a stack of loose
+     rows: a slightly darker surface inside the glass, hairlines between the
+     rows and none around the outside. */
+  #settings { width:min(470px,88vw); display:grid; gap:0; margin:6px 0 20px;
+    border:1px solid rgba(226,220,204,.09); border-radius:14px;
+    background:rgba(0,0,0,.24); overflow:hidden; }
   .set-row { display:grid; grid-template-columns:1fr auto; align-items:center;
-    gap:14px; padding:11px 2px; border-bottom:1px solid #191712; }
+    gap:14px; padding:13px 16px; border-bottom:1px solid rgba(226,220,204,.07);
+    transition:background .16s ease; }
+  .set-row:last-child { border-bottom:none; }
+  .set-row:hover { background:rgba(226,220,204,.035); }
   .set-label { font-size:12px; letter-spacing:.09em; text-transform:uppercase;
     color:#a49c8c; text-align:left; }
-  .set-row input[type=range] { width:170px; accent-color:#8d9b7e; background:none; }
+
+  /* A track that reads at a glance and a thumb big enough for a thumb. */
+  .set-row input[type=range] { width:170px; height:22px; background:none;
+    accent-color:#8d9b7e; -webkit-appearance:none; appearance:none; cursor:pointer; }
+  .set-row input[type=range]::-webkit-slider-runnable-track { height:3px;
+    border-radius:2px; background:rgba(226,220,204,.16); }
+  .set-row input[type=range]::-webkit-slider-thumb { -webkit-appearance:none;
+    width:14px; height:14px; margin-top:-5.5px; border-radius:50%;
+    background:#cdd8c2; border:none;
+    box-shadow:0 0 0 1px rgba(0,0,0,.55), 0 0 10px rgba(160,200,150,.35); }
+  .set-row input[type=range]::-moz-range-track { height:3px; border-radius:2px;
+    background:rgba(226,220,204,.16); }
+  .set-row input[type=range]::-moz-range-thumb { width:14px; height:14px;
+    border-radius:50%; background:#cdd8c2; border:none; }
   /* Tappable readout. Looks like a label until you touch it, so it does not
      add visual noise to a row you are only reading. */
   .set-value { font-family:var(--num); font-size:12.5px; width:58px;
@@ -343,7 +379,10 @@
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M10.3 11.8h3.4v9.7h-3.4z"/>
           <path d="M8.6 7.6h6.8l-1.7 4.2h-3.4z"/>
-          <path d="M12 5.2V2.6"/>
+          <!-- Three spikes, not one. A single stroke read as an aerial. -->
+          <path d="M12 5.1V2.4"/>
+          <path d="M9.2 5.6 7.9 3.4"/>
+          <path d="m14.8 5.6 1.3-2.2"/>
         </svg>
         <b class="val">100</b>
       </div>
@@ -445,25 +484,29 @@
 </div>
 
 <!-- 4. Pause + settings. -->
-<div class="screen hide" id="pause">
-  <h2>Paused</h2>
-  <p class="sub" id="hints"></p>
-  <div id="settings"></div>
-  <div class="row">
-    <button class="btn" id="resume">Resume</button>
-    <button class="btn" id="restart">Restart</button>
-    <button class="btn" id="reset-settings">Defaults</button>
+<div class="screen glass hide" id="pause">
+  <div class="card">
+    <h2>Paused</h2>
+    <p class="sub" id="hints"></p>
+    <div id="settings"></div>
+    <div class="row">
+      <button class="btn" id="resume">Resume</button>
+      <button class="btn" id="restart">Restart</button>
+      <button class="btn" id="reset-settings">Defaults</button>
+    </div>
   </div>
 </div>
 
 <!-- 5. Win / lose. -->
-<div class="screen hide" id="end">
-  <h1 id="end-title">Caught</h1>
-  <p class="sub" id="end-detail"></p>
-  <p class="sub" id="end-wait" hidden></p>
-  <div class="row">
-    <button class="btn" id="retry">Try again</button>
-    <button class="btn ghost" id="end-leave" hidden>Leave lobby</button>
+<div class="screen glass hide" id="end">
+  <div class="card">
+    <h1 id="end-title">Caught</h1>
+    <p class="sub" id="end-detail"></p>
+    <p class="sub" id="end-wait" hidden></p>
+    <div class="row">
+      <button class="btn" id="retry">Try again</button>
+      <button class="btn ghost" id="end-leave" hidden>Leave lobby</button>
+    </div>
   </div>
 </div>
 
