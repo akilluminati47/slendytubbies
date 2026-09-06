@@ -113,6 +113,22 @@ const HIP_TARGET = "Body 1";
  * The model faces +Z with its arms along X, so its right hand is at -X and a
  * positive turn about Z drops that arm towards the ground.
  */
+/**
+ * How much of a joint's own motion to give back, per bone.
+ *
+ * The donors are people. A walking person counters their pelvis against their
+ * chest - hips one way, shoulders the other - and on donor/dipsy that comes to
+ * 35 degrees of twist through the waist. A tubby has no waist. Its chaser
+ * counterpart, animated by someone who knew that, twists zero: the pelvis and
+ * the chest turn as one block and the whole body sways instead, which is what a
+ * waddle is.
+ *
+ * So the spine keeps a quarter of the human counter-rotation and the rest is
+ * given back to the pelvis. Measured, not guessed: 35.4 degrees against the
+ * chaser's 0.
+ */
+const DAMPED = [["Body 2", 0.75]];
+
 const REST_POSE = [
   ["Arm R1", 0, 0, 1, 60], ["Arm R2", 0, 0, 1, -6], ["Hand R", 0, 0, 1, -2],
   ["Arm L1", 0, 0, 1, -60], ["Arm L2", 0, 0, 1, 6], ["Hand L", 0, 0, 1, 2],
@@ -980,13 +996,19 @@ export async function buildTubbyRigs(donorUrl, skinUrls) {
       console.warn(`[rig] ${kind}: ${missing.length} unmapped: ${missing.join(", ")}`);
     }
 
+    const damped = new Map();
+    for (const [name, amount] of DAMPED) {
+      const bone = resolve(targetBones, name);
+      if (bone) damped.set(bone, amount);
+    }
+
     for (const m of meshes) {
       m.frustumCulled = false;      // skinned bounds are computed unskinned
       m.castShadow = true;
     }
 
     characters[kind] = {
-      kind, scene, meshes, pairs,
+      kind, scene, meshes, pairs, damped,
       target: meshes[0],
       bones: targetBones,
       bind: (() => {
@@ -1159,10 +1181,17 @@ function aimBone(bone, axis, want, current, sc) {
  * their reference pose is the whole point of REST_POSE.
  */
 export function bakeClips(character, rig, clips, targetHeight = 1.85) {
-  const { bind, bones, pairs, hip } = character;
+  const { bind, bones, pairs, hip, damped } = character;
   const sourceOf = new Map(pairs);
   const order = bones.slice().sort((a, b) => bind.get(a).depth - bind.get(b).depth);
 
+  // Back to native size before measuring anything. Every number on the bind
+  // snapshot - bone lengths, the hip's rest position - is in the units the file
+  // shipped, and scaleRig at the end of this function leaves the scene at 1.85m.
+  // Baking a second time without this reads native-unit offsets against a scaled
+  // skeleton and throws the hips several metres into the air; the game bakes
+  // once per character so it never saw it, but a caller comparing clips does.
+  character.scene.scale.set(1, 1, 1);
   character.scene.updateMatrixWorld(true);
   rig.donor.scene.updateMatrixWorld(true);
   const P = (b) => b.getWorldPosition(new THREE.Vector3());
@@ -1246,6 +1275,18 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
           q.copy(sq).multiply(inv).multiply(b.refQ);
           worldQ.set(bone, q.clone());
           bone.quaternion.copy(inv.copy(parentQ).invert().multiply(q));
+
+          // Give part of the joint's motion back, where a human's articulation
+          // does not belong on this body. See DAMPED.
+          const give = damped.get(bone);
+          if (give) {
+            const parentRef = bone.parent && bind.get(bone.parent)
+              ? bind.get(bone.parent).refQ : b.parentWorldQ;
+            const rest = parentRef.clone().invert().multiply(b.refQ);
+            bone.quaternion.slerp(rest, give);
+            // The world rotation the children inherit has to follow.
+            worldQ.set(bone, parentQ.clone().multiply(bone.quaternion));
+          }
         } else {
           // Unmapped bones hold their reference local, so a corrected shoulder
           // does not drag its children back towards the T-pose.
