@@ -565,11 +565,29 @@ function markScreen(mesh) {
   if (n < 4) return null;
 
   // Across and up the panel, 0..1, from the geometry rather than the sheet.
+  //
+  // Which local axis is "up" has to be asked, not assumed. These meshes are
+  // Z-up with a wrapper rotation putting them right way round in the world, so
+  // the screen spans 3.0 along local Z and only 0.7 along local Y - that 0.7
+  // being the belly's curvature, not its height. Normalising down Y therefore
+  // divided the panel by how far it bulged, which is what drew the chevron and
+  // left the middle of the screen dead.
   const size = box.getSize(new THREE.Vector3());
+  const toLocal = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+  const localUp = new THREE.Vector3(0, 1, 0).transformDirection(toLocal);
+  const axis = ["x", "y", "z"];
+  const up = axis[[localUp.x, localUp.y, localUp.z]
+    .map(Math.abs).indexOf(Math.max(Math.abs(localUp.x), Math.abs(localUp.y), Math.abs(localUp.z)))];
+  // Across is whichever of the other two the panel is widest along.
+  const rest = axis.filter((a) => a !== up);
+  const across = size[rest[0]] >= size[rest[1]] ? rest[0] : rest[1];
+
   const uv = new Float32Array(pos.count * 2);
   for (let i = 0; i < pos.count; i++) {
-    uv[i * 2] = size.x > 1e-6 ? (raw[i].x - box.min.x) / size.x : 0;
-    uv[i * 2 + 1] = size.y > 1e-6 ? (raw[i].y - box.min.y) / size.y : 0;
+    uv[i * 2] = size[across] > 1e-6
+      ? (raw[i][across] - box.min[across]) / size[across] : 0;
+    uv[i * 2 + 1] = size[up] > 1e-6
+      ? (raw[i][up] - box.min[up]) / size[up] : 0;
   }
   mesh.geometry.setAttribute("aScreen", new THREE.BufferAttribute(flag, 1));
   mesh.geometry.setAttribute("aScreenUv", new THREE.BufferAttribute(uv, 2));
@@ -669,11 +687,23 @@ function animateBellyTV(character, { seed = 1, menace = 0 } = {}) {
           c *= 1.0 + warp * dot(c, c);
           vec2 t = c * 0.5 + 0.5;
 
-          // The frame is not holding. A band crawls through it, tilted, and
-          // drags the lines it passes sideways as it goes.
-          float roll = fract(t.y - t.x * skew - uTvTime * rollSpeed);
-          float band = smoothstep(0.0, 0.06, roll) * smoothstep(0.20, 0.10, roll);
-          t.x += band * jitter * 0.06 * (tvHash(vec2(floor(t.y * 90.0), floor(uTvTime * 20.0))) - 0.5);
+          // The frame slips now and then rather than constantly. Each stretch of
+          // a few seconds either holds or it does not, decided by a hash on the
+          // clock, so the bar sweeps through in bursts the way a real one does.
+          float era = floor(uTvTime * 0.22);
+          float slipping = step(0.62, tvHash(vec2(era, 3.0)));
+          // Level, not chevroned. A rolling frame is a horizontal bar; the tilt
+          // only comes in on the tears, and only while it is actually slipping.
+          float roll = fract(t.y - uTvTime * rollSpeed);
+          float band = smoothstep(0.0, 0.05, roll) * smoothstep(0.18, 0.09, roll);
+          band *= slipping;
+          // The diagonal tear is its own event, rarer still.
+          float tearEra = floor(uTvTime * 0.8);
+          float tearing = step(0.88, tvHash(vec2(tearEra, 11.0)));
+          float tear = fract(t.y - t.x * skew - uTvTime * (rollSpeed + 0.9));
+          float tearBand = smoothstep(0.0, 0.03, tear) * smoothstep(0.10, 0.05, tear) * tearing;
+          t.x += (band + tearBand) * jitter * 0.05 *
+                 (tvHash(vec2(floor(t.y * 90.0), floor(uTvTime * 20.0))) - 0.5);
 
           float frame = floor(uTvTime * tick);
           vec2 cell = floor(t * uCells);
@@ -694,7 +724,7 @@ function animateBellyTV(character, { seed = 1, menace = 0 } = {}) {
           mask = mask * 0.85 + 0.35;
 
           vec3 out3 = snow * mask;
-          out3 += band * 0.20;                       // the bar itself glows
+          out3 += band * 0.16 + tearBand * 0.22;     // the bars themselves glow
           // Scanline gaps, shallow. Deep ones read as corduroy at this size.
           out3 *= 1.0 - 0.06 * step(0.5, fract(t.y * uCells.y * 0.5));
           // Off the edge of the tube there is no picture at all.

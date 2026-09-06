@@ -129,6 +129,22 @@ const HIP_TARGET = "Body 1";
  */
 const DAMPED = [["Body 2", 0.75]];
 
+/**
+ * How far each leg works to its own side.
+ *
+ * The donor is a person with hips a hand's width apart, so its knees travel in
+ * one plane and its ankles track a single line - measured, the sideways offset
+ * of a knee off the hip-to-ankle line never exceeds 0.02 on a 1.85m figure.
+ * Transferred faithfully that gives a tubby, which is as wide as it is tall, two
+ * legs treading the same groove and a pair of knees that read as leaning
+ * together.
+ *
+ * SPLAY tips each knee out onto its own side; STANCE walks the ankle targets
+ * apart so the feet tread their own lines rather than one.
+ */
+const SPLAY = 0.42;
+const STANCE = 0.055;
+
 const REST_POSE = [
   ["Arm R1", 0, 0, 1, 60], ["Arm R2", 0, 0, 1, -6], ["Hand R", 0, 0, 1, -2],
   ["Arm L1", 0, 0, 1, -60], ["Arm L2", 0, 0, 1, 6], ["Hand L", 0, 0, 1, 2],
@@ -1212,6 +1228,8 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
     const bq = (b) => bind.get(b).worldQ.clone().invert();
     legs.push({
       t, s,
+      // The model faces +Z, so its own right hand side is -X.
+      out: side === "R" ? -1 : 1,
       l1: P(t.thigh).distanceTo(P(t.shin)),
       l2: P(t.shin).distanceTo(P(t.foot)),
       srcLen: P(s.thigh).distanceTo(P(s.shin)) + P(s.shin).distanceTo(P(s.foot)),
@@ -1332,12 +1350,18 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
         target.subVectors(dAnkle, dHip)
           .multiplyScalar((L.l1 + L.l2) / L.srcLen)
           .add(myHip);
+        // And out onto its own line, so the two feet do not tread one groove.
+        target.x += L.out * STANCE * (L.l1 + L.l2);
 
-        // Knee hint: where the donor puts its knee, off the hip-to-ankle line.
+        // Knee hint: where the donor puts its knee, off the hip-to-ankle line,
+        // then tipped out onto this leg's own side. See SPLAY.
         along.subVectors(dAnkle, dHip).normalize();
         pole.subVectors(dKnee, dHip);
         pole.addScaledVector(along, -pole.dot(along));
         if (pole.lengthSq() < 1e-8) pole.set(0, 0, 1);
+        pole.normalize();
+        pole.x += L.out * SPLAY;
+        pole.addScaledVector(along, -pole.dot(along));   // keep it perpendicular
         pole.normalize();
 
         if (!twoBone(myHip, target, pole, L.l1, L.l2, sc)) continue;
