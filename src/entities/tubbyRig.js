@@ -1282,6 +1282,7 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const worldQ = new Map();
   const dHip = new THREE.Vector3(), dAnkle = new THREE.Vector3(), dKnee = new THREE.Vector3();
   const myHip = new THREE.Vector3(), along = new THREE.Vector3();
+  const vFoot = new THREE.Vector3();
   const pole = new THREE.Vector3(), target = new THREE.Vector3(), tmp = new THREE.Vector3();
 
   const out = [];
@@ -1303,6 +1304,7 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
     const times = new Float32Array(frames);
     const quats = new Map(pairs.map(([tb]) => [tb, new Float32Array(frames * 4)]));
     const hipPos = hipParentInv ? new Float32Array(frames * 3) : null;
+    let travel = 0, lastSide = -1, lastBehind = 0;
 
     for (let f = 0; f < frames; f++) {
       const time = f * dt;
@@ -1421,6 +1423,32 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
         }
       }
 
+      // --- how fast is this clip actually walking? -------------------------
+      // The planted foot slides backwards past the hips at exactly the speed
+      // the body is travelling. Sampling that here, while the pose is already
+      // built, is what lets playback be matched to ground speed later instead
+      // of guessed at - a clip played slower than the body moves reads as low
+      // gravity, and faster reads as a scurry.
+      if (legs.length && hip) {
+        const hipZ = hip.getWorldPosition(tmp).z;
+        let lowest = Infinity, side = -1, behind = 0;
+        legs.forEach((L, n) => {
+          if (!L.t.toe) return;
+          L.t.toe.getWorldPosition(vFoot);
+          if (vFoot.y >= lowest) return;
+          lowest = vFoot.y;
+          side = n;
+          behind = vFoot.z - hipZ;
+        });
+        // Only while the same foot stays down: the instant the weight changes
+        // feet, the difference is a swap, not a stride.
+        // The planted foot slides towards -Z as the body advances, so the
+        // gain is the foot's own change, not its negation.
+        if (side >= 0 && side === lastSide) travel += behind - lastBehind;
+        lastSide = side;
+        lastBehind = behind;
+      }
+
       // --- record whatever the skeleton is now holding ---------------------
       for (const [bone, values] of quats) bone.quaternion.toArray(values, f * 4);
     }
@@ -1434,7 +1462,12 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
       tracks.push(new THREE.VectorKeyframeTrack(
         `.bones[${hip.name}].position`, times, hipPos));
     }
-    out.push(new THREE.AnimationClip(clip.name, clip.duration, tracks));
+    const made = new THREE.AnimationClip(clip.name, clip.duration, tracks);
+    // Metres a second this clip walks at its own pace. Negative or silly values
+    // mean it is not a locomotion clip at all, and callers should ignore it.
+    made.userData.groundSpeed = clip.duration > 0
+      ? +(travel / clip.duration).toFixed(3) : 0;
+    out.push(made);
   }
 
   mixer.stopAllAction();

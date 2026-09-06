@@ -1054,8 +1054,21 @@ class RiggedTubby {
   }
 
   update(dt, speed = 0) {
-    // Scale playback to ground speed so the feet do not skate.
-    this.mixer.timeScale = this.currentName === "idle" ? 1 : Math.max(0.6, speed / 2.4);
+    // Play the clip at the rate it was walked at.
+    //
+    // The old divisor was a guess, and it was wrong in the direction that shows:
+    // at patrol speed it ran the walk at 0.62x while the body covered the full
+    // distance, so the legs cycled slower than the ground went by and the whole
+    // thing read as low gravity. Every clip now carries the speed it actually
+    // travels at, measured off its own planted foot during the bake, so this is
+    // a ratio rather than an invention.
+    const own = this.current?.getClip?.().userData?.groundSpeed ?? 0;
+    this.mixer.timeScale = this.currentName === "idle" || own <= 0.05
+      ? 1
+      // Floor it well short of slow motion. A run clip played at much under
+              // this stops reading as a run at all, and a little foot slide is a
+              // cheaper lie than a monster wading towards you through treacle.
+              : THREE.MathUtils.clamp(speed / own, 0.82, 2.2);
     this.mixer.update(dt);
     this.#plantFeet();
   }

@@ -14,8 +14,6 @@ import { CFG } from "../game/config.js";
  * cubemap per weather state and it can be driven continuously, which is the
  * whole point - the light has to slide rather than switch.
  *
- * The moon keeps its own calendar, and it is only ever in the sky. Nothing reads
- * it out; a player either notices it filling out across rounds or does not.
  */
 
 const DAY_MINUTES = 48;                     // real minutes for a full day
@@ -40,21 +38,22 @@ export class Sky {
 
     // Somewhere between 18:00 and 02:00.
     this.hour = 18 + rand() * 8;
-    this.moonPhase = rand();          // 0 new, 0.5 full, 1 new again
     this.weather = "clear";
     this.weatherLeft = 40 + rand() * 90;
     this.wet = 0;                     // 0..1, eased, so weather arrives slowly
 
-    const geo = new THREE.SphereGeometry(1, 32, 20);
+    // Enough segments that the interpolated direction is smooth. At 32x20 the
+    // triangles are wide enough that everything derived from that direction -
+    // gradient, glow, star cells - banded visibly along their edges.
+    const geo = new THREE.SphereGeometry(1, 96, 64);
     this.uniforms = {
       uZenith: { value: new THREE.Color(0x05070f) },
       uHorizon: { value: new THREE.Color(0x131a26) },
       uSunDir: { value: new THREE.Vector3(0, -1, 0) },
       uSunColor: { value: new THREE.Color(0xffd9a0) },
-      uMoonDir: { value: new THREE.Vector3(0, 1, 0) },
-      uMoonPhase: { value: this.moonPhase },
       uStars: { value: 1 },
       uHaze: { value: 0 },
+      uFog: { value: new THREE.Color(0x0a0c0a) },
     };
     this.material = new THREE.ShaderMaterial({
       side: THREE.BackSide,
@@ -69,11 +68,20 @@ export class Sky {
         }`,
       fragmentShader: `
         varying vec3 vDir;
-        uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uMoonDir;
-        uniform float uMoonPhase, uStars, uHaze;
+        uniform vec3 uZenith, uHorizon, uSunDir, uSunColor;
+        uniform float uStars, uHaze;
+        uniform vec3 uFog;
 
         float hash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+        // A hash that survives large inputs. The sin() one above starts
+        // repeating itself once its argument runs into the thousands, which is
+        // exactly where star cells live, and the sky came out empty.
+        float hash31(vec3 p) {
+          p = fract(p * 0.1031);
+          p += dot(p, p.yzx + 33.33);
+          return fract((p.x + p.y) * p.z);
         }
 
         void main() {
@@ -82,11 +90,29 @@ export class Sky {
           vec3 col = mix(uHorizon, uZenith, pow(up, 0.85));
 
           // Stars, thinned out by daylight and by cloud.
-          if (uStars > 0.01 && d.y > -0.05) {
-            vec2 g = floor(d.xz / max(abs(d.y), 0.25) * 90.0);
-            float s = hash(g);
-            float star = smoothstep(0.9975, 1.0, s) * uStars * smoothstep(-0.05, 0.25, d.y);
-            col += vec3(star) * (0.6 + 0.4 * hash(g + 7.0));
+          //
+          // Cells taken off the direction itself, not off d.xz divided by d.y.
+          // That division is a projection onto a plane and it tears itself apart
+          // as it approaches the horizon, where d.y goes to zero: the field
+          // stretched into long smeared streaks all round the edge of the sky.
+          // Quantising the unit vector has no such pole.
+          if (uStars > 0.01 && d.y > 0.0) {
+            // One candidate per cell, drawn as a small round point at its own
+            // place inside that cell. Lighting the whole cell instead - which is
+            // what testing the hash alone does - gives square stars the size of
+            // the grid, and at any useful density that is a field of confetti.
+            const float N = 120.0;
+            vec3 cell = floor(d * N);
+            float h = hash31(cell);
+            if (h > 0.982) {
+              vec3 at = normalize(cell + vec3(hash31(cell + 1.0),
+                                              hash31(cell + 2.0),
+                                              hash31(cell + 3.0)));
+              float r = length(at - d);
+              float point = smoothstep(0.0035, 0.0, r);
+              col += vec3(point) * uStars * smoothstep(0.02, 0.30, d.y)
+                   * (0.5 + 0.5 * hash31(cell + 4.0));
+            }
           }
 
           // The sun: a disc, and a great deal of glow around it near the horizon.
@@ -94,23 +120,14 @@ export class Sky {
           col += uSunColor * pow(max(sd, 0.0), 220.0) * 6.0;
           col += uSunColor * pow(max(sd, 0.0), 6.0) * 0.28;
 
-          // The moon, with a phase: a second disc offset across the first
-          // subtracts the shadowed part, which is what a phase physically is.
-          vec3 m = normalize(uMoonDir);
-          float md = dot(d, m);
-          float disc = smoothstep(0.99955, 0.99975, md);
-          if (disc > 0.0) {
-            // Where along the face the terminator sits, -1 to 1.
-            float term = cos(uMoonPhase * 6.2831853);
-            vec3 side = normalize(cross(m, vec3(0.0, 1.0, 0.0)) + vec3(1e-5));
-            float across = dot(normalize(d - m * md), side);
-            float lit = smoothstep(term - 0.12, term + 0.12, across);
-            // A new moon is not black, it is barely there.
-            col = mix(col, vec3(0.86, 0.88, 0.82), disc * (0.12 + 0.88 * lit));
-          }
-          col += vec3(0.55, 0.6, 0.72) * pow(max(md, 0.0), 12.0) * 0.05;
-
           col = mix(col, uHorizon, uHaze * (1.0 - up) * 0.8);
+
+          // Everything below the skyline is fog and nothing else. The dome is a
+          // sphere, so its lower half is behind the world anyway - drawing sky
+          // detail down there only ever showed through as banding along the
+          // treeline. Fade to the fog's own colour and let it be a gap.
+          float below = smoothstep(0.16, -0.04, d.y);
+          col = mix(col, uFog, below);
           gl_FragColor = vec4(col, 1.0);
         }`,
     });
@@ -166,13 +183,12 @@ export class Sky {
     const wetTarget = { clear: 0, hazy: 0.35, overcast: 0.7, rain: 1 }[this.weather];
     this.wet += (wetTarget - this.wet) * Math.min(1, dt * 0.25);
 
-    // The sun rides a circle through the sky; the moon rides the other side of
-    // it, so one is always up when the other is not.
-    const t = ((this.hour - DAWN) / (DUSK - DAWN)) * Math.PI;
-    const sun = new THREE.Vector3(Math.cos(t + Math.PI), Math.sin(t), 0.35).normalize();
+    // One body on one arc, up between six and eighteen.
+    const sunAngle = (this.hour - 6) * Math.PI / 12;
+    const arc = (a) => new THREE.Vector3(-Math.cos(a), Math.sin(a), 0.3).normalize();
+    const sun = arc(sunAngle);
     this.uniforms.uSunDir.value.copy(sun);
-    this.uniforms.uMoonDir.value.copy(sun).negate();
-    this.uniforms.uMoonPhase.value = this.moonPhase;
+
 
     // How far up the sun is, which is what actually decides the light.
     const day = THREE.MathUtils.clamp(sun.y * 3.0 + 0.15, 0, 1);
@@ -204,6 +220,9 @@ export class Sky {
     // Fog belongs to the weather as much as to the hour.
     if (this.scene.fog) {
       this.scene.fog.color.copy(hor).multiplyScalar(0.55 + day * 0.35);
+      // The dome's skirt matches the fog exactly, so there is no seam where one
+      // becomes the other.
+      this.uniforms.uFog.value.copy(this.scene.fog.color);
       this.scene.fog.far = CFG.world.fogFar * (1 - cloud * 0.45) * (0.75 + day * 0.9);
     }
   }

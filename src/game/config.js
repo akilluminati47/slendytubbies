@@ -45,7 +45,10 @@ export const CFG = {
     useBakedRig: true,
     height: 1.85,
     radius: 0.45,
-    patrolSpeed: 1.5,
+    // Matched to the clips rather than picked: the walk carries the body at
+    // 1.92 m/s under its own steam, so patrolling at that speed plays it at 1x
+    // and the feet neither skate nor wade. See RiggedTubby.update.
+    patrolSpeed: 1.9,
     investigateSpeed: 2.9,
     chaseSpeed: 5.4,      // just under player sprint - you can outrun it, briefly
     fleeSpeed: 11.0,      // bolts when someone takes a dish - far faster than you
