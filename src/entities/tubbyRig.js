@@ -142,8 +142,8 @@ const DAMPED = [["Body 2", 0.75]];
  * SPLAY tips each knee out onto its own side; STANCE walks the ankle targets
  * apart so the feet tread their own lines rather than one.
  */
-const SPLAY = 0.42;
-const STANCE = 0.055;
+const SPLAY = 0.2;
+const STANCE = 0.028;
 
 const REST_POSE = [
   ["Arm R1", 0, 0, 1, 60], ["Arm R2", 0, 0, 1, -6], ["Hand R", 0, 0, 1, -2],
