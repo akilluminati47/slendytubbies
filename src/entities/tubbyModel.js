@@ -134,6 +134,142 @@ function bakeStates(character, rig, height) {
   return character;
 }
 
+/** The set of bones each vertex of a mesh leans on most. */
+function dominantBones(mesh) {
+  const si = mesh.geometry.attributes.skinIndex;
+  const sw = mesh.geometry.attributes.skinWeight;
+  const out = new Set();
+  if (!si || !sw) return out;
+  for (let i = 0; i < mesh.geometry.attributes.position.count; i++) {
+    let best = -1, bestW = 0;
+    for (let k = 0; k < 4; k++) {
+      const w = sw.getComponent(i, k);
+      if (w > bestW) { bestW = w; best = si.getComponent(i, k); }
+    }
+    if (best >= 0) out.add(best);
+  }
+  return out;
+}
+
+/**
+ * Bounding box of the pixels a predicate accepts, or null if it accepts none.
+ */
+function contentBox(data, w, h, accept) {
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (!accept(data[i], data[i + 1], data[i + 2], data[i + 3])) continue;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+    }
+  }
+  return x1 < x0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/**
+ * Give the chaser the face off the TinkyWinkyNPC rip.
+ *
+ * That rip is the one model in the set with no skeleton at all - 6 meshes, 0
+ * skins - so it can never be animated, but its face is the whole reason it was
+ * fetched. So the face travels as a texture instead of as geometry: the rigged
+ * skin and the rip lay their faces out the same way, centred on the sheet with
+ * the mouth above the eyes, they just differ in size and in what surrounds them.
+ *
+ * Both boxes are found rather than hard-coded, by asking what each sheet's
+ * background is: the rip paints its face on flat purple, and the skin paints
+ * its on the grey noise of the belly TV, which is the rest of the same sheet and
+ * has to survive untouched.
+ */
+async function wearHorrorFace(character) {
+  const faces = character.meshes.filter((m) => /face/i.test(m.material?.name ?? ""));
+  const base = faces.find((m) => m.material?.map?.image)?.material;
+  if (!base) {
+    console.warn("[tubbies] chaser has no face texture to replace");
+    return false;
+  }
+
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error(`${FACE_URL} did not load`));
+    i.src = FACE_URL;
+  });
+
+  // --- the horror face, cut off its purple field ---------------------------
+  const cut = document.createElement("canvas");
+  cut.width = img.width;
+  cut.height = img.height;
+  const cutCtx = cut.getContext("2d", { willReadFrequently: true });
+  cutCtx.drawImage(img, 0, 0);
+  const face = cutCtx.getImageData(0, 0, cut.width, cut.height);
+  for (let i = 0; i < face.data.length; i += 4) {
+    const r = face.data[i], g = face.data[i + 1], b = face.data[i + 2];
+    // Strongly purple: blue and red high, green well below both.
+    if (b > 90 && r > 70 && g < r * 0.62 && g < b * 0.62) face.data[i + 3] = 0;
+  }
+  cutCtx.putImageData(face, 0, 0);
+  const from = contentBox(face.data, cut.width, cut.height, (r, g, b, a) => a > 8);
+
+  // --- the skin's own sheet, and where its face sits on it -----------------
+  const src = base.map.image;
+  const sheet = document.createElement("canvas");
+  sheet.width = src.width ?? src.videoWidth;
+  sheet.height = src.height ?? src.videoHeight;
+  const ctx = sheet.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0);
+  const px = ctx.getImageData(0, 0, sheet.width, sheet.height);
+  // The TV is grey noise, so its channels sit on top of each other; the face is
+  // pink, so red leads blue by a wide margin.
+  const to = contentBox(px.data, sheet.width, sheet.height,
+    (r, g, b) => r - b > 26 && r > 90);
+
+  if (!from || !to) {
+    console.warn("[tubbies] could not locate a face on one of the sheets");
+    return false;
+  }
+
+  // Paint over the old face first: the horror face is a narrower oval and would
+  // otherwise leave the friendly one's cheeks showing round the edge. The colour
+  // comes from the rip's own skin tone at the top of its face.
+  const edge = cutCtx.getImageData(from.x + (from.w >> 1), from.y + 2, 1, 1).data;
+  ctx.fillStyle = `rgb(${edge[0]},${edge[1]},${edge[2]})`;
+  ctx.fillRect(to.x, to.y, to.w, to.h);
+  ctx.drawImage(cut, from.x, from.y, from.w, from.h, to.x, to.y, to.w, to.h);
+
+  const tex = new THREE.CanvasTexture(sheet);
+  tex.colorSpace = base.map.colorSpace;
+  tex.flipY = base.map.flipY;
+  tex.wrapS = base.map.wrapS;
+  tex.wrapT = base.map.wrapT;
+  tex.anisotropy = base.map.anisotropy;
+  tex.needsUpdate = true;
+
+  for (const m of faces) {
+    if (m.material.map) m.material.map = tex;
+    m.material.needsUpdate = true;
+  }
+  // The rip paints its eyes straight into the sheet, as two black sockets. The
+  // skin's own eyeballs and lids therefore have to go: left in place they stand
+  // proud of the face as a pair of cartoon googly eyes floating over the horror
+  // one's empty sockets, which is worse than either face on its own.
+  const bones = character.target.skeleton.bones;
+  const isEye = (i) => /^eye(lid)?[_ ]/i.test(bones[i]?.name ?? "");
+  let hidden = 0;
+  for (const m of character.meshes) {
+    const driven = dominantBones(m);
+    if (!driven.size || ![...driven].every(isEye)) continue;
+    m.visible = false;
+    hidden++;
+  }
+
+  console.info(`[tubbies] chaser wears the horror face ` +
+    `(${from.w}x${from.h} onto ${to.w}x${to.h}), ${hidden} eye meshes hidden`);
+  return true;
+}
+
 /**
  * Build every character once, in the browser. There is no offline bake.
  *
@@ -162,6 +298,8 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
         guardian: `${base}/skin/guardian/scene.gltf`,
       }),
     ]);
+
+    await wearHorrorFace(chaser.characters.tinkywinky);
 
     const characters = {};
     for (const rig of [chaser, players]) {
