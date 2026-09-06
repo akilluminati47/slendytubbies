@@ -4,7 +4,7 @@ import { Input } from "./engine/input.js";
 import { World, heightAt } from "./world/world.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
-import { loadTubbyAssets } from "./entities/tubbyModel.js";
+import { loadTubbyAssets, tickTV } from "./entities/tubbyModel.js";
 import { WristHUD } from "./game/wristHud.js";
 import { HINTS } from "./game/hints.js";
 import { Settings } from "./game/settings.js";
@@ -53,6 +53,7 @@ const net = new NetClient();
 settings.apply(renderer, audio);
 
 audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
+audio.preload("scream", "./assets/game/scream.mp3");
 
 const hasBakedAssets = Boolean(await loadTubbyAssets());
 
@@ -402,6 +403,28 @@ function endGame(kind, headline, detail) {
  * showed it. The recording sets the length: the push holds on the face until the
  * sound stops, and the card lands in the silence afterwards.
  */
+/**
+ * The sound for realising it is right there.
+ *
+ * Not on proximity alone - it is behind you for most of a run and a noise every
+ * time would be wallpaper. It fires on the turn: close, hunting, and now inside
+ * your view. Once per chase, so glancing back and forth does not machine-gun it.
+ */
+function checkSpotted(dt) {
+  if (!player?.alive || spectating) return;
+  for (const t of tubbies) {
+    if (!t.onYourHeels(player)) { t.seenCue = false; continue; }
+    if (t.seenCue) continue;
+    const dx = t.pos.x - player.pos.x, dz = t.pos.z - player.pos.z;
+    const d = Math.hypot(dx, dz) || 1e-6;
+    const look = (-Math.sin(input.yaw) * dx + -Math.cos(input.yaw) * dz) / d;
+    if (look < Math.cos(CFG.tubby.lookAngle * Math.PI / 180)) continue;
+    t.seenCue = true;
+    audio.playSample("jumpscare", 0.8);
+    input.gamepad.rumble(0.7, game.elapsed);
+  }
+}
+
 function beginScare(tubby) {
   player.alive = false;
   // No synth sting under it. The recording is the whole joke and a sawtooth
@@ -423,7 +446,7 @@ function beginScare(tubby) {
 
   // playSample resolves with the recording's length once it has decoded, so the
   // sequence is built the moment we know how long to hold on the mask.
-  audio.playSample("jumpscare", 0.9).then((seconds) => {
+  audio.playSample("scream", 0.95).then((seconds) => {
     clearTimeout(guard);
     console.info(`[scare] holding ${seconds.toFixed(2)}s on the mask`);
     scare = new Jumpscare({
@@ -435,6 +458,7 @@ function beginScare(tubby) {
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   input.update(dt);
+  tickTV(dt);        // the belly screens run whether or not the game does
 
   // The title screen listens for DOM events, but a gamepad produces none.
   if (!running && !game.over && input.gamepad.anyPressed()) ui.padPressed();
@@ -508,9 +532,8 @@ function frame() {
     input.gamepad.rumble(0.5, game.elapsed);
     input.xr.pulse(0.4, 90);
     if (online) net.sendTook(world.custards.indexOf(got));
-    // It bolts - away from everyone, faster than anyone can run, in full view.
-    // No despawn: you watch it leave, and it comes back hunting.
-    if (host) for (const t of tubbies) t.flee(threatPoints());   // once, on pickup
+    // It does not bolt. Slendytubbies 1 rules: taking a dish makes noise and the
+    // noise is the point - it comes towards you, it does not give you a breather.
     if (game.found >= game.total) {
       endGame("won", "You got out",
         `All ${game.total} dishes recovered in ${game.elapsed.toFixed(0)} seconds.<br>It is still out there.`);
@@ -519,6 +542,8 @@ function frame() {
   }
 
   let threat = 0;
+  checkSpotted(dt);
+
   const threats = threatPoints();      // built once, shared by every tubby
   for (const [i, t] of tubbies.entries()) {
     if (host) {

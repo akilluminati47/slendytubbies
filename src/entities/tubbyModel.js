@@ -491,6 +491,194 @@ async function wearHorrorFace(character) {
 }
 
 /**
+ * The belly TV, as an actual television.
+ *
+ * Every skin ships its screen as a patch of frozen grey speckle baked into the
+ * same sheet as the face - a photograph of static, which reads as dirty felt the
+ * moment you stand still and look at it. It costs almost nothing to make it
+ * move: the screen is a known rectangle in texture space, so a few lines
+ * injected into the material's fragment shader can replace whatever the sheet
+ * says inside that rectangle with noise that changes every frame.
+ *
+ * One shared clock drives all five, so a lobby full of tubbies is still one
+ * uniform update per frame rather than five.
+ *
+ * The cells are deliberately chunky. Per-pixel noise on a screen this small
+ * shimmers into flat grey the instant it is more than a few metres away, which
+ * is exactly the look we are trying to get rid of.
+ */
+
+/**
+ * Flag the vertices that belong to the screen, as a mesh attribute.
+ *
+ * A bounding box in texture space was the obvious way and it is wrong: the face
+ * and the screen share one sheet, their islands interleave, and a rectangle
+ * drawn round the screen's texture coordinates also caught the top of the face.
+ * Po walked around with a patch of static on its forehead.
+ *
+ * Which triangles are the screen is not a texture question at all - it is a
+ * question about where they sit on the body, and the answer there is exact.
+ */
+function markScreenVertices(mesh) {
+  const pos = mesh.geometry.attributes.position;
+  const v = new THREE.Vector3();
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    mesh.getVertexPosition(i, v);
+    lo = Math.min(lo, v.applyMatrix4(mesh.matrixWorld).y);
+    hi = Math.max(hi, v.y);
+  }
+  // This mesh carries the face and the screen. The screen is the low half.
+  const cut = lo + (hi - lo) * 0.5;
+
+  const flag = new Float32Array(pos.count);
+  const box = { u0: Infinity, v0: Infinity, u1: -Infinity, v1: -Infinity };
+  const uv = mesh.geometry.attributes.uv;
+  let n = 0;
+  for (let i = 0; i < pos.count; i++) {
+    mesh.getVertexPosition(i, v);
+    if (v.applyMatrix4(mesh.matrixWorld).y > cut) continue;
+    flag[i] = 1;
+    n++;
+    if (!uv) continue;
+    const u = uv.getX(i), w = uv.getY(i);
+    box.u0 = Math.min(box.u0, u); box.u1 = Math.max(box.u1, u);
+    box.v0 = Math.min(box.v0, w); box.v1 = Math.max(box.v1, w);
+  }
+  if (n < 4) return null;
+  mesh.geometry.setAttribute("aScreen", new THREE.BufferAttribute(flag, 1));
+  return box;
+}
+
+const tvClock = { value: 0 };
+
+/**
+ * Make the screen on this character's belly play static.
+ *
+ * Returns false when the mesh does not carry a screen, which is every case
+ * except the one mesh that does.
+ */
+function animateBellyTV(character) {
+  const face = character.meshes.find((m) => /face/i.test(m.material?.name ?? ""));
+  if (!face) return false;
+  character.scene.updateMatrixWorld(true);
+  const box = markScreenVertices(face);
+  if (!box) return false;
+
+  // Cloned, or all five would share one material and the last one to be set up
+  // would win the screen for everybody.
+  face.material = face.material.clone();
+  face.material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTvTime = tvClock;
+    shader.uniforms.uTvBox = { value: new THREE.Vector4(box.u0, box.v0, box.u1, box.v1) };
+    // A varying carries the flag through, so the test is "is this the screen"
+    // rather than "is this near the screen on the sheet".
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>
+        attribute float aScreen;
+        varying float vScreen;`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>
+        vScreen = aScreen;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>
+        uniform float uTvTime;
+        uniform vec4 uTvBox;
+        varying float vScreen;
+        // Cheap hash. Quality does not matter here - television static is the
+        // one thing in graphics where a bad random number generator is correct.
+        float tvHash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }`)
+      .replace("#include <map_fragment>", `#include <map_fragment>
+        {
+          vec2 tvT = (vMapUv - uTvBox.xy) / (uTvBox.zw - uTvBox.xy);
+          if (vScreen > 0.5) {
+            // Chunky cells, and a clock that ticks rather than slides, so it
+            // reads as frames of static instead of a drifting wash.
+            vec2 cell = floor(tvT * vec2(26.0, 20.0));
+            float tick = floor(uTvTime * 14.0);
+            float r = tvHash(cell + tick * 1.7);
+            float g = tvHash(cell + tick * 1.7 + 41.0);
+            float b = tvHash(cell + tick * 1.7 + 97.0);
+            // Mostly luminance with a little colour fringing, the way an aerial
+            // picture breaks up, rather than confetti.
+            float lum = (r + g + b) / 3.0;
+            vec3 snow = mix(vec3(lum), vec3(r, g, b), 0.35);
+            diffuseColor.rgb = pow(snow, vec3(0.85)) * 0.92 + 0.04;
+          }
+        }`);
+  };
+  face.material.needsUpdate = true;
+  return true;
+}
+
+/**
+ * Take the warmth out of the chaser.
+ *
+ * The mask covers the front of its face and nothing else, so the skin around it
+ * and the beige inside its ears stayed the colour of a children's television
+ * presenter while the middle of its head was a corpse. The fix is not another
+ * mesh: it is that the chaser should not have pink anywhere.
+ *
+ * So every texture it wears gets its skin tones - warm, red leading blue - pulled
+ * to the mask's own dead grey, wherever they happen to live on the sheet. That
+ * catches the face surround and the ear linings in one pass without anybody
+ * having to know which is which. Its purple body is not a skin tone and is left
+ * exactly as it is.
+ */
+function greyTheChaser(character) {
+  let changed = 0;
+  const done = new Map();
+  for (const mesh of character.meshes) {
+    const map = mesh.material?.map;
+    if (!map?.image) continue;
+    if (done.has(map)) { mesh.material = done.get(map); continue; }
+
+    const src = map.image;
+    const w = src.width ?? src.videoWidth, h = src.height ?? src.videoHeight;
+    if (!w || !h) continue;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0);
+    const px = ctx.getImageData(0, 0, w, h);
+    const d = px.data;
+    let hits = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      // Warm and pale: the flesh on these sheets, and nothing else on them.
+      if (!(r > 95 && r > b + 14 && r >= g && g > b - 10)) continue;
+      const lum = r * 0.299 + g * 0.587 + b * 0.114;
+      // Towards the mask: cold, desaturated, and a shade darker than the skin.
+      const grey = Math.min(255, lum * 0.86 + 8);
+      d[i] = grey * 0.99;
+      d[i + 1] = grey;
+      d[i + 2] = Math.min(255, grey * 1.05);
+      hits++;
+    }
+    if (!hits) continue;
+    ctx.putImageData(px, 0, 0);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = map.colorSpace;
+    tex.flipY = map.flipY;
+    tex.wrapS = map.wrapS;
+    tex.wrapT = map.wrapT;
+    tex.anisotropy = map.anisotropy;
+    tex.needsUpdate = true;
+
+    const mat = mesh.material.clone();
+    mat.map = tex;
+    mat.needsUpdate = true;
+    mesh.material = mat;
+    done.set(map, mat);
+    changed++;
+  }
+  return changed;
+}
+
+/**
  * Build every character once, in the browser. There is no offline bake.
  *
  * Two donors, because the chaser and the players want different animation. The
@@ -498,6 +686,9 @@ async function wearHorrorFace(character) {
  * rides donor/tinkywinky, which has 27 of its own, so Tinky Winky moves like
  * Tinky Winky. See tubbyRig.js for what had to be corrected in the skins first.
  */
+/** Advance every belly screen. One uniform, however many tubbies are on it. */
+export function tickTV(dt) { tvClock.value += dt; }
+
 export async function loadTubbyAssets(base = "./assets/game/rig") {
   if (rigCache !== null) return rigCache;
   if (!CFG.tubby.useBakedRig) {
@@ -519,7 +710,11 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
       }),
     ]);
 
+    // Grey first: it rewrites the sheets, and everything after this clones the
+    // materials that wear them.
+    const greyed = greyTheChaser(chaser.characters.tinkywinky);
     await wearHorrorFace(chaser.characters.tinkywinky);
+    console.info(`[tubbies] chaser desaturated on ${greyed} sheets`);
 
     // The guardian's eyeballs ship 456 units wide and 2500 below its feet, so
     // seatFacialParts had to shrink them a thousandfold and what came out the
@@ -540,11 +735,14 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
     }
 
     const characters = {};
+    let screens = 0;
     for (const rig of [chaser, players]) {
       for (const [kind, character] of Object.entries(rig.characters)) {
         characters[kind] = bakeStates(character, rig, CFG.tubby.height);
+        if (animateBellyTV(character)) screens++;
       }
     }
+    console.info(`[tubbies] ${screens} belly screens playing static`);
 
     const short = Object.entries(characters)
       .filter(([, c]) => c.byState.size < 4)

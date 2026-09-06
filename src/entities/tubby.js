@@ -171,10 +171,46 @@ export class Tubby {
     this.model.update(dt, this.speedNow);
 
     if (player.alive && this.state === "chase" && !fleeing &&
-        Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < T.killRange) {
+        Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z) < T.killRange &&
+        this.canTake(player)) {
       return "kill";
     }
     return null;
+  }
+
+  /**
+   * Whether it can actually take someone it has caught up with.
+   *
+   * Slendytubbies 1 lets you outlast it on foot. Keep moving and keep your back
+   * to it and it stalks - right behind you, close enough to hear, and unable to
+   * close the deal. It takes you the moment you stop, get cornered, or turn to
+   * look at what has been breathing behind you for the last thirty seconds.
+   *
+   * That last one is deliberate: the punishment for looking is the whole game.
+   */
+  canTake(player) {
+    const dx = player.pos.x - this.pos.x, dz = player.pos.z - this.pos.z;
+    const away = Math.hypot(dx, dz) || 1e-6;
+
+    // Are they still running, and running away rather than past?
+    const speed = Math.hypot(player.vel.x, player.vel.z);
+    const fleeing = speed > T.escapeSpeed &&
+      (player.vel.x * dx + player.vel.z * dz) / (speed * away) > 0.25;
+
+    // Are they looking at it? Three.js cameras face -Z, so at yaw t the view
+    // runs along (-sin t, -cos t).
+    const yaw = player.input?.yaw ?? 0;
+    const look = (-Math.sin(yaw) * -dx + -Math.cos(yaw) * -dz) / away;
+    const facing = look > Math.cos(T.lookAngle * Math.PI / 180);
+
+    return facing || !fleeing;
+  }
+
+  /** Close behind and hunting: what the "it is right there" cue asks about. */
+  onYourHeels(player) {
+    if (this.state !== "chase" || !player.alive) return false;
+    const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
+    return d < T.heelsRange;
   }
 
   #enter(state, at) {

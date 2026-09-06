@@ -56,6 +56,14 @@ export const CFG = {
     sightHalfAngle: Math.PI * 0.42,
     hearingBase: 9,       // metres, walking
     killRange: 1.5,
+    // It cannot take you while you are running away with your back turned - see
+    // Tubby.canTake. Keep moving above this and it stalks instead of killing.
+    escapeSpeed: 1.6,
+    // Degrees off your view direction that still counts as looking at it. Turn
+    // far enough to see what is behind you and it can have you.
+    lookAngle: 62,
+    // Close enough behind that catching sight of it should land like a shock.
+    heelsRange: 7.5,
     loseInterest: 6.0,    // seconds without a fix before giving up
   },
   pad: {
