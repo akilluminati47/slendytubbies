@@ -229,6 +229,29 @@ vendor/three/  the five three.js files the game imports, so it deploys standalon
 tools/         serve.py · fetch_sketchfab.py · rig_transfer.py · gen_credits.py
 ```
 
+### The torch you can see
+
+There was only ever a `SpotLight` — light arriving from nowhere, which is fine until you
+notice that everything else in the world casts and receives and the one thing lighting it
+has no body. There are two now, both Sketchfab rips (`src/entities/torch.js`): the
+**Guardian carries the searchlight**, deliberately oversized because the point of it is
+that it is enormous, and everybody else carries the slim black one. The SpotLight's cone
+widens to match, so a bigger lamp really does throw a bigger beam rather than the same one
+behind a different shell.
+
+The shaft of light is not a shader. The falloff is baked into per-vertex alpha and drawn
+back-face only — double-sided additive sums both walls of the cone, which doubled the
+brightness and left a hard bright rectangle wherever the shaft crossed a pale trunk.
+
+Their 4K textures were 25.8 MB between them, to light a prop held 20 cm from the lens.
+Downscaled to 256 on the way into `assets/game/` they are 1.2 MB, colour maps as JPEG and
+normal/roughness kept as PNG, where blocking would crawl over the shell as facets.
+
+On the menu, one appearance in ten walks past carrying theirs, hung off the hand bone so it
+moves with the walk cycle. Rolled per appearance rather than fixed per character: nobody
+carrying one is a lifeless line-up, and everybody carrying one stops reading as something
+you were lucky to catch.
+
 Sound is synthesised at runtime apart from two recordings (the shock and the scream):
 wind, a heartbeat that tracks how close the tubby is and quickens as it closes, and
 stingers. Browsers refuse to start an AudioContext without a user

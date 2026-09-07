@@ -269,5 +269,29 @@
   "anims": 0,
   "url": "https://sketchfab.com/3d-models/e6a323aa6fbc4d2cb0e70f2298af0e97",
   "role": "props/survival_pack"
+ },
+ {
+  "uid": "a8def4fb92ee4b3383726d053ff0f0e1",
+  "name": "[Horror game] Flashlight [Download Game-ready]",
+  "author": "Wenedi (^-^)/",
+  "license": "CC Attribution",
+  "faces": 464,
+  "verts": 243,
+  "anims": 0,
+  "url": "https://sketchfab.com/3d-models/a8def4fb92ee4b3383726d053ff0f0e1",
+  "role": "torch/handheld",
+  "use": "the torch every player but the Guardian carries - user-specified"
+ },
+ {
+  "uid": "4309814bd41c448f8da07871b7bddfbc",
+  "name": "Portable Searchlight",
+  "author": "Console Art Cybernetic",
+  "license": "Free Standard",
+  "faces": 18802,
+  "verts": 9870,
+  "anims": 0,
+  "url": "https://sketchfab.com/3d-models/4309814bd41c448f8da07871b7bddfbc",
+  "role": "torch/searchlight",
+  "use": "the Guardian's, so the host is the one carrying the big lamp - user-specified"
  }
 ]

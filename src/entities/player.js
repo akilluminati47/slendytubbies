@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { heightAt } from "../world/world.js";
+import { makeTorch, torchFor } from "./torch.js";
 
 const _dir = new THREE.Vector3();
 
@@ -45,7 +46,14 @@ export class Player {
     this.torch.shadow.bias = -0.0015;
     this.torch.target.position.set(0, 0, -1);
     this.torch.add(this.torch.target);
-    camera.add(this.torch);
+
+    // The light and the thing holding it travel together. Everything that used
+    // to move the bare light now moves this, so VR gets the prop in its hand
+    // for free rather than a beam leaving an empty fist.
+    this.torchRig = new THREE.Group();
+    this.torchRig.add(this.torch);
+    camera.add(this.torchRig);
+    this.held = null;
 
     this.fill = new THREE.PointLight(0xbfd0e0, 6, 6, 1.6);
     camera.add(this.fill);
@@ -57,15 +65,42 @@ export class Player {
    * makes a VR horror game feel different.
    */
   attachTorchTo(node) {
-    if (!node || this.torch.parent === node) return;
-    node.add(this.torch);
-    this.torch.position.set(0, 0, 0);
+    if (!node || this.torchRig.parent === node) return;
+    node.add(this.torchRig);
+    this.torchRig.position.set(0, 0, 0);
   }
 
   detachTorch() {
-    if (this.torch.parent === this.cam) return;
-    this.cam.add(this.torch);
-    this.torch.position.set(0, 0, 0);
+    if (this.torchRig.parent === this.cam) return;
+    this.cam.add(this.torchRig);
+    this.torchRig.position.set(0, 0, 0);
+  }
+
+  /**
+   * Put the right torch in this player's hand.
+   *
+   * Called once the role is known, which is after construction - the Guardian
+   * carries the searchlight and everybody else the slim black one, and the
+   * SpotLight is widened to match so a bigger lamp actually throws a bigger
+   * beam rather than the same cone behind a different shell.
+   */
+  setTorch(role) {
+    if (this.held) {
+      this.torchRig.remove(this.held.group);
+      this.held = null;
+    }
+    this.held = makeTorch(torchFor(role));
+    this.torchRig.add(this.held.group);
+    this.torch.angle = this.held.angle;
+    this.#showHeld(this.torchOn);
+  }
+
+  #showHeld(on) {
+    if (!this.held) return;
+    // The shell stays visible either way - you are holding it whether or not it
+    // is lit - but the beam and the glow on the glass are the light itself.
+    this.held.beam.visible = on;
+    this.held.glow.visible = on;
   }
 
   /** Yaw the player is actually facing, headset rotation included. */
@@ -104,6 +139,7 @@ export class Player {
     // scene getting darker, which makes it impossible to judge what you can see.
     this.torch.intensity = this.torchOn ? CFG.player.torchIntensity : 0;
     this.fill.intensity = this.torchOn ? 6 : 1.2;
+    this.#showHeld(this.torchOn);
 
     // --- jump -----------------------------------------------------------
     // Coyote time: still jumpable for a moment after walking off a lip. Without
@@ -194,6 +230,25 @@ export class Player {
           Math.min(1, speed / CFG.player.walkSpeed)
         : 0;
       this.bobAmount += (want - this.bobAmount) * Math.min(1, dt * CFG.player.bobEase);
+
+      // The hand lags the head. A torch welded to the camera reads as a decal on
+      // the lens; letting it fall behind a turn by a few hundredths of a second
+      // and swing back is the whole difference between held and painted on.
+      if (this.torchRig.parent === this.cam) {
+        const k = Math.min(1, dt * 9);
+        this.swayYaw = (this.swayYaw ?? this.input.yaw);
+        let dy = this.input.yaw - this.swayYaw;
+        while (dy > Math.PI) dy -= Math.PI * 2;
+        while (dy < -Math.PI) dy += Math.PI * 2;
+        this.swayYaw += dy * k;
+        this.swayPitch = (this.swayPitch ?? this.input.pitch);
+        this.swayPitch += (this.input.pitch - this.swayPitch) * k;
+        this.torchRig.rotation.y = THREE.MathUtils.clamp(dy * 0.55, -0.22, 0.22);
+        this.torchRig.rotation.x =
+          THREE.MathUtils.clamp((this.input.pitch - this.swayPitch) * 0.5, -0.16, 0.16);
+        // And a little bounce from the stride, so it moves when you walk.
+        this.torchRig.position.y = Math.sin(this.bob * 0.5) * this.bobAmount * 1.6;
+      }
 
       const bobY = Math.sin(this.bob) * this.bobAmount;
       const roll = Math.sin(this.bob * 0.5) * CFG.player.bobRoll *

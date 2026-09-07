@@ -9,6 +9,7 @@ Non-commercial use only.
 - **Slendytubbies_3_po_phase1** by [abrisamibrahimovic](https://sketchfab.com/3d-models/fdd29e9f63774f3cb86f510a8a37f7ed) — CC Attribution
 - **Dipsy Lake** by [alonsoperez9990](https://sketchfab.com/3d-models/03b0630f85494426882d08405f4e0e37) — CC Attribution
 - **Slendytubbies II secret lair** by [Chocolate_studio228](https://sketchfab.com/3d-models/e4e6efce8b52477f9f57dde46f3f6d68) — CC Attribution
+- **Portable Searchlight** by [Console Art Cybernetic](https://sketchfab.com/3d-models/4309814bd41c448f8da07871b7bddfbc) — Free Standard
 - **Teletubbie Land** by [GavinBou](https://sketchfab.com/3d-models/067b98c9f6174c4b9a8177172a2a0349) — CC Attribution
 - **The Outskirts - Slendytubbies 3** by [GavinBou](https://sketchfab.com/3d-models/6179fcdd1bcc499086bddaf4490818e2) — CC Attribution
 - **Slendytubbies 3 - Survival Pack (Model Port)** by [GavinBou](https://sketchfab.com/3d-models/e6a323aa6fbc4d2cb0e70f2298af0e97) — CC Attribution
@@ -28,3 +29,4 @@ Non-commercial use only.
 - **Slendytubbies Guardian** by [un_rendem123](https://sketchfab.com/3d-models/b23edfaf9ef74fcc8515318b7fafa094) — CC Attribution
 - **Dipsy** by [un_rendem123](https://sketchfab.com/3d-models/97101dfe2bb94cc69ef87bafd72c5063) — CC Attribution
 - **Tinky Tank ST3** by [uunrealman](https://sketchfab.com/3d-models/81bcd71c0dee417bbcb001cd6350d2b6) — CC Attribution
+- **[Horror game] Flashlight [Download Game-ready]** by [Wenedi (^-^)/](https://sketchfab.com/3d-models/a8def4fb92ee4b3383726d053ff0f0e1) — CC Attribution

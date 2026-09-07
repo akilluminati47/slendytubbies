@@ -6,6 +6,7 @@ import { installGroundFog } from "./world/groundFog.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
 import { loadTubbyAssets, tickTV } from "./entities/tubbyModel.js";
+import { loadTorchAssets } from "./entities/torch.js";
 import { WristHUD } from "./game/wristHud.js";
 import { HINTS } from "./game/hints.js";
 import { Settings } from "./game/settings.js";
@@ -64,6 +65,7 @@ audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
 audio.preload("scream", "./assets/game/scream.mp3");
 
 const hasBakedAssets = Boolean(await loadTubbyAssets());
+await loadTorchAssets();
 
 // The menu backdrop. Built after the rigs so it has something to parade, and
 // before anything else so the title screen is never empty.
@@ -128,6 +130,9 @@ function buildWorld(seed) {
   // centre - and therefore at everybody else.
   input.yaw = a;
   input.pitch = 0;
+
+  // The Guardian carries the searchlight; everyone else the slim black one.
+  player.setTorch(myRole);
   game.total = world.custards.length;
   $("total").textContent = game.total;
 }

@@ -14,7 +14,17 @@ export const CFG = {
     custardCount: 10,
   },
   player: {
-    height: 1.7,
+    // Eye height, and it is the tubby's rather than a person's.
+    //
+    // It was 1.7, which is where a grown adult's eyes are and nowhere near
+    // where this character's are: the rigged models stand 1.27 m and carry
+    // their eyes at about two thirds of that, so the camera floated a whole
+    // head and shoulders above the body everyone else could see. Other players
+    // came up to your chest while you came up to theirs.
+    //
+    // Measured off the skinned vertices of a loaded model rather than taken
+    // from tubby.height below, which is a design figure the rig does not match.
+    height: 0.84,
     radius: 0.35,
     walkSpeed: 3.1,
     sprintSpeed: 6.0,

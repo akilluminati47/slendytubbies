@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { setMist } from "../world/groundFog.js";
 import { sowGrass } from "../world/flora.js";
+import { makeTorch, torchFor, holdInHand } from "../entities/torch.js";
 import { rng } from "../world/world.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 
@@ -134,11 +135,40 @@ export class Showcase {
     if (this.current) this.current.root.visible = false;
     this.index = index % CAST.length;
     this.z = z;
-    this.current = this.models.get(CAST[this.index]);
+    const kind = CAST[this.index];
+    this.current = this.models.get(kind);
     if (!this.current) return;
     this.current.root.visible = true;
-    this.current.root.position.x = OFFSET[CAST[this.index]] ?? 0;
+    this.current.root.position.x = OFFSET[kind] ?? 0;
     this.current.play("walk", 0);
+    this.#maybeTorch(kind);
+  }
+
+  /**
+   * One in ten of them walks past carrying their torch.
+   *
+   * Rolled per appearance rather than fixed per character, so the parade is the
+   * same cast in the same order every time and occasionally one of them is lit -
+   * which is worth more than either extreme. Nobody carrying one is a lifeless
+   * line-up; everybody carrying one is a torchlit procession and stops reading
+   * as a coincidence you were lucky to catch.
+   *
+   * Hung off the hand bone, so it moves with the walk cycle instead of floating
+   * alongside the model.
+   */
+  #maybeTorch(kind) {
+    if (this.torch) {
+      this.torch.group.parent?.remove(this.torch.group);
+      this.torch = null;
+    }
+    if (Math.random() >= 0.10) return;
+    let hand = null;
+    this.current.root.traverse((o) => {
+      if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
+    });
+    if (!hand) return;
+    const t = makeTorch(torchFor(kind));
+    if (holdInHand(t, hand)) this.torch = t;
   }
 
   /**

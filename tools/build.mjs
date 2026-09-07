@@ -27,6 +27,10 @@ const INCLUDE = [
   // No heartbeat recording. The one under the chase is synthesised and tracks
   // the threat continuously - a fixed loop laid over it only fought it.
   "assets/game/fonts",
+  // Two torches: the slim black one everybody carries and the Guardian's
+  // searchlight. Textures are downscaled to 256 on the way in - the originals
+  // are 4K, which is 25 MB to light a prop held 20 cm from the lens.
+  "assets/game/torch",
   // The rigged models. assets/game/rig/chaser is deliberately absent: it is the
   // static TinkyWinkyNPC rip, which has no skeleton and so cannot be animated,
   // and the only thing we take from it is its face - already shipped above as

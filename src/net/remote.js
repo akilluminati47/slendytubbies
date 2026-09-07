@@ -38,7 +38,8 @@ const CLIP = {
   jump: "chase",
 };
 
-const EYE = 1.45;          // torch height on the model, in metres
+const EYE = 0.84;          // torch height on the model - the same eye the local
+                           // camera sits at, so a beam leaves both at one height
 const SPAWN_IN = 1.4;      // seconds of arriving before they are solid
 const _fwd = new THREE.Vector3();
 
