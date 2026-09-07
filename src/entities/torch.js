@@ -56,11 +56,12 @@ const RIGS = {
     tilt: [0.05, -0.08, 0.10],
     lens: 0.115,           // metres from the group's origin to the glass
     length: 0.23,          // how long it should end up when held in a hand
-    // Down and forward off the measured grip, until the knurled section of the
-    // barrel is the part under the mitten. The measurement puts the torch on
-    // the palm; where along the torch the hand sits is a judgement about how it
-    // looks, and this is that judgement.
-    nudge: { forward: 0.055, down: 0.022 },
+    // Off the measured grip, in the character's own axes. The measurement puts
+    // the torch on the palm; WHERE along the torch the hand sits is a judgement
+    // about how it looks, and this is that judgement - dialled on the bench at
+    // ?torch=1 rather than guessed.
+    nudge: { side: 0, up: -0.022, forward: 0.055 },
+    twist: [0, 0, 0],
     handBeam: HAND_BEAM,   // and how far its shaft carries when carried
     cone: 3.4,
     angle: 0.44,           // matches the SpotLight exactly
@@ -83,7 +84,8 @@ const RIGS = {
     handle: true,
     // Mostly down: a lamp hangs off the handle rather than sitting level with
     // it, and a touch forward so the housing clears the hand.
-    nudge: { forward: 0.018, down: 0.05 },
+    nudge: { side: 0, up: -0.05, forward: 0.018 },
+    twist: [0, 0, 0],
     handBeam: HAND_BEAM,
     cone: 4.2,
     // A wider throw than the handheld, because it is a bigger lamp and should
@@ -229,7 +231,11 @@ export function makeTorch(kind = "handheld") {
 
   const torch = { group, body, beam, glow, angle: rig.angle, lens: rig.lens,
                   length: rig.length, cone: rig.cone, handBeam: rig.handBeam,
-                  nudge: rig.nudge ?? { forward: 0, down: 0 }, anchor: null };
+                  // Copied, not shared: the bench mutates these live and must
+                  // not edit the table every torch is built from.
+                  nudge: { side: 0, up: 0, forward: 0, ...(rig.nudge ?? {}) },
+                  twist: [...(rig.twist ?? [0, 0, 0])],
+                  anchor: null };
   // rig.lens above is the fallback for a model that never loaded; when there is
   // one, the glass is measured off it. The first-person torch hangs from the
   // camera and never goes through holdInHand, so it has to be done here too.
@@ -381,6 +387,9 @@ const HANDLE_SLAB = 0.8;
  * this rip does not, it is two meshes called body and glass.
  */
 function measureProp(torch, hasHandle) {
+  // Everything here is in the GROUP's frame, which the group's own scale
+  // cancels out of - so this is measured once when the torch is built and never
+  // needs redoing, however the thing is later sized or placed.
   if (!torch.body) return;
   const box = new THREE.Box3();
   const v = new THREE.Vector3();
@@ -461,6 +470,12 @@ export function holdInHand(torch, bone, root) {
   }
   const want = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), forward);
   torch.group.quaternion.copy(rot.invert().multiply(want));
+  // A hand-set roll/pitch/yaw on top, in the torch's OWN frame - post-
+  // multiplied, so "turn it a bit" means the same thing from any angle.
+  if (torch.twist.some((a) => a !== 0)) {
+    torch.group.quaternion.multiply(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(...torch.twist)));
+  }
 
   bone.add(torch.group);
 
@@ -480,9 +495,6 @@ export function holdInHand(torch, bone, root) {
   // start with. What we want set is the length of the object in the hand.
   const longest = worldSpan(torch.body ?? torch.group);
   if (longest > 1e-5) torch.group.scale.setScalar(torch.length / longest);
-
-  // The bulb and the cone go on the glass, now that the body is its final size.
-  measureProp(torch, !!torch.anchor);
 
   // And now slide the group so the torch you can SEE rests on the palm.
   //
@@ -522,11 +534,17 @@ export function holdInHand(torch, bone, root) {
     ? torch.group.localToWorld(torch.anchor.clone())
     : drawn.clone().addScaledVector(dirWorld, -half);
 
-  // Then the hand-set nudge, in the directions the eye actually judges it in:
-  // along the way the character is looking, and straight down.
+  // Then the hand-set nudge, in the axes the eye actually judges it in: across
+  // the character, straight up, and along the way it is looking. Taken off the
+  // model's own basis rather than the world's, so it still means the same three
+  // things when the character has turned round.
+  const side = root
+    ? new THREE.Vector3().setFromMatrixColumn(root.matrixWorld, 0).normalize()
+    : new THREE.Vector3(1, 0, 0);
   const nudge = new THREE.Vector3()
-    .addScaledVector(forward, torch.nudge.forward)
-    .addScaledVector(UP, -torch.nudge.down);
+    .addScaledVector(side, torch.nudge.side)
+    .addScaledVector(UP, torch.nudge.up)
+    .addScaledVector(forward, torch.nudge.forward);
 
   const origin = new THREE.Vector3().setFromMatrixPosition(torch.group.matrixWorld);
   torch.group.position.copy(bone.worldToLocal(

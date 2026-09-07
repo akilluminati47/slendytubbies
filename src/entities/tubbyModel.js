@@ -77,6 +77,7 @@ const _pq = new THREE.Quaternion();
 const _dq = new THREE.Quaternion();
 const _dq2 = new THREE.Quaternion();
 const _scr = new THREE.Vector3();
+const _eul = new THREE.Euler();
 const UP = new THREE.Vector3(0, 1, 0);
 /** Which way a finger bends, in its own frame. */
 const GRIP_AXIS = new THREE.Vector3(1, 0, 0);
@@ -1052,6 +1053,17 @@ class RiggedTubby {
     // a mitten rather than a full hand, which is all a tubby has.
     this.gripAmount = 0;
     this.gripBones = [];
+    /**
+     * A hand-set pose for the mitten, or null to use gripAmount.
+     *
+     * An array of {x, y, z} in radians, one per grip bone in gripBones order,
+     * post-multiplied onto whatever the clip left. This is the hook the torch
+     * bench writes to: the machinery for closing the hand has always been
+     * right and only the bend AXIS was ever a guess, so the way to settle it is
+     * to let somebody turn the bones by hand and watch the skin, which is
+     * exactly the check that was skipped the first time.
+     */
+    this.gripPose = null;
     this.inner.traverse((o) => {
       if (!o.isBone) return;
       // The _end bones are leaf markers with nothing below them - rotating one
@@ -1178,6 +1190,18 @@ class RiggedTubby {
    * keeps swinging the arm and the hand simply stays shut while it does.
    */
   #closeHand() {
+    // A pose set by hand wins over the guessed axis, and ignores GRIP_ENABLED -
+    // that flag exists because nobody had found a bend that reads as a curl,
+    // and somebody sitting at the bench turning these bones IS that search.
+    if (this.gripPose) {
+      for (let i = 0; i < this.gripBones.length; i++) {
+        const a = this.gripPose[i];
+        if (!a) continue;
+        _dq.setFromEuler(_eul.set(a.x || 0, a.y || 0, a.z || 0));
+        this.gripBones[i][0].quaternion.multiply(_dq);
+      }
+      return;
+    }
     if (!GRIP_ENABLED || this.gripAmount <= 0.001) return;
     for (const [bone, angle] of this.gripBones) {
       _dq.setFromAxisAngle(GRIP_AXIS, angle * this.gripAmount);

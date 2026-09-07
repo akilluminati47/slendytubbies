@@ -14,6 +14,7 @@ import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
 import { installMenuSfx } from "./game/menuSfx.js";
+import { installTorchBench, TORCH_BENCH } from "./game/torchBench.js";
 import { torchFor } from "./entities/torch.js";
 import { Jumpscare } from "./game/jumpscare.js";
 import { MenuNav } from "./game/menuNav.js";
@@ -78,6 +79,7 @@ let strideLeft = 0;
 const showcase = new Showcase();
 showcase.resize(innerWidth, innerHeight);
 installMenuSfx(audio);
+installTorchBench({ showcase });
 
 /* -------------------------------------------------------------- game state */
 

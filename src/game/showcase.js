@@ -133,6 +133,29 @@ export class Showcase {
     return !running && FRONT_SCREENS.has(document.body.dataset.screen);
   }
 
+  /**
+   * Stop the parade and hold one character still, for the torch bench.
+   *
+   * The stage is already lit, grassed and pointed at a lens; standing somebody
+   * on it and stopping the clock is a great deal less machinery than a second
+   * scene that would then have to be kept in step with this one.
+   *
+   * Returns the model, or null if the cast is not built yet.
+   */
+  hold(kind, z = -2.6) {
+    if (!this.models) this.#build();
+    const model = this.models?.get(kind);
+    if (!model) return null;
+    if (this.current && this.current !== model) this.current.root.visible = false;
+    this.current = model;
+    this.current.root.visible = true;
+    this.current.root.position.x = 0;
+    this.torch = null;                 // the bench hangs its own
+    this.z = z;
+    this.frozen = true;
+    return model;
+  }
+
   #build() {
     this.models = new Map();
     for (const kind of CAST) {
@@ -200,9 +223,11 @@ export class Showcase {
     if (!this.models) this.#build();
     if (!this.current) return false;
 
-    const speed = this.speed ?? LANE.speed;
-    this.z += speed * dt;
-    if (this.z > LANE.end) this.#take(this.index + 1, LANE.start);
+    const speed = this.frozen ? 0 : (this.speed ?? LANE.speed);
+    if (!this.frozen) {
+      this.z += speed * dt;
+      if (this.z > LANE.end) this.#take(this.index + 1, LANE.start);
+    }
 
     // No ground mist on the stage. The lid is partly an absolute world height
     // and this scene stands its cast at y=0 on a flat plane, which is a place
@@ -214,8 +239,8 @@ export class Showcase {
     const model = this.current;
     model.root.position.z = this.z;
     model.root.position.y = 0;          // flat stage; plantFeet does the rest
-    model.root.rotation.y = 0;          // walking towards the camera
-    model.update(dt, speed);
+    model.root.rotation.y = this.turn ?? 0;   // walking towards the camera
+    model.update(dt, this.frozen ? (this.clipSpeed ?? 0) : speed);
 
     renderer.render(this.scene, this.camera);
     return true;
