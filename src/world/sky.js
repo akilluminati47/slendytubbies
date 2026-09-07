@@ -336,9 +336,9 @@ export class Sky {
     // deeper as the air closes in, and it burns off through the middle of the
     // day the way real ground mist does - which is most of why walking into
     // dawn feels like getting somewhere.
-    MIST[1] = 0.45 + cloud * 1.05;                    // how far it hugs the ground
-    MIST[2] = (0.72 + cloud * 0.23) * (1 - day * 0.4); // and how much it takes
-    MIST[3] = 0.042 + cloud * 0.02;
+    MIST[1] = 0.9 + cloud * 1.5;                       // how deep the layer lies
+    MIST[2] = (0.85 + cloud * 0.13) * (1 - day * 0.3); // and how much it takes
+    MIST[3] = 0.065 + cloud * 0.03;                    // how fast it builds
     // Its own colour, and pointedly not the fog's - see MIST_COLOR. It has to
     // stay well above the fog at night or it is black laid over black; by day
     // it goes nearly white, which is what mist in sunlight actually looks like.

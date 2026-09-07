@@ -120,7 +120,10 @@ function branchGeometry() {
  */
 function grassGeometry(rand) {
   const parts = [];
-  const blades = 5;
+  // Four, not five. The count of tufts on the map matters far more to how the
+  // ground reads than the count of blades in one of them, and dropping one
+  // blade pays for a fifth more tufts at the same triangle budget.
+  const blades = 4;
   for (let i = 0; i < blades; i++) {
     const a = (i / blades) * Math.PI * 2 + rand() * 0.8;
     const lean = 0.22 + rand() * 0.4;
@@ -138,7 +141,9 @@ function grassGeometry(rand) {
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex([0, 2, 1, 1, 2, 3, 2, 4, 3]);
     g.computeVertexNormals();
-    g.translate((rand() - 0.5) * 0.12, 0, (rand() - 0.5) * 0.12);
+    // Spread wider than before, so one tuft covers ground rather than being a
+    // spike. Clumps that touch read as cover; clumps that do not read as spikes.
+    g.translate((rand() - 0.5) * 0.26, 0, (rand() - 0.5) * 0.26);
     parts.push(g);
   }
   const merged = BufferGeometryUtils.mergeGeometries(parts, false);
@@ -318,9 +323,10 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   built.branches = limbs.length;
 
   // --- grass -------------------------------------------------------------
-  // Clumps, not a lawn. A tuft every metre and a half over a dead heath is what
-  // the place is; a continuous sward would be a golf course, and would also be
-  // invisible past the fog for ten times the triangles.
+  // Dense enough that neighbouring clumps touch, which is the difference
+  // between ground cover and a scattering of spikes. It is the single biggest
+  // line item on the map - about two thirds of every triangle drawn - which is
+  // affordable only because it is one draw call and casts no shadows.
   const tufts = [];
   for (let i = 0; i < counts.grass; i++) {
     const x = (rand() - 0.5) * size * 0.94, z = (rand() - 0.5) * size * 0.94;

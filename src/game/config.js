@@ -10,7 +10,7 @@ export const CFG = {
     // so the only cost is triangles in one draw call apiece - which is why
     // these numbers can be this large.
     branchCount: 260,
-    grassCount: 16000,
+    grassCount: 46000,
     custardCount: 10,
   },
   player: {

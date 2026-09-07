@@ -53,8 +53,18 @@ export const MIST = new Float32Array([-1.1, 0.55, 0.85, 0.045]);
  */
 export const MIST_COLOR = new Float32Array([0.15, 0.17, 0.21]);
 
-/** Metres below the lid over which it thickens to full. */
-const DEPTH = 2.6;
+/**
+ * The softest the top of the layer is allowed to be.
+ *
+ * The ramp used to be a fixed 2.6 m, which quietly capped the whole effect: on
+ * a clear night the layer is under a metre thick, so the ground itself sat only
+ * a third of the way down a ramp that needed nearly three metres to reach full
+ * density, and the mist could never be more than a suggestion no matter what it
+ * was told. It is scaled by the layer's own thickness now - the deeper the mist,
+ * the softer its top - and this is only the floor under that, so a very thin
+ * layer still has an edge rather than a line.
+ */
+const SOFT_MIN = 0.4;
 /** How far the lid wanders, and over what size of feature. */
 const ROLL = 0.62;
 const ROLL_SCALE = 0.021;
@@ -168,7 +178,7 @@ export function installGroundFog() {
       float lid = max( uMist.x + roll, mistGround( vFogWorld.xz ) + uMist.y );
       // Thickening downward from the lid rather than upward from the ground is
       // what makes it collect rather than blanket.
-      float sink = clamp( ( lid - vFogWorld.y ) / ${DEPTH.toFixed(2)}, 0.0, 1.0 );
+      float sink = clamp( ( lid - vFogWorld.y ) / max( uMist.y, ${SOFT_MIN.toFixed(2)} ), 0.0, 1.0 );
       // It has to build with distance, or you are stood inside a solid wall of
       // it with your own boots fogged out.
       float mist = sink * ( 1.0 - exp( - vFogDepth * uMist.w ) ) * uMist.z;

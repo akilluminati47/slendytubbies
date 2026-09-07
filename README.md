@@ -279,7 +279,8 @@ Everything scattered on the ground is **one geometry drawn many times**, with al
 of the variety per-instance — a matrix and a colour. Modelling five kinds of tree
 costs five draw calls and still gives you five kinds of tree; deriving height,
 girth, taper and colour from the seeded generator gives you as many as you have
-instances, out of one. The whole map is 42 draw calls.
+instances, out of one. The whole map is under 30 draw calls and 640k triangles,
+about two thirds of which is grass.
 
 The numbers are real ones. A spruce runs 9–23 m here, and **age is a single
 number that drives everything else**: the big ones are the old ones, so they get
@@ -287,10 +288,11 @@ stout trunks, grey furrowed bark and wide lower whorls, while the young ones are
 thin red-brown whips. Crown radius is about an eighth of height, which is not
 just a look — the crown is what the placement grid keeps clear, so getting it
 wrong thins the whole forest out by making trees reject their own neighbours.
-Rocks come from three solids, squashed unevenly and half-buried. Grass is clumps
-at roughly one every metre and a half, which is a dead heath rather than a lawn,
-and casts no shadows: 16,000 tufts through the torch's depth pass would be the
-most expensive thing on the map in exchange for specks nobody could identify.
+Rocks come from three solids, squashed unevenly and half-buried. Grass is 46,000
+clumps, dense enough that neighbours touch — the difference between ground cover
+and a scattering of spikes — and casts no shadows, because putting that many
+tufts through the torch's depth pass would be the most expensive thing on the map
+in exchange for specks nobody could identify.
 
 ### Sky and weather
 
@@ -317,8 +319,12 @@ in it would look worse than none.
 
 The lid is the higher of an absolute height and a fixed hug above the ground, so
 it is a lake filling the hollows and a shallow layer everywhere else at the same
-time. It has a colour of its own, deliberately not the fog's: at night the fog is
-tuned nearly to black, and mist painted in that colour is black on black.
+time. Density ramps from the lid down, scaled by the layer's own thickness rather
+than by a fixed distance — with a fixed one the ground itself sat only a third of
+the way down the ramp on a clear night, so the mist could never be more than a
+suggestion no matter what it was told. It has a colour of its own, deliberately
+not the fog's: at night the fog is tuned nearly to black, and mist painted in
+that colour is black on black.
 
 ## Licence / credits
 

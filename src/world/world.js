@@ -210,23 +210,37 @@ export class World {
     for (let i = 0; i < CFG.world.custardCount; i++) {
       // Relax the spread if the map cannot satisfy it, rather than silently
       // dropping a tank and leaving the objective unwinnable.
+      const pick = () => {
+        let x, z;
+        do {
+          x = (this.rand() - 0.5) * s * 0.8;
+          z = (this.rand() - 0.5) * s * 0.8;
+        } while (Math.hypot(x, z) < 18);   // never in the player's lap
+        return [x, z];
+      };
+
       let spot = null;
-      for (let spread = SPREAD; spread >= 8 && !spot; spread -= 6) {
-        spot = this.place(CLEAR, 0, () => {
-          let x, z;
-          do {
-            x = (this.rand() - 0.5) * s * 0.8;
-            z = (this.rand() - 0.5) * s * 0.8;
-          } while (Math.hypot(x, z) < 18);   // never in the player's lap
-          return [x, z];
-        }, 200);
+      for (let spread = SPREAD; spread >= 6 && !spot; spread -= 5) {
+        spot = this.place(CLEAR, 0, pick, 200);
         if (spot && this.custards.some((c) => Math.hypot(c.pos.x - spot.x, c.pos.z - spot.z) < spread)) {
           spot = null;   // too close to a sibling; the stale grid entry is harmless
         }
       }
+      // Last resort: any free pocket at all, however close to a sibling.
+      //
+      // Ten dishes IS the objective, so a map that comes up nine is not a
+      // cosmetic shortfall - it is a run that cannot be finished, and the
+      // counter says so in the corner the whole time. It went from ten to nine
+      // the moment the map got busier (more rocks, and bigger ones), which is
+      // exactly the sort of thing that should not be able to reach the player
+      // through a scenery change. Spacing is a preference; the count is not.
+      if (!spot) spot = this.place(CLEAR, 0, pick, 900);
+      // And if even that fails the map is genuinely full, so take the pocket
+      // without reserving it rather than shipping an unwinnable round.
       if (!spot) {
-        console.warn('[world] could only place ' + this.custards.length + ' custard tanks');
-        break;
+        const [x, z] = pick();
+        spot = { x, z };
+        console.warn('[world] custard ' + (i + 1) + ' placed without a clear pocket');
       }
 
       const { group: g, meshes, halo, goop, height } = makeCustard();
