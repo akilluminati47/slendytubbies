@@ -125,7 +125,7 @@ export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } 
       .replace("#include <project_vertex>", `#include <project_vertex>
         // The world position, recovered from the view-space one. Instanced
         // meshes carry an extra matrix and these trunks and rocks are all
-        // instanced, so rebuilding it from `transformed` would be wrong for
+        // instanced, so rebuilding it from the local position would be wrong for
         // every one of them; undoing the view transform is right for all.
         vSurfWorld = cameraPosition + vec3(
           dot( mvPosition.xyz, viewMatrix[0].xyz ),

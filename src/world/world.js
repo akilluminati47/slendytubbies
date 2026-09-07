@@ -4,6 +4,7 @@ import { Sky } from "./sky.js";
 import { makeCustard } from "./custard.js";
 import { Rain } from "./rain.js";
 import { plantWorld } from "./flora.js";
+import { carve, GROUND } from "./surface.js";
 
 /** Deterministic PRNG so a seed always rebuilds the same wasteland. */
 export function rng(seed) {
@@ -103,6 +104,17 @@ export class World {
     const mat = new THREE.MeshStandardMaterial({
       color: 0x3d4a33, roughness: 1, metalness: 0, flatShading: true,
     });
+    // Ninety-six squares across two hundred metres is a facet every two metres,
+    // and a single flat green over it reads as felt. The relief is generated in
+    // the shader instead - see surface.js - which costs no texture, no UVs and
+    // no extra draw, and unlike a colour variation it answers to the torch as
+    // you sweep it about.
+    // Tuned by cranking it up and stopping where it looked right, rather than
+    // by picking a number: at the 0.45 it started on the gradient was there and
+    // doing nothing you could see, and walking it back to a "sensible" 2.2 lost
+    // it again. This is deliberately heavy - the ground is meant to read as
+    // uneven mossy soil you are standing in, not a lawn with a ripple on it.
+    carve(mat, GROUND, { bump: 5.5, mottle: 0.85, tint: 0x27301d });
     this.ground = new THREE.Mesh(geo, mat);
     this.ground.receiveShadow = true;
     this.scene.add(this.ground);
