@@ -47,13 +47,26 @@ const CSS = `
 #tuner pre { margin:7px 0 0; padding:6px 7px; border-radius:7px; font-size:10.5px;
   color:#98907f; background:rgba(0,0,0,.4); white-space:pre-wrap; word-break:break-all; }
 #tuner .hint { color:#6f6a5e; font-size:10.5px; margin-top:6px; }
+#tuner .wx { display:flex; gap:4px; margin-top:4px; }
+#tuner .wx button { margin-top:0; padding:4px 0; font-size:10px; color:#6f6a5e;
+  border-color:#3a4136; }
 `;
 
 /** Is the game running as a tuning bench rather than as a game? */
 export const TUNING = new URLSearchParams(location.search).has("tune");
 
+const SAVED = "slendytubbies.surface";
+
+/** Whatever was last set here, or null. */
+function readSaved() {
+  try { return JSON.parse(localStorage.getItem(SAVED) || "null"); } catch { return null; }
+}
+
+const WEATHERS = ["clear", "hazy", "overcast", "rain"];
+
 /**
  * @param hooks.setChaser  (on) => void - spawn or remove the monster
+ * @param hooks.getSky     () => Sky - the live sky, once a world exists
  */
 export function installTuner(hooks = {}) {
   if (!TUNING) return null;
@@ -85,6 +98,75 @@ export function installTuner(hooks = {}) {
     rows.push({ kind, label, bump: mk("bump", 0, 8, 0.05), mottle: mk("mottle", 0, 1, 0.01) });
     el.appendChild(grp);
   }
+
+  // --- time and weather --------------------------------------------------
+  // The light is most of what a surface looks like, so a bench that cannot
+  // change it can only tell you how the ground reads at whatever o'clock you
+  // happened to load. And the clock runs at a minute a second, so it has to be
+  // possible to stop it - otherwise the thing you are judging drifts under you
+  // while your hand is on the slider.
+  const sky = document.createElement("div");
+  sky.className = "grp";
+  sky.innerHTML = "<b>Sky</b>";
+  const timeRow = document.createElement("label");
+  timeRow.innerHTML = "<span>hour</span>";
+  const timeR = document.createElement("input");
+  timeR.type = "range"; timeR.min = 0; timeR.max = 23.99; timeR.step = 0.25;
+  timeR.value = 12;
+  const timeO = document.createElement("output");
+  timeRow.append(timeR, timeO);
+  sky.appendChild(timeRow);
+
+  const wx = document.createElement("div");
+  wx.className = "wx";
+  const wxButtons = WEATHERS.map((name) => {
+    const b = document.createElement("button");
+    b.textContent = name;
+    b.dataset.wx = name;
+    wx.appendChild(b);
+    return b;
+  });
+  sky.appendChild(wx);
+
+  const freeze = document.createElement("button");
+  let frozen = true;
+  const paintFreeze = () => {
+    freeze.textContent = frozen ? "Clock: held" : "Clock: running";
+    freeze.style.color = frozen ? "#c9e0cd" : "#8f8878";
+  };
+  freeze.addEventListener("click", () => { frozen = !frozen; paintFreeze(); });
+  paintFreeze();
+  sky.appendChild(freeze);
+  el.appendChild(sky);
+
+  const clock = () => hooks.getSky?.();
+  const paintTime = () => {
+    const h = +timeR.value;
+    timeO.textContent = `${String(Math.floor(h)).padStart(2, "0")}:` +
+      String(Math.floor((h % 1) * 60)).padStart(2, "0");
+  };
+  timeR.addEventListener("input", () => {
+    const s = clock();
+    if (s) s.hour = +timeR.value;
+    paintTime();
+  });
+  paintTime();
+
+  const setWeather = (name) => {
+    const s = clock();
+    if (!s) return;
+    s.weather = name;
+    // Snapped rather than eased. The game takes about half a minute to change
+    // its mind about the weather, which is right in play and useless here.
+    s.wet = { clear: 0, hazy: 0.35, overcast: 0.7, rain: 1 }[name];
+    s.rainfall = name === "rain" ? 1 : 0;
+    s.weatherLeft = 1e6;   // and it stays put
+    for (const b of wxButtons) {
+      b.style.color = b.dataset.wx === name ? "#c9e0cd" : "#6f6a5e";
+      b.style.borderColor = b.dataset.wx === name ? "#8fae82" : "#3a4136";
+    }
+  };
+  for (const b of wxButtons) b.addEventListener("click", () => setWeather(b.dataset.wx));
 
   // The monster is off while you tune, because you cannot look at a rock for
   // ninety seconds with something hunting you - and being caught mid-drag ends
@@ -118,16 +200,25 @@ export function installTuner(hooks = {}) {
   /** Everything carved of one kind - the ground is one material, rocks are three. */
   const of = (kind) => CARVED.filter((c) => c.kind === kind);
 
+  /**
+   * Where the sliders start.
+   *
+   * From whatever was last Set here if there is one, so a session resumes
+   * where the last one stopped instead of throwing the work away; otherwise
+   * from whatever the code currently sets, so they never snap the world
+   * somewhere else the moment they appear.
+   */
   const sync = () => {
+    const saved = readSaved();
     for (const row of rows) {
       const live = of(row.kind)[0];
       if (!live) continue;
-      // Adopt whatever the code currently sets, so the sliders start where the
-      // game is rather than snapping it somewhere else the moment they appear.
-      if (row.bump.r.value === "") return;
-      row.bump.r.value = live.u.uSurfBump.value;
-      row.mottle.r.value = live.u.uSurfMottle.value;
+      const was = saved?.[row.label.toLowerCase()];
+      row.bump.r.value = was ? was.bump : live.u.uSurfBump.value;
+      row.mottle.r.value = was ? was.mottle : live.u.uSurfMottle.value;
+      apply(row);
     }
+    if (saved) out.textContent = "resumed from your last Set";
   };
 
   const paint = () => {
@@ -176,6 +267,28 @@ export function installTuner(hooks = {}) {
     sync();
     paint();
   }, 200);
+
+  // Hold the clock, or follow it.
+  //
+  // The sky keeps its own time whether or not anybody is playing, at a minute a
+  // second - so without this the light walks a full hour past you every minute
+  // you spend on a slider, and the surface you decided on at noon is being
+  // judged at one o'clock by the time you have finished.
+  let armedSky = false;
+  const holdClock = () => {
+    const s = clock();
+    if (s) {
+      if (!armedSky) {
+        armedSky = true;
+        s.hour = +timeR.value;
+        setWeather(s.weather ?? "clear");
+      }
+      if (frozen) s.hour = +timeR.value;
+      else { timeR.value = s.hour; paintTime(); }
+    }
+    requestAnimationFrame(holdClock);
+  };
+  requestAnimationFrame(holdClock);
 
   return { rows, sync };
 }

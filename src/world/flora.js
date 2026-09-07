@@ -400,7 +400,10 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   // Bark, carved rather than painted. Furrows run up the trunk from its own
   // object space, so they climb the tree they are on instead of sliding as the
   // instance moves - and one material still covers all 420 of them.
-  const barkMat = carve(white(), BARK, { bump: 1.6, mottle: 0.34, tint: 0x14100b });
+  // Set on the bench. Almost no relief and all the colour: bark reads through
+  // its grain and its patchiness far more than through raised ridges, which at
+  // any strength worth seeing turned the trunks corrugated.
+  const barkMat = carve(white(), BARK, { bump: 0.75, mottle: 1, tint: 0x14100b });
   const trunks = new THREE.InstancedMesh(trunkGeometry(rand), barkMat, trees.length);
   const crowns = new THREE.InstancedMesh(crownGeometry(), white(), trees.length);
   trees.forEach((t, i) => {
@@ -449,7 +452,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     // Stone breaks rather than wearing, so its field is ridged and sharper than
     // the ground's. Object space again: the grain belongs to the boulder.
     const mesh = new THREE.InstancedMesh(
-      geo, carve(white(), ROCK, { bump: 1.4, mottle: 0.3, tint: 0x1a1a18 }), list.length);
+      geo, carve(white(), ROCK, { bump: 2, mottle: 1, tint: 0x1a1a18 }), list.length);
     list.forEach((r, i) => {
       q.setFromAxisAngle(v.set(...r.ax).normalize(), r.rot);
       mesh.setMatrixAt(i, m.compose(

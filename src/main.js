@@ -285,6 +285,7 @@ menuNav = new MenuNav(ui);
 
 // Sliders for the procedural surfaces, behind ?tune=1. A tool, not a feature.
 installTuner({
+  getSky: () => world?.sky,
   setChaser: (on) => {
     if (on) { if (!tubbies.length) spawnTubby("tinkywinky"); return; }
     for (const t of tubbies) t.dispose(scene);
