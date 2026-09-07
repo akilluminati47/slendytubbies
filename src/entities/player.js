@@ -97,10 +97,11 @@ export class Player {
 
   #showHeld(on) {
     if (!this.held) return;
-    // The shell stays visible either way - you are holding it whether or not it
-    // is lit - but the beam and the glow on the glass are the light itself.
-    this.held.beam.visible = on;
-    this.held.glow.visible = on;
+    // Away entirely when it is off. A dark torch held permanently in the corner
+    // of the screen is a prop you stop seeing, and it takes a quarter of the
+    // view with it; putting it away means switching the torch on is something
+    // that happens in your hand rather than only out in the world.
+    this.held.group.visible = on;
   }
 
   /** Yaw the player is actually facing, headset rotation included. */

@@ -161,6 +161,7 @@ export class Showcase {
       this.torch.group.parent?.remove(this.torch.group);
       this.torch = null;
     }
+    this.current.grip?.(0);
     if (Math.random() >= 0.10) return;
     let hand = null;
     this.current.root.traverse((o) => {
@@ -168,7 +169,11 @@ export class Showcase {
     });
     if (!hand) return;
     const t = makeTorch(torchFor(kind));
-    if (holdInHand(t, hand)) this.torch = t;
+    if (holdInHand(t, hand, this.current.root)) {
+      this.torch = t;
+      // And shut the hand round it, or it reads as balanced on an open palm.
+      this.current.grip?.(1);
+    }
   }
 
   /**

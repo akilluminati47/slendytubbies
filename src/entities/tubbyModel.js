@@ -78,6 +78,8 @@ const _dq = new THREE.Quaternion();
 const _dq2 = new THREE.Quaternion();
 const _scr = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+/** Which way a finger bends, in its own frame. Established by looking. */
+const GRIP_AXIS = new THREE.Vector3(1, 0, 0);
 // A hair of sink so the sole meets the ground rather than hovering on it.
 const FOOT_SINK = 0.01;
 
@@ -1028,6 +1030,20 @@ class RiggedTubby {
     this.spec = spec;
     this.lookYaw = 0;
     this.lookPitch = 0;
+
+    // The hand that can close round a torch. Two finger segments and a thumb -
+    // a mitten rather than a full hand, which is all a tubby has.
+    this.gripAmount = 0;
+    this.gripBones = [];
+    this.inner.traverse((o) => {
+      if (!o.isBone) return;
+      // The _end bones are leaf markers with nothing below them - rotating one
+      // moves no vertices and only makes the list longer.
+      if (/_end/i.test(o.name)) return;
+      if (/^fingers_r1/i.test(o.name)) this.gripBones.push([o, 0.85]);
+      else if (/^fingers_r2/i.test(o.name)) this.gripBones.push([o, 1.05]);
+      else if (/^thumb_r/i.test(o.name)) this.gripBones.push([o, -0.75]);
+    });
     this.play("idle", 0);
   }
 
@@ -1106,6 +1122,32 @@ class RiggedTubby {
       .premultiply(_pq.invert());
   }
 
+  /**
+   * Close the hand round something, or let it open again.
+   *
+   * Held like the head twist rather than applied here, because the mixer
+   * rewrites every bone it owns on each update and anything written before it
+   * runs is gone the same frame.
+   */
+  grip(amount = 1) {
+    this.gripAmount = THREE.MathUtils.clamp(amount, 0, 1);
+  }
+
+  /**
+   * Curl the fingers, in the bone's OWN frame.
+   *
+   * Post-multiplied rather than assigned: a finger's bend is a rotation
+   * relative to wherever the animation has already put it, so the walk cycle
+   * keeps swinging the arm and the hand simply stays shut while it does.
+   */
+  #closeHand() {
+    if (this.gripAmount <= 0.001) return;
+    for (const [bone, angle] of this.gripBones) {
+      _dq.setFromAxisAngle(GRIP_AXIS, angle * this.gripAmount);
+      bone.quaternion.multiply(_dq);
+    }
+  }
+
   play(name, fade = 0.25) {
     if (this.currentName === name) return;
     const clip = this.byState.get(name);
@@ -1134,9 +1176,10 @@ class RiggedTubby {
               : THREE.MathUtils.clamp(speed / own, 0.82, 2.45);
     this.mixer.update(dt);
     this.#plantFeet();
-    // After the mixer, always: it owns the head bone during every clip and
+    // After the mixer, always: it owns these bones during every clip and
     // anything written before it runs is overwritten the same frame.
     this.#turnHead();
+    this.#closeHand();
   }
 
   /**
@@ -1268,6 +1311,9 @@ class ProcTubby {
   }
 
   play(name) { this.state = name; }
+
+  /** No fingers on the stand-in, so there is nothing to close. */
+  grip() {}
 
   /** Same contract as the rigged model; the stand-in's head is a bare sphere. */
   look(yaw = 0, pitch = 0) {

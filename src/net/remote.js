@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 import { heightAt } from "../world/world.js";
+import { makeTorch, torchFor, holdInHand } from "../entities/torch.js";
 
 /**
  * Another player, drawn with the same tubby model the AI uses.
@@ -95,6 +96,22 @@ export class RemotePlayer {
     this.torchAim = new THREE.Object3D();
     this.torch.target = this.torchAim;
     scene.add(this.torch, this.torchAim);
+
+    // The torch in their hand, so a lit team-mate is visibly carrying the thing
+    // doing the lighting - and the Guardian is visibly the one with the lamp.
+    // Its beam cone is off: the SpotLight above already throws the light, and
+    // two shafts from two places on the same body reads as a bug.
+    let hand = null;
+    this.root.traverse((o) => {
+      if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
+    });
+    this.held = makeTorch(torchFor(role));
+    if (hand && holdInHand(this.held, hand, this.root)) {
+      this.held.beam.visible = false;
+      this.held.group.visible = false;
+    } else {
+      this.held = null;
+    }
 
     this.label = makeLabel(name, isHost);
     this.label.position.y = 2.25;
@@ -282,6 +299,9 @@ export class RemotePlayer {
   #aimTorch(ground) {
     const on = this.torchOn && !this.dead;
     this.torch.intensity = on ? CFG.player.torchIntensity : 0;
+    if (this.held) this.held.group.visible = on;
+    // Their hand closes on it and opens again when they put it away.
+    this.model.grip?.(on ? 1 : 0);
     if (!on) return;
     const y = ground + this.lift + EYE;
     this.torch.position.set(this.current.x, y, this.current.z);

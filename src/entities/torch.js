@@ -205,14 +205,36 @@ export function makeTorch(kind = "handheld") {
  * scales on these rigs are not 1, so the group is divided back out to keep the
  * prop life-sized whatever the hand it is attached to.
  */
-export function holdInHand(torch, bone) {
+export function holdInHand(torch, bone, root) {
   if (!bone) return false;
-  const s = new THREE.Vector3();
-  bone.getWorldScale(s);
-  const k = 1 / Math.max(1e-4, (s.x + s.y + s.z) / 3);
+
+  const pos = new THREE.Vector3(), rot = new THREE.Quaternion(), scl = new THREE.Vector3();
+  bone.updateWorldMatrix(true, false);
+  bone.matrixWorld.decompose(pos, rot, scl);
+  const k = 1 / Math.max(1e-4, (scl.x + scl.y + scl.z) / 3);
   torch.group.scale.setScalar(k);
-  torch.group.position.set(0, 0.02 * k, 0.06 * k);
-  torch.group.rotation.set(-Math.PI / 2, 0, 0);
+  // Sat in the middle of the palm. The bone's origin IS the palm, so the offset
+  // is nothing more than a nudge off the joint itself.
+  torch.group.position.set(0, 0, 0);
+
+  // Pointed where the character is looking, not down a finger.
+  //
+  // A fixed local rotation cannot do this: every one of these rigs orients its
+  // hand bone differently, and "rotate -90 about local X" meant something
+  // different on each - on these it put the lens through the knuckles. So the
+  // world orientation is chosen first (lens along the model's forward, which is
+  // +Z at yaw 0) and pushed back through the bone, exactly as the head twist
+  // does. The hand still swings the torch through the walk cycle afterwards,
+  // which is what you want - it is only the alignment that had to be right.
+  const forward = new THREE.Vector3(0, 0, 1);
+  if (root) {
+    root.updateWorldMatrix(true, false);
+    forward.applyQuaternion(
+      new THREE.Quaternion().setFromRotationMatrix(root.matrixWorld)).normalize();
+  }
+  const want = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), forward);
+  torch.group.quaternion.copy(rot.invert().multiply(want));
+
   bone.add(torch.group);
   return true;
 }
