@@ -20,6 +20,8 @@ import { RemotePlayer } from "./net/remote.js";
 
 const $ = (id) => document.getElementById(id);
 const SOLO_SEED = 20030815;
+/** Metres from the middle that a lobby's players start on. */
+const SPAWN_RING = 3.2;
 
 /* ------------------------------------------------------------------ engine */
 
@@ -107,21 +109,25 @@ function buildWorld(seed) {
   wrist = new WristHUD();
   spectator = new Spectator(camera, rig);
 
-  // Stand everybody a couple of metres apart.
+  // Stand everybody in a ring, looking at each other.
   //
   // Every player used to start on the origin, which meant a lobby began with
   // four tubbies occupying the same cubic metre and every camera looking at the
   // inside of somebody else's belly. It was survivable while a new round meant a
-  // page reload, because the others had not finished loading yet - restarting in
-  // place puts them all there at once and it is the first thing you see.
+  // page reload, because the others had not finished loading yet - restarting
+  // in place puts them all there at once and it is the first thing you see.
   //
-  // Placed by role rather than at random so it is the same on every client, and
-  // well inside the 18 m the dishes are kept clear of.
-  const spot = ["guardian", "laalaa", "po", "dipsy"].indexOf(myRole);
-  if (spot > 0) {
-    const a = (spot / 4) * Math.PI * 2;
-    player.pos.set(Math.sin(a) * 2.6, 0, Math.cos(a) * 2.6);
-  }
+  // Placed by role rather than at random so every client agrees without anybody
+  // having to transmit it, and turned to face the middle so the first thing a
+  // round shows you is the people you are doing it with. Well inside the 18 m
+  // the dishes are kept clear of.
+  const spot = Math.max(0, ["guardian", "laalaa", "po", "dipsy"].indexOf(myRole));
+  const a = (spot / 4) * Math.PI * 2;
+  player.pos.set(Math.sin(a) * SPAWN_RING, 0, Math.cos(a) * SPAWN_RING);
+  // Cameras face -Z, so a view yaw of `a` looks back along the radius at the
+  // centre - and therefore at everybody else.
+  input.yaw = a;
+  input.pitch = 0;
   game.total = world.custards.length;
   $("total").textContent = game.total;
 }
@@ -548,6 +554,9 @@ function restartRound(seed) {
   for (const r of remotes.values()) {
     r.setDead(false);
     r.seen = false;
+    // Blink them in again. A new round should look like arriving somewhere,
+    // not like the last one never stopped.
+    r.spawnIn();
   }
 
   game.found = 0;

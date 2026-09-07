@@ -39,6 +39,7 @@ const CLIP = {
 };
 
 const EYE = 1.45;          // torch height on the model, in metres
+const SPAWN_IN = 1.4;      // seconds of arriving before they are solid
 const _fwd = new THREE.Vector3();
 
 export class RemotePlayer {
@@ -97,6 +98,84 @@ export class RemotePlayer {
     this.label = makeLabel(name, isHost);
     this.label.position.y = 2.25;
     this.root.add(this.label);
+
+    // Their own copies of every material, so fading one avatar in cannot reach
+    // any other model built from the same cached character - the menu parade
+    // draws from that same cache.
+    this.mats = [];
+    this.root.traverse((o) => {
+      if ((!o.isMesh && !o.isSkinnedMesh) || o === this.label) return;
+      const own = (m) => {
+        const c = m.clone();
+        // clone() copies the documented properties and nothing else, and the
+        // belly screen lives entirely in an onBeforeCompile hook - lose that
+        // and the television goes back to being a photograph of static.
+        c.onBeforeCompile = m.onBeforeCompile;
+        c.customProgramCacheKey = m.customProgramCacheKey;
+        return c;
+      };
+      o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
+      const list = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of list) this.mats.push({ m, depth: m.depthWrite });
+    });
+
+    this.spawnLeft = 0;
+    this.spawnAge = 0;
+    this.blinkPhase = 0;
+    this.spawnIn();
+  }
+
+  /**
+   * Arrive, rather than simply be there.
+   *
+   * Somebody appearing in the world as a finished object at full opacity reads
+   * as a rendering glitch; a thing that blinks itself into existence reads as
+   * having arrived. The blink also does a job beyond the look - it is the only
+   * moment where you can be sure which of the shapes in the clearing just
+   * turned up, which matters most at the start of a round when everybody is
+   * stood together and none of the names are legible yet.
+   */
+  spawnIn() {
+    this.spawnLeft = SPAWN_IN;
+    this.spawnAge = 0;
+    this.blinkPhase = 0;
+  }
+
+  /**
+   * One frame of arriving.
+   *
+   * Transparency is turned on for the duration and off again at the end rather
+   * than left on: three sorts transparent objects separately and skips their
+   * depth write, and a tubby permanently in that bucket would draw through its
+   * own aerial. Toggling the flag costs nothing - it changes blend state, not
+   * the compiled program.
+   */
+  #materialise(dt) {
+    if (this.spawnLeft <= 0) return;
+    this.spawnLeft -= dt;
+    this.spawnAge += dt;
+    const done = this.spawnLeft <= 0;
+    const p = done ? 1 : 1 - this.spawnLeft / SPAWN_IN;
+
+    // A blink that closes up as it settles: fast and mostly-off to begin with,
+    // slower and mostly-on by the end, over a floor that rises to opaque.
+    //
+    // The phase is accumulated rather than computed as age x rate. Putting a
+    // falling rate inside the argument makes the phase quadratic, and its
+    // derivative goes negative near the end - the flicker literally runs
+    // backwards, which showed up as one long dark stretch where the settle
+    // should have been.
+    this.blinkPhase += dt * (30 - 18 * p);
+    const lit = Math.sin(this.blinkPhase) > 0.55 - p * 1.4;
+    const floor = p * p * p;
+    const v = done ? 1 : Math.min(1, floor + (lit ? 0.72 : 0.08) * (1 - floor));
+
+    for (const { m, depth } of this.mats) {
+      m.transparent = !done;
+      m.opacity = v;
+      m.depthWrite = done ? depth : false;
+    }
+    this.label.material.opacity = this.dead ? 0.35 : v;
   }
 
   apply({ pos, yaw, pitch, anim, lit }) {
@@ -192,6 +271,7 @@ export class RemotePlayer {
     this.model.update(dt, this.speed);
 
     this.#aimTorch(ground);
+    this.#materialise(dt);
 
     // Name tags face the viewer, and only the viewer.
     if (camera) this.label.quaternion.copy(camera.quaternion);
