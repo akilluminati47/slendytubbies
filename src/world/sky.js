@@ -234,22 +234,40 @@ export class Sky {
             // frequency has to be up here or the whole sky is two features and
             // reads as one soft smudge - which is exactly how the first pass
             // came out.
+            //
+            // Barely any domain warp. A strong one drags the field out into
+            // filaments, and filaments are half of why the second pass looked
+            // like something scraped out of a pumpkin.
             vec2 warp = vec2(fbm(deck * 0.8 + drift * 0.6),
                              fbm(deck * 0.8 + drift * 0.6 + 5.2)) - 0.5;
-            vec2 q = deck * 1.25 + drift + warp * 0.6;
+            vec2 q = deck * 1.15 + drift + warp * 0.14;
 
-            float body = billow(q);
+            // Plain fbm for the mass, NOT billow.
+            //
+            // Billow was the obvious choice and it is the wrong one here: its
+            // high values lie along ridges, so a tight threshold near the top
+            // selects ridge lines rather than lumps, and you get strings. fbm's
+            // maxima are rounded blobs, which is what a cumulus is.
+            float mass = fbm(q);
+            // The cauliflower edge comes from perturbing the THRESHOLD with a
+            // finer octave rather than from adding it to the mass. Added in, it
+            // just makes the whole cloud noisy; used as a wobble on the
+            // boundary, it scallops the outline and leaves the middle solid.
+            float scallop = (fbm(q * 3.3 + 11.0) - 0.5) * 0.13;
+            float body = mass - scallop;
             // Coverage as a threshold on the field: raising it grows cloud out
             // of a clear sky rather than fading a grey sheet over it.
-            float edge = mix(0.78, 0.30, uCloud.x);
+            // fbm sits around 0.5 with a much narrower spread than billow, so
+            // the thresholds are pulled in to match.
+            float edge = mix(0.60, 0.34, uCloud.x);
             // Deliberately tight. A wide ramp gives fog; cumulus have edges you
             // could cut yourself on, and that hard rim is most of the look.
-            float c = smoothstep(edge, edge + 0.085, body);
+            float c = smoothstep(edge, edge + 0.045, body);
 
             // How deep into the cloud this pixel is, which drives the shading:
             // white and blown out through the middle, greyer and bluer at the
             // thin edges where you are nearly seeing sky through it.
-            float depth = smoothstep(edge, edge + 0.30, body);
+            float depth = smoothstep(edge, edge + 0.16, body);
             vec3 cloudCol = mix(uCloudDark, uCloudLit, depth * depth * 0.75 + 0.25);
             // Undersides darken with the weather, never with the shape - an
             // overcast sky is a lid, a fair-weather one is a fleet.
