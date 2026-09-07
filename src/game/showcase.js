@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { setMist } from "../world/groundFog.js";
 import { sowGrass } from "../world/flora.js";
-import { makeTorch, torchFor, holdInHand } from "../entities/torch.js";
+import { makeTorch, torchFor, holdInHand, dropFromHand } from "../entities/torch.js";
 import { rng } from "../world/world.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 
@@ -157,17 +157,15 @@ export class Showcase {
    * alongside the model.
    */
   #maybeTorch(kind) {
-    if (this.torch) {
-      this.torch.group.parent?.remove(this.torch.group);
-      this.torch = null;
-    }
-    this.current.grip?.(0);
-    if (Math.random() >= 0.10) return;
     let hand = null;
     this.current.root.traverse((o) => {
       if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
     });
-    if (!hand) return;
+    // Clear THIS character's hand, not whichever one was filled last.
+    dropFromHand(hand);
+    this.torch = null;
+    this.current.grip?.(0);
+    if (!hand || Math.random() >= 0.10) return;
     const t = makeTorch(torchFor(kind));
     if (holdInHand(t, hand, this.current.root)) {
       this.torch = t;

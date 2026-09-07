@@ -39,6 +39,7 @@ const RIGS = {
     hold: [0.175, -0.145, -0.36],
     tilt: [0.05, -0.08, 0.10],
     lens: 0.115,           // metres from the group's origin to the glass
+    length: 0.21,          // how long it should end up when held in a hand
     cone: 3.4,
     angle: 0.44,           // matches the SpotLight exactly
   },
@@ -53,6 +54,7 @@ const RIGS = {
     hold: [0.20, -0.20, -0.26],
     tilt: [0.04, -0.06, 0.06],
     lens: 0.16,
+    length: 0.30,          // a lamp, but one a tubby can actually carry
     cone: 4.2,
     // A wider throw than the handheld, because it is a bigger lamp and should
     // look like one. The SpotLight is widened to match in Player.
@@ -172,6 +174,8 @@ function beamCone(len, angle) {
 export function makeTorch(kind = "handheld") {
   const rig = RIGS[kind] ?? RIGS.handheld;
   const group = new THREE.Group();
+  // Named so anything hanging one off a bone can find and strip the last one.
+  group.name = "torch:held";
 
   const model = cache?.[kind] ?? cache?.handheld;
   if (model) group.add(model.clone(true));
@@ -194,7 +198,7 @@ export function makeTorch(kind = "handheld") {
 
   group.position.set(...rig.hold);
   group.rotation.set(...rig.tilt);
-  return { group, beam, glow, angle: rig.angle, lens: rig.lens };
+  return { group, beam, glow, angle: rig.angle, lens: rig.lens, length: rig.length };
 }
 
 /**
@@ -207,15 +211,28 @@ export function makeTorch(kind = "handheld") {
  */
 export function holdInHand(torch, bone, root) {
   if (!bone) return false;
+  // Whatever was in this hand before goes first.
+  //
+  // The menu parade keeps ONE model per character and walks it past again and
+  // again, so a torch left on Laa-Laa's wrist is still there the next time she
+  // comes round. Tracking "the last torch attached" was not enough - by then it
+  // was somebody else's - and she came past holding two.
+  dropFromHand(bone);
 
   const pos = new THREE.Vector3(), rot = new THREE.Quaternion(), scl = new THREE.Vector3();
   bone.updateWorldMatrix(true, false);
   bone.matrixWorld.decompose(pos, rot, scl);
-  const k = 1 / Math.max(1e-4, (scl.x + scl.y + scl.z) / 3);
-  torch.group.scale.setScalar(k);
+
   // Sat in the middle of the palm. The bone's origin IS the palm, so the offset
   // is nothing more than a nudge off the joint itself.
   torch.group.position.set(0, 0, 0);
+  torch.group.scale.setScalar(1);
+
+  // A hand-held torch has no beam. The shaft is four metres long and drawn from
+  // the lens; hanging that off a wrist gives you a translucent girder swinging
+  // through the scene, which is most of what made the Guardian's look like a
+  // crowbar. The light itself comes from elsewhere in both cases that use this.
+  torch.beam.visible = false;
 
   // Pointed where the character is looking, not down a finger.
   //
@@ -236,7 +253,28 @@ export function holdInHand(torch, bone, root) {
   torch.group.quaternion.copy(rot.invert().multiply(want));
 
   bone.add(torch.group);
+
+  // Size it by measuring what came out, not by dividing by the bone's scale.
+  //
+  // That was the obvious way and it was wrong by a factor of twenty: these rigs
+  // carry scale at several joints and a rewritten set of inverse binds, so the
+  // hand's world scale is not the number that ends up applied to a child of it.
+  // The searchlight arrived five and a half metres long. Measuring the result
+  // and correcting it needs to know nothing about the chain at all.
+  torch.group.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(torch.group);
+  const size = box.getSize(new THREE.Vector3());
+  const longest = Math.max(size.x, size.y, size.z);
+  if (longest > 1e-5) torch.group.scale.setScalar(torch.length / longest);
   return true;
+}
+
+/** Take every torch out of a hand. Safe to call on a hand that has none. */
+export function dropFromHand(bone) {
+  if (!bone) return;
+  for (const child of [...bone.children]) {
+    if (child.name === "torch:held") bone.remove(child);
+  }
 }
 
 /** Which torch a role carries. The Guardian's is the big one. */

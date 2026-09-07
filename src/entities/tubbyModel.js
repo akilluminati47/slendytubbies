@@ -1040,9 +1040,11 @@ class RiggedTubby {
       // The _end bones are leaf markers with nothing below them - rotating one
       // moves no vertices and only makes the list longer.
       if (/_end/i.test(o.name)) return;
-      if (/^fingers_r1/i.test(o.name)) this.gripBones.push([o, 0.85]);
-      else if (/^fingers_r2/i.test(o.name)) this.gripBones.push([o, 1.05]);
-      else if (/^thumb_r/i.test(o.name)) this.gripBones.push([o, -0.75]);
+      // The rest quaternion is snapshotted with each bone, and it is the whole
+      // reason this works - see #closeHand.
+      if (/^fingers_r1/i.test(o.name)) this.gripBones.push([o, 0.85, o.quaternion.clone()]);
+      else if (/^fingers_r2/i.test(o.name)) this.gripBones.push([o, 1.05, o.quaternion.clone()]);
+      else if (/^thumb_r/i.test(o.name)) this.gripBones.push([o, -0.75, o.quaternion.clone()]);
     });
     this.play("idle", 0);
   }
@@ -1134,6 +1136,24 @@ class RiggedTubby {
   }
 
   /**
+   * Put the fingers back where the clip left them, before the mixer runs.
+   *
+   * Without this the hand whisks. #closeHand post-multiplies a curl onto the
+   * bone, which is right for a bone the mixer rewrites every frame and
+   * catastrophic for one it does not: these clips carry no finger tracks at
+   * all, so nothing ever put them back and the same rotation compounded sixty
+   * times a second until the fingers were spinning.
+   *
+   * Restoring first fixes both cases at once. A bone the mixer owns has its
+   * restore overwritten a moment later and gets the curl applied on top of the
+   * animated pose; a bone it does not own gets the curl applied to its rest
+   * pose. Neither accumulates.
+   */
+  #openHand() {
+    for (const [bone, , rest] of this.gripBones) bone.quaternion.copy(rest);
+  }
+
+  /**
    * Curl the fingers, in the bone's OWN frame.
    *
    * Post-multiplied rather than assigned: a finger's bend is a rotation
@@ -1174,6 +1194,8 @@ class RiggedTubby {
               // this stops reading as a run at all, and a little foot slide is a
               // cheaper lie than a monster wading towards you through treacle.
               : THREE.MathUtils.clamp(speed / own, 0.82, 2.45);
+    // Before the mixer, always: see #openHand.
+    this.#openHand();
     this.mixer.update(dt);
     this.#plantFeet();
     // After the mixer, always: it owns these bones during every clip and
