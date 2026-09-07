@@ -68,7 +68,7 @@ const NOON_HORIZON = new THREE.Color(0xe4eef7);
 const DUSK_HORIZON = new THREE.Color(0xc4713a);
 const CLOUD_LIT_DAY = new THREE.Color(0xffffff);
 const CLOUD_LIT_NIGHT = new THREE.Color(0x2b3243);
-const CLOUD_DARK_DAY = new THREE.Color(0xa8b6c6);
+const CLOUD_DARK_DAY = new THREE.Color(0xbfcdda);
 const CLOUD_DARK_NIGHT = new THREE.Color(0x171c2a);
 
 export class Sky {
@@ -108,6 +108,10 @@ export class Sky {
       uCloud: { value: new THREE.Vector3(0.35, 0.4, 0) },
       uCloudLit: { value: new THREE.Color(0xffffff) },
       uCloudDark: { value: new THREE.Color(0x59606b) },
+      // Two numbers off the world's own generator, so a lobby sharing a seed
+      // shares its cloud field as well as its trees - and two different rounds
+      // never open under the same sky.
+      uSeed: { value: new THREE.Vector2(rand() * 512, rand() * 512) },
     };
     this.material = new THREE.ShaderMaterial({
       side: THREE.BackSide,
@@ -125,6 +129,7 @@ export class Sky {
         uniform vec3 uZenith, uHorizon, uSunDir, uSunColor;
         uniform float uStars, uHaze, uTime;
         uniform vec3 uFog, uCloud, uCloudLit, uCloudDark;
+        uniform vec2 uSeed;
 
         float hash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -156,6 +161,20 @@ export class Sky {
             amp *= 0.5;
           }
           return v;
+        }
+
+        // Billow: folding each octave about its midpoint before summing gives
+        // rounded lobes piled on rounded lobes, which is what a cumulus is.
+        // Plain fbm gives smoke - fine for haze, useless for the big white
+        // ones.
+        float billow(vec2 p) {
+          float v = 0.0, amp = 0.5;
+          for (int i = 0; i < 5; i++) {
+            v += abs(vnoise(p) * 2.0 - 1.0) * amp;
+            p = p * 2.07 + 41.1;
+            amp *= 0.5;
+          }
+          return 1.0 - v;
         }
 
         void main() {
@@ -195,40 +214,58 @@ export class Sky {
           col += uSunColor * pow(max(sd, 0.0), 6.0) * 0.28;
 
           // --- cloud ----------------------------------------------------------
-          // Projected onto a flat deck overhead. Dividing by d.y is a pole at
-          // the horizon and it would smear the cloud into infinite streaks
-          // there, so the divisor is floored and the whole layer is faded out
-          // over the last fifteen degrees - which is also what really happens,
-          // cloud running into haze rather than meeting the ground.
+          // Big white cumulus on a vivid blue, with hard bright edges and a lot
+          // of light in them - glossy rather than moody. Everything here is
+          // driven off one billow field so the shape, the shading and the
+          // silver lining all agree about where the cloud is.
+          //
+          // Projected onto a flat deck overhead. Dividing by d.y alone is a
+          // pole at the horizon and it smeared the cloud into infinite streaks
+          // there, so the divisor is floored: the projection caps at about
+          // three and a half and features simply crowd together toward the
+          // treeline, which is what perspective on a real deck does anyway.
           if (d.y > 0.0 && uCloud.x > 0.01) {
-            // Softened pole. Dividing by d.y alone is unbounded as the view
-            // approaches the horizon, and it smeared the cloud into horizontal
-            // streaks all round the edge of the sky - the same failure the star
-            // field had. Adding a constant to the divisor caps the projection at
-            // about three and a half, so features stay features right down to
-            // the treeline and simply crowd together, which is what perspective
-            // on a real cloud deck does anyway.
-            vec2 deck = d.xz / (d.y + 0.28) * 1.7;
+            vec2 deck = d.xz / (d.y + 0.28) * 1.7 + uSeed;
             vec2 drift = vec2(uTime * 0.0042, uTime * 0.0016);
-            float f = fbm(deck * 0.42 + drift);
-            // Coverage as a threshold on the noise: raising it grows the cloud
-            // out of a clear sky instead of fading a grey sheet up over it.
-            float edge = mix(0.72, 0.24, uCloud.x);
-            float c = smoothstep(edge, edge + 0.22, f);
-            // Second, finer layer for the ragged edges.
-            c *= mix(1.0, 0.62 + 0.38 * smoothstep(0.28, 0.78, fbm(deck * 1.45 - drift * 2.1)),
-                     1.0 - uCloud.x * 0.7);
-            // Thicker cloud is darker underneath, and the whole layer dies into
-            // the horizon.
+
+            // A slow warp of the domain, so the lobes lean and pile instead of
+            // sitting in a grid of identical puffs.
+            // The deck only spans about six units corner to corner, so the
+            // frequency has to be up here or the whole sky is two features and
+            // reads as one soft smudge - which is exactly how the first pass
+            // came out.
+            vec2 warp = vec2(fbm(deck * 0.8 + drift * 0.6),
+                             fbm(deck * 0.8 + drift * 0.6 + 5.2)) - 0.5;
+            vec2 q = deck * 1.25 + drift + warp * 0.6;
+
+            float body = billow(q);
+            // Coverage as a threshold on the field: raising it grows cloud out
+            // of a clear sky rather than fading a grey sheet over it.
+            float edge = mix(0.78, 0.30, uCloud.x);
+            // Deliberately tight. A wide ramp gives fog; cumulus have edges you
+            // could cut yourself on, and that hard rim is most of the look.
+            float c = smoothstep(edge, edge + 0.085, body);
+
+            // How deep into the cloud this pixel is, which drives the shading:
+            // white and blown out through the middle, greyer and bluer at the
+            // thin edges where you are nearly seeing sky through it.
+            float depth = smoothstep(edge, edge + 0.30, body);
+            vec3 cloudCol = mix(uCloudDark, uCloudLit, depth * depth * 0.75 + 0.25);
+            // Undersides darken with the weather, never with the shape - an
+            // overcast sky is a lid, a fair-weather one is a fleet.
+            cloudCol = mix(cloudCol, uCloudDark, uCloud.y * (1.0 - depth) * 0.7);
+
+            // The silver lining: the sunward rim of every lobe catches the
+            // light, and the thinner the cloud is there the more comes through.
+            float rim = (1.0 - depth) * c;
+            cloudCol += uSunColor * pow(max(sd, 0.0), 2.0) * rim * 1.15 * max(uCloud.z, 0.0);
+            // And a general lift from above, so the tops read as lit rather
+            // than as flat paint.
+            cloudCol += vec3(0.10, 0.11, 0.13) * depth * max(uCloud.z, 0.0);
+
             // Faded into the horizon haze, but only over the last few degrees.
-            // At a quarter of the dome this was deleting most of the sky a
-            // standing player ever looks at, so an overcast sky came out as a
-            // few streaks near the zenith.
             c *= smoothstep(0.0, 0.10, d.y);
-            vec3 cloudCol = mix(uCloudLit, uCloudDark, uCloud.y * smoothstep(0.35, 0.95, f));
-            // Lit from wherever the sun is, so the tops catch it at dawn.
-            cloudCol += uSunColor * pow(max(sd, 0.0), 3.0) * 0.35 * max(uCloud.z, 0.0);
-            col = mix(col, cloudCol, c * 0.94);
+            col = mix(col, cloudCol, c * 0.97);
           }
 
           col = mix(col, uHorizon, uHaze * (1.0 - up) * 0.8);

@@ -114,7 +114,7 @@ export class World {
     // dark blotches, 2.2 was still busier than it wanted to be. Dialled live it
     // came out gentler than any of them: the ground should read as ground when
     // the torch crosses it and disappear the rest of the time.
-    carve(mat, GROUND, { bump: 0.8, mottle: 0.2, tint: 0x27301d });
+    carve(mat, GROUND, { bump: 0.15, mottle: 1, tint: 0x27301d });
     this.ground = new THREE.Mesh(geo, mat);
     this.ground.receiveShadow = true;
     this.scene.add(this.ground);
