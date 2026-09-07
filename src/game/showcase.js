@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { setMist } from "../world/groundFog.js";
 import { sowGrass } from "../world/flora.js";
-import { makeTorch, torchFor, holdInHand, dropFromHand } from "../entities/torch.js";
+import { makeTorch, torchFor, holdInHand, placeInHand, dropFromHand, gripPoseFor }
+  from "../entities/torch.js";
 import { rng } from "../world/world.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 
@@ -204,13 +205,18 @@ export class Showcase {
     // Clear THIS character's hand, not whichever one was filled last.
     dropFromHand(hand);
     this.torch = null;
-    this.current.grip?.(0);
+    this.current.grip?.(null);
+    this.current.afterPose = null;
     if (!hand || Math.random() >= (TORCH_CHANCE[kind] ?? 0)) return;
     const t = makeTorch(torchFor(kind));
     if (holdInHand(t, hand, this.current.root)) {
       this.torch = t;
       // And shut the hand round it, or it reads as balanced on an open palm.
-      this.current.grip?.(1);
+      this.current.grip?.(gripPoseFor(torchFor(kind)));
+      // Re-aimed after every pose, so the lamp hangs from its handle instead of
+      // rolling over with the arm.
+      const model = this.current;
+      model.afterPose = () => placeInHand(t, hand, model.root);
     }
   }
 

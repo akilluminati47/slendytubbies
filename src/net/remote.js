@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 import { heightAt } from "../world/world.js";
-import { makeTorch, torchFor, holdInHand } from "../entities/torch.js";
+import { makeTorch, torchFor, holdInHand, placeInHand, gripPoseFor }
+  from "../entities/torch.js";
 
 /**
  * Another player, drawn with the same tubby model the AI uses.
@@ -109,6 +110,13 @@ export class RemotePlayer {
     if (hand && holdInHand(this.held, hand, this.root)) {
       this.held.beam.visible = false;
       this.held.group.visible = false;
+      // Re-aimed after every pose. Held once and left, it inherits the arm -
+      // so a team-mate's beam would swing off wherever their wrist had rolled
+      // to, which is nothing to do with where they are looking.
+      const held = this.held;
+      this.model.afterPose = () => {
+        if (held.group.visible) placeInHand(held, hand, this.root);
+      };
     } else {
       this.held = null;
     }
@@ -300,8 +308,10 @@ export class RemotePlayer {
     const on = this.torchOn && !this.dead;
     this.torch.intensity = on ? CFG.player.torchIntensity : 0;
     if (this.held) this.held.group.visible = on;
-    // Their hand closes on it and opens again when they put it away.
-    this.model.grip?.(on ? 1 : 0);
+    // Their hand closes on it and opens again when they put it away - on the
+    // pose for the torch they are actually carrying, since the Guardian's hand
+    // goes over a handle where everyone else's shuts round a barrel.
+    this.model.grip?.(on ? gripPoseFor(torchFor(this.role)) : null);
     if (!on) return;
     const y = ground + this.lift + EYE;
     this.torch.position.set(this.current.x, y, this.current.z);

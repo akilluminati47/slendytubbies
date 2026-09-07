@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { makeTorch, holdInHand, dropFromHand } from "../entities/torch.js";
+import { makeTorch, holdInHand, placeInHand, dropFromHand } from "../entities/torch.js";
 
 /**
  * A bench for putting a torch in a hand, at ?torch=1.
@@ -148,15 +148,20 @@ export function installTorchBench({ showcase } = {}) {
     turn: 0,
     // Per torch kind, because the two are held differently and the whole point
     // is to settle both.
+    // The baked-in values are the starting point, so a fresh session opens on
+    // what the game actually ships rather than on zero - and anything Set here
+    // since then wins over both.
     torch: {
-      handheld: { side: 0, up: -0.022, forward: 0.055, rx: 0, ry: 0, rz: 0,
+      handheld: { side: -0.022, up: -0.044, forward: 0.22, rx: 0, ry: 0, rz: 0,
                   ...(saved.handheld?.torch ?? {}) },
-      searchlight: { side: 0, up: -0.05, forward: 0.018, rx: 0, ry: 0, rz: 0,
+      searchlight: { side: 0, up: -0.048, forward: 0.07, rx: 0, ry: 0, rz: 0,
                      ...(saved.searchlight?.torch ?? {}) },
     },
     grip: {
-      handheld: saved.handheld?.grip ?? [{}, {}, {}].map(() => ({ x: 0, y: 0, z: 0 })),
-      searchlight: saved.searchlight?.grip ?? [{}, {}, {}].map(() => ({ x: 0, y: 0, z: 0 })),
+      handheld: saved.handheld?.grip
+        ?? [[-4, 0, 0], [7, -4, 0], [9, -9, 0]].map(([x, y, z]) => ({ x, y, z })),
+      searchlight: saved.searchlight?.grip
+        ?? [[0, 0, 0], [7, 0, 0], [-79, -2, -11]].map(([x, y, z]) => ({ x, y, z })),
     },
   };
 
@@ -199,6 +204,8 @@ export function installTorchBench({ showcase } = {}) {
     torch.twist = [t.rx / DEG, t.ry / DEG, t.rz / DEG];
     holdInHand(torch, bone, model.root);
     torch.beam.visible = true;
+    // The same re-level the game does, so the bench is judging what ships.
+    model.afterPose = () => placeInHand(torch, bone, model.root);
   };
 
   const applyGrip = () => {

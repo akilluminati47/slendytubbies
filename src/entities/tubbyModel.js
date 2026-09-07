@@ -79,25 +79,6 @@ const _dq2 = new THREE.Quaternion();
 const _scr = new THREE.Vector3();
 const _eul = new THREE.Euler();
 const UP = new THREE.Vector3(0, 1, 0);
-/** Which way a finger bends, in its own frame. */
-const GRIP_AXIS = new THREE.Vector3(1, 0, 0);
-/**
- * Whether to close the hand round a held torch. It is off, and it is off
- * because these fingers do not bend.
- *
- * The rig does have them - Fingers_R1, Fingers_R2 and a thumb - and rotating
- * them does move the fingertip 19 cm toward the palm, which is why this looked
- * like it worked when it was measured rather than looked at. What it actually
- * does to the skin is shear the whole mitten into a long curved blade hanging
- * off the wrist. The weights on those bones cover far more of the hand than
- * their names suggest, so there is no rotation that reads as a curl: at full
- * strength it is a scythe, and by the point it is small enough not to be one
- * (about 0.15) it is not visibly closing anything either.
- *
- * Left in place rather than deleted because the machinery is right and only the
- * axis is a guess. Whoever works out the mitten's real bend axis flips this.
- */
-const GRIP_ENABLED = false;
 // A hair of sink so the sole meets the ground rather than hovering on it.
 const FOOT_SINK = 0.01;
 
@@ -1051,17 +1032,20 @@ class RiggedTubby {
 
     // The hand that can close round a torch. Two finger segments and a thumb -
     // a mitten rather than a full hand, which is all a tubby has.
-    this.gripAmount = 0;
     this.gripBones = [];
+    /** Run after every pose - see update(). Set by whoever hangs a prop on. */
+    this.afterPose = null;
     /**
-     * A hand-set pose for the mitten, or null to use gripAmount.
+     * How the mitten is posed, or null for an open hand.
      *
      * An array of {x, y, z} in radians, one per grip bone in gripBones order,
-     * post-multiplied onto whatever the clip left. This is the hook the torch
-     * bench writes to: the machinery for closing the hand has always been
-     * right and only the bend AXIS was ever a guess, so the way to settle it is
-     * to let somebody turn the bones by hand and watch the skin, which is
-     * exactly the check that was skipped the first time.
+     * post-multiplied onto whatever the clip left. It comes from the torch:
+     * gripPoseFor() in torch.js holds a pose per prop, dialled at ?torch=1.
+     *
+     * This replaced a single guessed bend axis with one angle scaled per bone,
+     * which spent its whole life switched off because nothing along that axis
+     * ever read as a closing hand. The pose that does is different per bone AND
+     * different per torch, so it was never going to be derived - only looked at.
      */
     this.gripPose = null;
     this.inner.traverse((o) => {
@@ -1071,9 +1055,10 @@ class RiggedTubby {
       if (/_end/i.test(o.name)) return;
       // The rest quaternion is snapshotted with each bone, and it is the whole
       // reason this works - see #closeHand.
-      if (/^fingers_r1/i.test(o.name)) this.gripBones.push([o, 0.85, o.quaternion.clone()]);
-      else if (/^fingers_r2/i.test(o.name)) this.gripBones.push([o, 1.05, o.quaternion.clone()]);
-      else if (/^thumb_r/i.test(o.name)) this.gripBones.push([o, -0.75, o.quaternion.clone()]);
+      // Order matters: it is the order a grip pose is written in.
+      if (/^fingers_r1/i.test(o.name)) this.gripBones.push([o, o.quaternion.clone()]);
+      else if (/^fingers_r2/i.test(o.name)) this.gripBones.push([o, o.quaternion.clone()]);
+      else if (/^thumb_r/i.test(o.name)) this.gripBones.push([o, o.quaternion.clone()]);
     });
     this.play("idle", 0);
   }
@@ -1156,12 +1141,15 @@ class RiggedTubby {
   /**
    * Close the hand round something, or let it open again.
    *
+   * Takes the pose itself - see gripPoseFor() in torch.js - rather than an
+   * amount, because how a hand shuts depends on what it is shutting round.
+   *
    * Held like the head twist rather than applied here, because the mixer
    * rewrites every bone it owns on each update and anything written before it
    * runs is gone the same frame.
    */
-  grip(amount = 1) {
-    this.gripAmount = THREE.MathUtils.clamp(amount, 0, 1);
+  grip(pose = null) {
+    this.gripPose = pose || null;
   }
 
   /**
@@ -1179,7 +1167,7 @@ class RiggedTubby {
    * pose. Neither accumulates.
    */
   #openHand() {
-    for (const [bone, , rest] of this.gripBones) bone.quaternion.copy(rest);
+    for (const [bone, rest] of this.gripBones) bone.quaternion.copy(rest);
   }
 
   /**
@@ -1190,22 +1178,12 @@ class RiggedTubby {
    * keeps swinging the arm and the hand simply stays shut while it does.
    */
   #closeHand() {
-    // A pose set by hand wins over the guessed axis, and ignores GRIP_ENABLED -
-    // that flag exists because nobody had found a bend that reads as a curl,
-    // and somebody sitting at the bench turning these bones IS that search.
-    if (this.gripPose) {
-      for (let i = 0; i < this.gripBones.length; i++) {
-        const a = this.gripPose[i];
-        if (!a) continue;
-        _dq.setFromEuler(_eul.set(a.x || 0, a.y || 0, a.z || 0));
-        this.gripBones[i][0].quaternion.multiply(_dq);
-      }
-      return;
-    }
-    if (!GRIP_ENABLED || this.gripAmount <= 0.001) return;
-    for (const [bone, angle] of this.gripBones) {
-      _dq.setFromAxisAngle(GRIP_AXIS, angle * this.gripAmount);
-      bone.quaternion.multiply(_dq);
+    if (!this.gripPose) return;
+    for (let i = 0; i < this.gripBones.length; i++) {
+      const a = this.gripPose[i];
+      if (!a) continue;
+      _dq.setFromEuler(_eul.set(a.x || 0, a.y || 0, a.z || 0));
+      this.gripBones[i][0].quaternion.multiply(_dq);
     }
   }
 
@@ -1243,6 +1221,11 @@ class RiggedTubby {
     // anything written before it runs is overwritten the same frame.
     this.#turnHead();
     this.#closeHand();
+    // And anything hung off a bone that has an opinion about the world rather
+    // than about the arm - a torch, which should keep pointing where its owner
+    // looks however the wrist has rolled. It has to be here, after the mixer,
+    // for the same reason the head twist and the grip are.
+    this.afterPose?.();
   }
 
   /**

@@ -58,10 +58,12 @@ const RIGS = {
     length: 0.23,          // how long it should end up when held in a hand
     // Off the measured grip, in the character's own axes. The measurement puts
     // the torch on the palm; WHERE along the torch the hand sits is a judgement
-    // about how it looks, and this is that judgement - dialled on the bench at
-    // ?torch=1 rather than guessed.
-    nudge: { side: 0, up: -0.022, forward: 0.055 },
+    // about how it looks, so it was dialled at ?torch=1 rather than guessed.
+    nudge: { side: -0.022, up: -0.044, forward: 0.22 },
     twist: [0, 0, 0],
+    // And how the mitten closes on it. Also dialled, also not guessable - see
+    // GRIPS below.
+    grip: [[-4, 0, 0], [7, -4, 0], [9, -9, 0]],
     handBeam: HAND_BEAM,   // and how far its shaft carries when carried
     cone: 3.4,
     angle: 0.44,           // matches the SpotLight exactly
@@ -84,8 +86,11 @@ const RIGS = {
     handle: true,
     // Mostly down: a lamp hangs off the handle rather than sitting level with
     // it, and a touch forward so the housing clears the hand.
-    nudge: { side: 0, up: -0.05, forward: 0.018 },
+    nudge: { side: 0, up: -0.048, forward: 0.07 },
     twist: [0, 0, 0],
+    // The thumb goes right over the handle on this one - it is a bar you wrap a
+    // hand round, not a barrel you close a fist on.
+    grip: [[0, 0, 0], [7, 0, 0], [-79, -2, -11]],
     handBeam: HAND_BEAM,
     cone: 4.2,
     // A wider throw than the handheld, because it is a bigger lamp and should
@@ -368,6 +373,9 @@ function worldScale(obj) {
     + Math.hypot(e[8], e[9], e[10])) / 3;
 }
 
+/** How much of the lens assembly's depth counts as its front disc. */
+const LENS_SLAB = 0.18;
+
 /** The top fraction of a lamp that is its carry handle. */
 const HANDLE_SLAB = 0.8;
 
@@ -397,21 +405,56 @@ function measureProp(torch, hasHandle) {
   torch.group.updateWorldMatrix(true, true);
   const inv = new THREE.Matrix4().copy(torch.group.matrixWorld).invert();
   const pts = [];
+  let glass = null;
   torch.body.traverse((m) => {
     const pos = m.geometry?.attributes?.position;
     if (!pos) return;
     toGroup.multiplyMatrices(inv, m.matrixWorld);
+    // A mesh the author called glass is the lens, and knowing exactly where
+    // that is beats inferring it from the outline of the whole prop.
+    const isLens = /glass|lens/i.test(m.name);
+    if (isLens) glass = glass ?? [];
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos, i).applyMatrix4(toGroup);
       box.expandByPoint(v);
+      if (isLens) glass.push(v.clone());
       if (hasHandle) pts.push(v.clone());
     }
   });
   if (box.isEmpty()) return;
 
-  // The lens looks down -Z, so the glass is the box's -Z face, centred.
-  const mid = box.getCenter(new THREE.Vector3());
-  torch.beam.position.set(mid.x, mid.y, box.min.z);
+  // The lens: the middle of the disc you can actually see.
+  //
+  // Three goes at this. The front face of the whole PROP is only an
+  // approximation - the searchlight's housing is wider and taller than its
+  // glass - and the front face of the glass mesh is not much better, because
+  // that mesh is the whole lens assembly, a dome over a reflector cone a fifth
+  // of its own length deep. A box round it has a centre that is not on the
+  // disc.
+  //
+  // So take the glass vertices nearest the front and average those: the rim and
+  // the dome, which is the circle a viewer sees lit. The housing box stays as
+  // the fallback for a model whose author did not name the glass separately,
+  // which is what the flashlight is.
+  const mid = new THREE.Vector3();
+  let lensZ;
+  if (glass?.length) {
+    let front = Infinity, back = -Infinity;
+    for (const q of glass) { front = Math.min(front, q.z); back = Math.max(back, q.z); }
+    const slab = front + (back - front) * LENS_SLAB;
+    let n = 0;
+    for (const q of glass) {
+      if (q.z > slab) continue;
+      mid.add(q);
+      n++;
+    }
+    if (n) mid.divideScalar(n);
+    lensZ = front;
+  } else {
+    box.getCenter(mid);
+    lensZ = box.min.z;
+  }
+  torch.beam.position.set(mid.x, mid.y, lensZ);
   torch.glow.position.copy(torch.beam.position);
 
   if (!hasHandle) return;
@@ -421,6 +464,57 @@ function measureProp(torch, hasHandle) {
   const anchor = new THREE.Vector3();
   for (const q of top) anchor.add(q);
   torch.anchor = anchor.divideScalar(top.length);
+}
+
+const _p = new THREE.Vector3();
+const _s = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+
+/** Which way the character is looking, in world space. */
+function facing(root) {
+  const forward = new THREE.Vector3(0, 0, 1);
+  if (!root) return forward;
+  root.updateWorldMatrix(true, false);
+  return forward.applyQuaternion(
+    _q.setFromRotationMatrix(root.matrixWorld)).normalize();
+}
+
+/**
+ * Point the torch where the character is looking, with its handle on top.
+ *
+ * Not down a finger. A fixed local rotation cannot do this - every one of these
+ * rigs orients its hand bone differently, and "rotate -90 about local X" meant
+ * something different on each; on these it put the lens through the knuckles.
+ * So the WORLD orientation is chosen and pushed back through the bone, exactly
+ * as the head twist does.
+ *
+ * A whole basis, not the shortest rotation between two vectors.
+ * setFromUnitVectors(-Z, forward) says nothing about roll, and when the
+ * character faces +Z - which is every one of them on the menu stage - those two
+ * are ANTIPARALLEL, so the axis is degenerate and three picks a perpendicular
+ * for you. Naming the up axis as well makes it a basis with one answer.
+ */
+function aim(torch, bone, root) {
+  const forward = facing(root);
+  const zAxis = forward.clone().negate();
+  const xAxis = new THREE.Vector3().crossVectors(UP, zAxis);
+  // Looking straight up or down would leave no cross product to work with.
+  if (xAxis.lengthSq() < 1e-8) xAxis.set(1, 0, 0);
+  xAxis.normalize();
+  const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+  const want = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
+
+  bone.updateWorldMatrix(true, false);
+  bone.matrixWorld.decompose(_p, _q, _s);
+  torch.group.quaternion.copy(_q.invert().multiply(want));
+  // A hand-set roll/pitch/yaw on top, in the torch's OWN frame - post-
+  // multiplied, so "turn it a bit" means the same thing from any angle.
+  if (torch.twist.some((a) => a !== 0)) {
+    torch.group.quaternion.multiply(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(...torch.twist)));
+  }
+  return forward;
 }
 
 export function holdInHand(torch, bone, root) {
@@ -433,10 +527,6 @@ export function holdInHand(torch, bone, root) {
   // was somebody else's - and she came past holding two.
   dropFromHand(bone);
 
-  const pos = new THREE.Vector3(), rot = new THREE.Quaternion(), scl = new THREE.Vector3();
-  bone.updateWorldMatrix(true, false);
-  bone.matrixWorld.decompose(pos, rot, scl);
-
   torch.group.position.set(0, 0, 0);
   torch.group.scale.setScalar(1);
 
@@ -446,38 +536,15 @@ export function holdInHand(torch, bone, root) {
   // off a wrist - and created a worse problem: a small unlit black object held
   // low against a dark body is invisible, which is exactly how it looked. The
   // cone is scaled instead, so it keeps its angle and loses its reach, and a
-  // carried torch reads as a carried torch from across the lane. Its scale is
-  // set below, once we know what the group's own scale ended up as.
+  // carried torch reads as a carried torch from across the lane.
   torch.beam.visible = true;
   torch.beam.scale.setScalar(1);
-  // The glass reads brighter too, for the same reason. Its size is set below.
   torch.glow.material.opacity = 1;
 
-  // Pointed where the character is looking, not down a finger.
-  //
-  // A fixed local rotation cannot do this: every one of these rigs orients its
-  // hand bone differently, and "rotate -90 about local X" meant something
-  // different on each - on these it put the lens through the knuckles. So the
-  // world orientation is chosen first (lens along the model's forward, which is
-  // +Z at yaw 0) and pushed back through the bone, exactly as the head twist
-  // does. The hand still swings the torch through the walk cycle afterwards,
-  // which is what you want - it is only the alignment that had to be right.
-  const forward = new THREE.Vector3(0, 0, 1);
-  if (root) {
-    root.updateWorldMatrix(true, false);
-    forward.applyQuaternion(
-      new THREE.Quaternion().setFromRotationMatrix(root.matrixWorld)).normalize();
-  }
-  const want = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), forward);
-  torch.group.quaternion.copy(rot.invert().multiply(want));
-  // A hand-set roll/pitch/yaw on top, in the torch's OWN frame - post-
-  // multiplied, so "turn it a bit" means the same thing from any angle.
-  if (torch.twist.some((a) => a !== 0)) {
-    torch.group.quaternion.multiply(
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(...torch.twist)));
-  }
-
   bone.add(torch.group);
+  // Aimed before it is measured, because the box it is sized by is an
+  // axis-aligned one and so depends on which way the thing is pointing.
+  aim(torch, bone, root);
 
   // Size it by measuring what came out, not by dividing by the bone's scale.
   //
@@ -496,14 +563,48 @@ export function holdInHand(torch, bone, root) {
   const longest = worldSpan(torch.body ?? torch.group);
   if (longest > 1e-5) torch.group.scale.setScalar(torch.length / longest);
 
-  // And now slide the group so the torch you can SEE rests on the palm.
+  // And the same treatment for the shaft and the glass, for the same reason.
+  //
+  // Working the beam's scale out from the group's - cone * k, and solve - is
+  // the crowbar mistake wearing a different hat: it leaves out every scale
+  // between the bone and the world, which on these rigs is a factor of two.
+  // Measuring what actually came out needs to know nothing about the chain.
+  const reach = worldSpan(torch.beam);
+  if (reach > 1e-5) torch.beam.scale.multiplyScalar(torch.handBeam / reach);
+  const lens = worldSpan(torch.glow);
+  if (lens > 1e-5) torch.glow.scale.multiplyScalar(torch.length * 0.42 / lens);
+
+  placeInHand(torch, bone, root);
+  return true;
+}
+
+/**
+ * Aim a held torch and sit it in the palm. Every frame, after the mixer.
+ *
+ * Doing this once at attach was only ever right for the pose the character
+ * happened to be in at that instant. A torch is a CHILD of the hand bone, so
+ * from the next frame on it inherits whatever the arm is doing - which is how
+ * the Guardian came to carry a heavy searchlight cocked over at forty-five
+ * degrees, and why its roll changed as she walked. A lamp hangs from its handle
+ * whatever the wrist is doing, and a beam points where its owner is looking
+ * rather than where their wrist has rolled to.
+ *
+ * The POSITION still follows the hand - it is measured from the palm, and the
+ * palm swings with the arm - so a carried lamp still travels through the walk
+ * cycle. It is only the orientation that is taken off the world instead.
+ */
+export function placeInHand(torch, bone, root) {
+  if (!bone || torch.group.parent !== bone) return false;
+  const forward = aim(torch, bone, root);
+  torch.group.updateWorldMatrix(true, true);
+
+  // Slide the group so the torch you can SEE rests on the palm.
   //
   // Putting the group's ORIGIN there is not the same thing - these rips carry
   // their own pivots, and this one's is off the back of the barrel - and
   // putting the body's CENTRE there is not it either: that is the middle of the
   // hand's VOLUME, so the barrel ends up buried inside the mitten. Two points
   // have to meet: somewhere on the hand, and somewhere on the torch.
-  torch.group.updateWorldMatrix(true, true);
   const grip = handGrip(bone, root);
   const palmWorld = bone.localToWorld(grip.point.clone());
   const dirWorld = bone.localToWorld(grip.point.clone().add(grip.dir))
@@ -549,17 +650,6 @@ export function holdInHand(torch, bone, root) {
   const origin = new THREE.Vector3().setFromMatrixPosition(torch.group.matrixWorld);
   torch.group.position.copy(bone.worldToLocal(
     origin.add(contact).sub(hold).add(nudge)));
-
-  // And the same treatment for the shaft and the glass, for the same reason.
-  //
-  // Working the beam's scale out from the group's - cone * k, and solve - is
-  // the crowbar mistake wearing a different hat: it leaves out every scale
-  // between the bone and the world, which on these rigs is a factor of two.
-  // Measuring what actually came out needs to know nothing about the chain.
-  const reach = worldSpan(torch.beam);
-  if (reach > 1e-5) torch.beam.scale.multiplyScalar(torch.handBeam / reach);
-  const glass = worldSpan(torch.glow);
-  if (glass > 1e-5) torch.glow.scale.multiplyScalar(torch.length * 0.42 / glass);
   return true;
 }
 
@@ -569,6 +659,26 @@ export function dropFromHand(bone) {
   for (const child of [...bone.children]) {
     if (child.name === "torch:held") bone.remove(child);
   }
+}
+
+/**
+ * How the mitten closes on each torch, in radians, one entry per grip bone.
+ *
+ * Dialled by hand at ?torch=1 and then baked, because there was no deriving it:
+ * the bend that reads as a hand closing is different for the two props - a fist
+ * round a barrel is not the same shape as a hand over a carry handle - and it is
+ * different per bone, which is why the single guessed axis this replaces
+ * (GRIP_AXIS, one angle scaled per bone) could never have got there. It spent
+ * the whole time switched off because at any strength that closed the hand it
+ * sheared the mitten into a blade instead.
+ *
+ * Degrees in the table, radians out; the table is what a person reads.
+ */
+const RAD = Math.PI / 180;
+
+export function gripPoseFor(kind) {
+  const rows = RIGS[kind]?.grip ?? RIGS.handheld.grip;
+  return rows.map(([x, y, z]) => ({ x: x * RAD, y: y * RAD, z: z * RAD }));
 }
 
 /** Which torch a role carries. The Guardian's is the big one. */
