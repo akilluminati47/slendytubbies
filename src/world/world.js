@@ -109,12 +109,13 @@ export class World {
     // the shader instead - see surface.js - which costs no texture, no UVs and
     // no extra draw, and unlike a colour variation it answers to the torch as
     // you sweep it about.
-    // Tuned by cranking it up and stopping where it looked right, rather than
-    // by picking a number: at the 0.45 it started on the gradient was there and
-    // doing nothing you could see, and walking it back to a "sensible" 2.2 lost
-    // it again. This is deliberately heavy - the ground is meant to read as
-    // uneven mossy soil you are standing in, not a lawn with a ripple on it.
-    carve(mat, GROUND, { bump: 5.5, mottle: 0.85, tint: 0x27301d });
+    // Found by cranking it to 6 to prove the effect was working at all, then
+    // walking it back until it stopped announcing itself. At 5.5 the ground was
+    // a mass of dark blotches; at the 0.45 it started on it was doing nothing
+    // you could see. This is the restrained end of the range on purpose - the
+    // relief should be something you notice when the torch crosses it, not a
+    // pattern you look at.
+    carve(mat, GROUND, { bump: 2.2, mottle: 0.5, tint: 0x27301d });
     this.ground = new THREE.Mesh(geo, mat);
     this.ground.receiveShadow = true;
     this.scene.add(this.ground);
