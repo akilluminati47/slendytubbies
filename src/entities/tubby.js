@@ -323,11 +323,22 @@ export class Tubby {
     return facing || !fleeing;
   }
 
-  /** Close behind and hunting: what the "it is right there" cue asks about. */
-  onYourHeels(player) {
-    if (this.state !== "chase" || !player.alive) return false;
+  /**
+   * Is it hunting this player, looking straight at them, with a clear line?
+   *
+   * What the "oh god it has seen me" cue asks about. Deliberately not a
+   * distance test: being noticed from across a clearing is the moment worth
+   * reacting to, and it is a worse one than being noticed at arm's length
+   * because there is still a whole clearing to get across.
+   *
+   * The line of sight matters as much as the angle. A tubby locked onto you
+   * through a trunk is not looking at you in any sense you could react to.
+   */
+  eyesOnYou(player) {
+    if (this.state !== "chase" || !player?.alive) return false;
+    if (!this.#inCone(player.pos)) return false;
     const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
-    return d < T.heelsRange;
+    return !this.#blocked(player.pos, d);
   }
 
   #enter(state, at) {

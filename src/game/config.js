@@ -93,8 +93,6 @@ export const CFG = {
     // Degrees off your view direction that still counts as looking at it. Turn
     // far enough to see what is behind you and it can have you.
     lookAngle: 62,
-    // Close enough behind that catching sight of it should land like a shock.
-    heelsRange: 7.5,
     loseInterest: 6.0,    // seconds without a fix before giving up
     // --- being startled ---------------------------------------------------
     // Loud enough to make it stop dead and look. A jump is 34 m of noise and a

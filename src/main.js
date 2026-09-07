@@ -464,27 +464,41 @@ function endGame(kind, headline, detail) {
  * sound stops, and the card lands in the silence afterwards.
  */
 /**
- * The sound for realising it is right there.
+ * The noise you make when it looks up and it is looking at you.
  *
- * Not on proximity alone - it is behind you for most of a run and a noise every
- * time would be wallpaper. It fires on the turn: close, hunting, and now inside
- * your view. Once per chase, so glancing back and forth does not machine-gun it.
+ * This is the player's own reaction, not the monster's - it belongs to the
+ * moment of realising, which is why it is a single involuntary sound and not
+ * something that tracks the threat. The heart underneath it does that job, and
+ * does it far better than a recording could: it is synthesised, it is already
+ * running, and it quickens as the thing closes.
+ *
+ * Four conditions, and distance is pointedly not among them. It has to be
+ * hunting you, it has to have you in its cone, you have to be facing it, and
+ * there has to be nothing in between. Being picked out from the far side of a
+ * clearing is the moment worth flinching at - arguably the worse one, since
+ * there is still a whole clearing to get across - and the old version fired
+ * only inside seven and a half metres, by which point the realisation is
+ * academic.
+ *
+ * Once per chase. The flag clears when it gives up, so glancing back and forth
+ * at something that is already after you does not machine-gun it.
  */
 function checkSpotted(dt) {
   if (!player?.alive || spectating) return;
+  // You cannot flinch at what you cannot make out, and the fog decides that -
+  // which moves with the weather and the hour, exactly as it should.
+  const canSee = scene.fog ? scene.fog.far : 40;
   for (const t of tubbies) {
-    if (!t.onYourHeels(player)) { t.seenCue = false; continue; }
+    if (!t.eyesOnYou(player)) { t.seenCue = false; continue; }
     if (t.seenCue) continue;
     const dx = t.pos.x - player.pos.x, dz = t.pos.z - player.pos.z;
     const d = Math.hypot(dx, dz) || 1e-6;
+    if (d > canSee) continue;
+    // Three.js cameras face -Z, so at yaw t the view runs along (-sin t, -cos t).
     const look = (-Math.sin(input.yaw) * dx + -Math.cos(input.yaw) * dz) / d;
     if (look < Math.cos(CFG.tubby.lookAngle * Math.PI / 180)) continue;
     t.seenCue = true;
     input.gamepad.rumble(0.7, game.elapsed);
-    // Just the shock. The heart underneath it is synthesised and already
-    // running - it tracks the threat continuously and speeds up as the thing
-    // closes, which a recording cannot do, and laying a fixed loop over the top
-    // only fought it.
     audio.playSample("jumpscare", 0.8);
   }
 }
