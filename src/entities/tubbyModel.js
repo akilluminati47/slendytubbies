@@ -79,6 +79,7 @@ const _dq = new THREE.Quaternion();
 const _dq2 = new THREE.Quaternion();
 const _scr = new THREE.Vector3();
 const _eul = new THREE.Euler();
+const _sole = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 // A hair of sink so the sole meets the ground rather than hovering on it.
 const FOOT_SINK = 0.01;
@@ -102,8 +103,20 @@ const AIRBORNE = 0.17;
 const LEVEL_DOWN = 1.0;
 const LEVEL_AIR = 0.5;
 
-/** How far the pelvis is allowed to drop to keep a downhill foot reachable. */
+/** How far the pelvis is allowed to move to keep a foot reachable. */
 const PELVIS_LIMIT = 0.55;
+
+/**
+ * How far above the weight-bearing foot the other one has to be before it
+ * counts as swinging rather than as standing, in metres.
+ */
+const STANCE = 0.12;
+
+/** How much the toes are squared while a foot is still in the air. */
+const SQUARE_AIR = 0.55;
+
+/** How fast the body settles onto a new height, per second. */
+const PELVIS_EASE = 40;
 
 export const TUBBIES = {
   tinkywinky: { color: 0x6b3fa0, aerial: "triangle" },
@@ -1065,6 +1078,16 @@ class RiggedTubby {
     this.legRest = this.legs.flatMap((l) =>
       [l.hip, l.knee, l.ankle].map((b) => [b, b.quaternion.clone()]));
 
+    // The underside of each foot, as points rather than as one number.
+    //
+    // soleDrop is a single distance measured in the bind pose, and it is only
+    // the truth while the foot is flat: pitch a toe down and the tip of it goes
+    // below that estimate, which is how a sole ended up five centimetres inside
+    // the stage even with a floor clamp. A point per foot bone, taken in bind
+    // space and carried by the bone, is exact in any pose - and it is four
+    // points to transform, not four thousand vertices.
+    for (const leg of this.legs) leg.soles = this.#soleOf([leg.ankle, leg.toe]);
+
     /**
      * Where the ground is under a point: (x, z) => world y, or null for a flat
      * floor at the root's own height.
@@ -1084,6 +1107,19 @@ class RiggedTubby {
      * terrain up to the waist. Off the ground, the clip owns the legs.
      */
     this.lift = 0;
+
+    /**
+     * How hard the toes are squared to the walk direction, 0 to 1.
+     *
+     * One for anybody you are meant to read as a person walking, zero for the
+     * chaser - the clips are not mirrored and its uneven kick is the one place
+     * that reads as character rather than as a rig fault.
+     */
+    this.squareFeet = 1;
+
+    /** The settled body height from the ground fit, and where it is heading. */
+    this.pelvisY = 0;
+    this.pelvisWant = 0;
 
     // The jumpscare needs to know where to point the camera.
     this.sockets = mine.sockets;
@@ -1287,8 +1323,11 @@ class RiggedTubby {
     this.#openHand();
     this.#straightenLegs();
     this.mixer.update(dt);
-    this.#plantFeet();
-    this.#standOnGround();
+    // One of the two owns the body's height, never both. #standOnGround knows
+    // where the soles actually are; #plantFeet is the fallback for a rig with
+    // no leg chains to solve, and for anything in mid-air.
+    if (this.legs.length && this.lift <= 0.02) this.#standOnGround(dt);
+    else this.#plantFeet();
     // After the mixer, always: it owns these bones during every clip and
     // anything written before it runs is overwritten the same frame.
     this.#turnHead();
@@ -1344,6 +1383,52 @@ class RiggedTubby {
       this.root.position.y - lowest + this.soleDrop - FOOT_SINK;
   }
 
+  /**
+   * The lowest vertex each of these bones drives, in that bone's own space.
+   *
+   * Bind space, so it is pose-independent, and weight-gated so a vertex only
+   * counts for the bone that actually carries it.
+   */
+  #soleOf(bones) {
+    const out = [];
+    const v = new THREE.Vector3();
+    for (const bone of bones) {
+      let best = null;
+      this.inner.traverse((skin) => {
+        if (!skin.isSkinnedMesh) return;
+        const bi = skin.skeleton.bones.indexOf(bone);
+        if (bi < 0) return;
+        const inv = skin.skeleton.boneInverses[bi];
+        const { position, skinIndex, skinWeight } = skin.geometry.attributes;
+        if (!skinIndex || !skinWeight) return;
+        for (let i = 0; i < position.count; i++) {
+          let w = 0;
+          for (let j = 0; j < 4; j++) {
+            if (skinIndex.getComponent(i, j) === bi) w += skinWeight.getComponent(i, j);
+          }
+          if (w < 0.5) continue;
+          v.fromBufferAttribute(position, i).applyMatrix4(skin.bindMatrix);
+          const y = v.y;
+          v.applyMatrix4(inv);
+          if (!best || y < best.y) best = { y, local: v.clone() };
+        }
+      });
+      if (best) out.push([bone, best.local]);
+    }
+    return out;
+  }
+
+  /** How high this leg's sole is, in world metres. */
+  #soleY(leg) {
+    let low = Infinity;
+    for (const [bone, local] of leg.soles ?? []) {
+      low = Math.min(low, bone.localToWorld(_sole.copy(local)).y);
+    }
+    return Number.isFinite(low)
+      ? low
+      : leg.ankle.getWorldPosition(_sole).y - this.soleDrop;
+  }
+
   /** Put the legs back where the clip will find them - see #openHand. */
   #straightenLegs() {
     for (const [bone, rest] of this.legRest) bone.quaternion.copy(rest);
@@ -1352,61 +1437,126 @@ class RiggedTubby {
   /**
    * Stand on the ground that is actually there, rather than on a flat floor.
    *
-   * #plantFeet has already put the body at the right height for level ground.
-   * What is left is the difference between the two feet, which on a slope is
-   * the whole of what makes a walk look planted: the pelvis settles to the
-   * lower foot so no leg is asked to reach past its own length, then each ankle
-   * is lifted to its own ground and its leg solved for it. One knee ends up
-   * bent and the other nearly straight, which is the suspension.
+   * #plantFeet has already put the body roughly right, from the clip's own
+   * pose. Three things are left, and they have to happen in this order because
+   * each one moves what the next one measures.
    *
-   * Every correction is a lift of zero or more once the pelvis has moved, so a
-   * leg is only ever compressed. Legs pulled straight to reach are what make
-   * this kind of thing snap.
+   * Roll the soles flat FIRST. Levelling an ankle swings the foot about the
+   * joint, so it changes where the sole is - by seven centimetres on these
+   * clips - and doing it after the body had been settled left the whole cast
+   * hovering that far off the stage.
+   *
+   * Then settle the body to whichever sole has the furthest to go, so no leg is
+   * ever asked to reach DOWN. Then each leg takes up the remainder, which is a
+   * compression by construction: one knee ends up bent and the other nearly
+   * straight, and that is the suspension.
    */
-  #standOnGround() {
-    if (!this.legs.length || this.lift > 0.02) return;
+  #standOnGround(dt) {
     const ground = this.groundAt;
+    // From zero every frame, exactly as #plantFeet does. The height below is an
+    // answer, not a correction to somebody else's answer: measuring the soles
+    // against a body that #plantFeet had already moved - by a bind-pose
+    // constant that stops being true the moment a foot is levelled - meant the
+    // correction chased the walk cycle and the body wallowed by six centimetres
+    // rather than settling.
+    this.inner.position.y = 0;
     this.inner.updateMatrixWorld(true);
-
     const base = this.root.position.y;
+
+    // 1. Which foot the clip has down, judged BETWEEN the feet rather than
+    //    against a height.
+    //
+    //    "Is this sole near the ground" needs the body to already be at the
+    //    right height to answer, and the body's height is what we are here to
+    //    work out. When it was asked that way and the body happened to sit
+    //    high, neither foot counted as planted, nothing got a say, and it
+    //    stayed high - the cast hovering seven centimetres off the stage with
+    //    no way to learn otherwise. Comparing the two feet to each other needs
+    //    no reference at all: the lower one is the one taking the weight.
     const feet = [];
-    let pelvis = 0;
+    let top = -Infinity;
     for (const leg of this.legs) {
       const at = leg.ankle.getWorldPosition(new THREE.Vector3());
-      const y = ground ? ground(at.x, at.z) : base;
-      const drop = y - base;
-      feet.push({ leg, at, drop });
-      pelvis = Math.min(pelvis, drop);
+      const gy = ground ? ground(at.x, at.z) : base;
+      const foot = {
+        leg,
+        gy,
+        normal: groundNormal(ground, at.x, at.z, new THREE.Vector3()),
+        rise: gy - this.#soleY(leg),
+      };
+      top = Math.max(top, foot.rise);
+      feet.push(foot);
     }
-    pelvis = Math.max(pelvis, -PELVIS_LIMIT);
 
-    if (pelvis !== 0) {
-      this.inner.position.y += pelvis;
+    // 2. Soles flat: fully on the foot carrying the weight, half on the one in
+    //    the air, which is what takes the exaggeration out of the swing without
+    //    flattening the toe-off. And squared to the way they are walking, which
+    //    is what makes the two feet mirror each other.
+    const heading = new THREE.Vector3(0, 0, 1)
+      .applyQuaternion(this.root.quaternion).normalize();
+    for (const foot of feet) {
+      const down = 1 - THREE.MathUtils.clamp((top - foot.rise) / STANCE, 0, 1);
+      foot.down = down;
+      levelFoot(foot.leg.ankle, foot.leg.toe, foot.normal,
+        LEVEL_AIR + (LEVEL_DOWN - LEVEL_AIR) * down,
+        heading, this.squareFeet * (SQUARE_AIR + (1 - SQUARE_AIR) * down));
+    }
+    this.inner.updateMatrixWorld(true);
+
+    // 3. The body settles onto the planted feet - the lowest of them, so that
+    //    every leg is compressed from here and none is stretched to reach.
+    let want = null;
+    top = -Infinity;
+    for (const foot of feet) {
+      foot.rise = foot.gy - this.#soleY(foot.leg);
+      top = Math.max(top, foot.rise);
+    }
+    for (const foot of feet) {
+      if (foot.rise < top - STANCE) continue;    // that one is in the air
+      want = want === null ? foot.rise : Math.min(want, foot.rise);
+    }
+    if (want !== null) {
+      this.pelvisWant = THREE.MathUtils.clamp(want, -PELVIS_LIMIT, PELVIS_LIMIT);
+    }
+    // Barely eased. The height is right every frame on its own - the planted
+    // foot is whichever sole is lowest, and that changes continuously as the
+    // feet cross - so this is only here to take the corner off the swap.
+    this.pelvisY += ((this.pelvisWant ?? 0) - this.pelvisY)
+      * Math.min(1, dt * PELVIS_EASE);
+    let pelvis = this.pelvisY;
+    this.inner.position.y = pelvis;
+    this.inner.updateMatrixWorld(true);
+
+    // A hard floor under the eased height.
+    //
+    // Easing is what stops the body stepping when the planted foot swaps, and
+    // the price of easing is that it lags - through which a sole can pass into
+    // the ground. Every foot gets a veto here, the swinging one included: it is
+    // a constraint rather than a preference, so it is applied at once and not
+    // eased. This is the guarantee the old plant-the-lowest-bone code gave for
+    // free, put back.
+    let deepest = Infinity;
+    for (const foot of feet) {
+      deepest = Math.min(deepest, this.#soleY(foot.leg) - foot.gy);
+    }
+    if (deepest < -FOOT_SINK) {
+      const up = -FOOT_SINK - deepest;
+      this.inner.position.y = pelvis + up;
+      this.pelvisY += up;       // or the ease would pull it straight back down
+      pelvis += up;
       this.inner.updateMatrixWorld(true);
     }
 
-    // Which way a knee is allowed to fold, if a leg is straight enough that its
-    // own pose cannot say.
+    // 4. And the legs take up what is left. Which way a knee folds, if a leg is
+    //    straight enough that its own pose cannot say.
     const pole = new THREE.Vector3(0, 0, 1)
       .applyQuaternion(this.root.quaternion).normalize();
-
     for (const foot of feet) {
-      const { leg } = foot;
-      const lift = foot.drop - pelvis;
-      const at = leg.ankle.getWorldPosition(new THREE.Vector3());
-      if (lift > 1e-4) {
-        solveTwoBone(leg.hip, leg.knee, leg.ankle, at.clone().setY(at.y + lift), pole);
-      }
-
-      // And roll the sole onto whatever it is standing on. Full strength once
-      // it is down, half while it is still in the air.
-      const normal = groundNormal(ground, at.x, at.z, new THREE.Vector3());
-      const clear = leg.ankle.getWorldPosition(new THREE.Vector3()).y
-        - (base + foot.drop + this.soleDrop);
-      const planted = 1 - THREE.MathUtils.clamp(
-        (clear - PLANTED) / (AIRBORNE - PLANTED), 0, 1);
-      levelFoot(leg.ankle, leg.toe, normal,
-        LEVEL_AIR + (LEVEL_DOWN - LEVEL_AIR) * planted);
+      const need = foot.rise - pelvis;
+      if (need <= 1e-4) continue;
+      const at = foot.leg.ankle.getWorldPosition(new THREE.Vector3());
+      solveTwoBone(foot.leg.hip, foot.leg.knee, foot.leg.ankle,
+        at.setY(at.y + need), pole);
     }
   }
 }

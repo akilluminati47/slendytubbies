@@ -19,6 +19,8 @@ export class Tubby {
     // Its feet follow the heightfield rather than a flat floor: see
     // #standOnGround in tubbyModel.
     this.model.groundAt = heightAt;
+    // It keeps its uneven kick. On the thing hunting you a limp is character.
+    this.model.squareFeet = 0;
     this.kind = kind;
     this.root = this.model.root;
     this.root.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.castShadow = true; });

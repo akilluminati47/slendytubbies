@@ -37,23 +37,59 @@ const TORCH_CHANCE = {
 const CAST = ["guardian", "laalaa", "po", "dipsy", "tinkywinky"];
 
 const LANE = {
-  // Spawned at the fog's edge, not behind it. Starting further back left four
-  // seconds of empty stage every cycle while the next one walked out of the
-  // dark; from here they fade up almost immediately.
-  start: -16.5,
   end: 2.0,          // past the camera, out of frame
+  // How far apart they walk, and the extra space left after the chaser.
+  //
+  // The whole cast is on the lane at once now, strung back into the fog, rather
+  // than one at a time spawned at its edge. Spawning at the edge is what made
+  // them pop: a tubby appearing at the exact distance the fog stops hiding
+  // things is a tubby appearing. Starting them far enough back that they are
+  // genuinely invisible costs nothing when there are four more in front, and
+  // the procession is the thing you see instead of the arrival.
+  spacing: 10.0,
+  // Room for the chaser to close in, and MORE of it the faster it rolled. The
+  // fast laps are the ones where it should start out of sight behind the group
+  // and be visibly gaining by the time it reaches the lens; giving it the same
+  // head start whatever its pace threw away the only thing the roll was for.
+  chaserSpacing: [13.0, 26.0],
+  // And the beat after it, which is long enough that the Guardian is still
+  // beyond the fog when the chaser's face goes past the lens. The procession
+  // has to actually END - an empty stage for a moment - before it can read as
+  // having begun again, and at thirteen metres the Guardian was already walking
+  // out of the dark while the chaser was still in frame.
+  gap: 32.0,
+  // Nobody walks through anybody. Only the chaser moves at a different speed,
+  // so in practice this is the leash that stops it overtaking the group - and
+  // a monster that closes on them and then follows them past is a better thing
+  // to watch than one that keeps its distance politely.
+  clear: 3.2,
   // The chaser does not amble. It comes past at its own pace, rolled each time,
   // so the one appearance in five that is the monster is also the one you
   // cannot set your watch by - and fast enough that the run clip picks it up
   // rather than the walk.
-  chaserSpeed: [2.6, 5.4],
+  chaserSpeed: [2.6, 5.0],
   // Half-extents of the patch worth sowing. Only what the 40 degree lens can
   // see from z=0 through 19 m of fog is ever drawn, so sowing the whole 60 m
   // plane would be triangles nobody looks at.
   grassArea: { x: 13, z: 15 },
   speed: 1.9,        // m/s; walking at the lens hides what skating there is
-  firstStart: -7.5,  // the first one is already in view when the title appears
+  // How much of that speed each walker is allowed to differ by, and how far
+  // off their own lane they drift, per lap. The stagger, in other words.
+  pace: 0.22,
+  wander: 0.7,
+  // The one at the back of the party is running to catch the group up before
+  // the thing behind them does.
+  runSpeed: [3.0, 3.9],
+  // Beyond this the fog has them completely, which is where two of them can
+  // change places without anybody seeing it happen.
+  hidden: -28.0,
+  // Where the front of the queue starts, so the Guardian is already in view
+  // when the title appears and nobody has to wait for the show to begin.
+  firstStart: -7.5,
 };
+
+/** How many carried torches light the ground at once - the nearest few. */
+const LIT = 3;
 
 // Each walks its own line so the loop does not read as a conveyor belt, and so
 // nobody spends the whole walk directly behind the title.
@@ -75,21 +111,28 @@ export class Showcase {
     this.camera.position.set(0, 1.5, 0);
     this.camera.lookAt(0, 1.05, -8);
 
-    // One torch light for the whole stage, moved to whoever is carrying.
+    // A few torch lights for the whole stage, lent to whoever is nearest.
     //
     // Made here rather than hung off each torch as it is built: the parade
-    // builds a new torch every few seconds, and a light arriving in the scene
-    // recompiles every material in it.
-    const lamp = makeTorchLight("handheld");
-    this.torchLight = lamp.light;
-    this.torchAim = lamp.aim;
-    this.scene.add(this.torchLight, this.torchAim);
+    // builds torches as they come round, and a light arriving in a scene
+    // recompiles every material in it. Three rather than one per carrier
+    // because three of the five always carry, and rather than one because a
+    // single lit beam among three unlit ones is worse than none.
+    this.lamps = [];
+    for (let i = 0; i < LIT; i++) {
+      const lamp = makeTorchLight("handheld");
+      this.scene.add(lamp.light, lamp.aim);
+      this.lamps.push(lamp);
+    }
 
     const night = new THREE.Color(0x0a0b0f);
     this.scene.background = night;
     // Near is set past the walker's closest approach so it never fogs while it
     // is the thing you are looking at.
-    this.scene.fog = new THREE.Fog(night, 7.5, 19);
+    // Pushed back from 19, so the queue behind the one you are looking at is
+    // visible as shapes receding rather than as an empty stage that things
+    // walk out of.
+    this.scene.fog = new THREE.Fog(night, 9, 27);
 
     this.scene.add(new THREE.HemisphereLight(0x9fb4d8, 0x241f16, 2.0));
 
@@ -158,20 +201,30 @@ export class Showcase {
    * hand has only just finished moving - reading it before would light where
    * the arm was a frame ago.
    */
-  #castTorch() {
-    const torch = this.torch;
-    if (!torch) {
-      this.torchLight.intensity = 0;
-      return;
+  #castTorches() {
+    // Nearest first, because those are the beams whose pool on the ground you
+    // can actually see - the ones further back are behind the fog.
+    const lit = this.frozen
+      ? (this.torch ? [this.torch] : [])
+      : [...this.walkers].filter((w) => w.torch).sort((a, b) => b.z - a.z)
+        .slice(0, LIT).map((w) => w.torch);
+
+    for (let i = 0; i < this.lamps.length; i++) {
+      const lamp = this.lamps[i];
+      const torch = lit[i];
+      if (!torch) {
+        lamp.light.intensity = 0;
+        continue;
+      }
+      torch.group.updateWorldMatrix(true, true);
+      torch.glow.getWorldPosition(_lampAt);
+      torch.group.getWorldQuaternion(_lampQ);
+      _lampDir.set(0, 0, -1).applyQuaternion(_lampQ).normalize();
+      lamp.light.position.copy(_lampAt);
+      lamp.aim.position.copy(_lampAt).addScaledVector(_lampDir, 9);
+      lamp.light.angle = torch.angle;
+      lamp.light.intensity = TORCH_CANDELA;
     }
-    torch.group.updateWorldMatrix(true, true);
-    torch.glow.getWorldPosition(_lampAt);
-    torch.group.getWorldQuaternion(_lampQ);
-    _lampDir.set(0, 0, -1).applyQuaternion(_lampQ).normalize();
-    this.torchLight.position.copy(_lampAt);
-    this.torchAim.position.copy(_lampAt).addScaledVector(_lampDir, 9);
-    this.torchLight.angle = torch.angle;
-    this.torchLight.intensity = TORCH_CANDELA;
   }
 
   /**
@@ -187,11 +240,20 @@ export class Showcase {
     if (!this.models) this.#build();
     const model = this.models?.get(kind);
     if (!model) return null;
-    if (this.current && this.current !== model) this.current.root.visible = false;
+    // Everybody else off the stage, and their torches with them - the bench
+    // hangs its own and lights only that.
+    for (const w of this.walkers) {
+      w.model.root.visible = w.model === model;
+      if (w.model !== model) {
+        dropFromHand(w.hand);
+        w.torch = null;
+        w.model.afterPose = null;
+        w.model.grip?.(null);
+      }
+    }
     this.current = model;
-    this.current.root.visible = true;
     this.current.root.position.x = 0;
-    this.torch = null;                 // the bench hangs its own
+    this.torch = null;
     this.z = z;
     this.frozen = true;
     return model;
@@ -199,30 +261,87 @@ export class Showcase {
 
   #build() {
     this.models = new Map();
+    this.walkers = [];
+    let z = LANE.firstStart;
     for (const kind of CAST) {
       const model = makeTubby(kind);
-      model.root.visible = false;
       model.play("walk", 0);
+      model.root.position.x = OFFSET[kind] ?? 0;
       this.scene.add(model.root);
       this.models.set(kind, model);
+      // Strung back from the front of the queue, the chaser furthest away.
+      const walker = { kind, model, z, torch: null, hand: null, speed: LANE.speed };
+      this.walkers.push(walker);
+      this.#enter(walker);
+      z -= this.#lead(this.walkers[this.walkers.length - 1], true);
     }
-    this.#take(0, LANE.firstStart);
+    this.current = this.walkers[0].model;
   }
 
-  #take(index, z) {
-    if (this.current) this.current.root.visible = false;
-    this.index = index % CAST.length;
-    this.z = z;
-    const kind = CAST[this.index];
-    this.current = this.models.get(kind);
-    if (!this.current) return;
-    this.current.root.visible = true;
-    this.current.root.position.x = OFFSET[kind] ?? 0;
-    this.current.play("walk", 0);
-    this.speed = kind === "tinkywinky"
+  /**
+   * A walker joins the back of the queue: new pace, new roll for a torch.
+   *
+   * Called when one is first placed and every time it comes round again, which
+   * is what makes the Guardian's searchlight a thing you might or might not see
+   * on any given lap rather than a fixture.
+   */
+  /**
+   * Swap two party members that are both hidden in the fog.
+   *
+   * Only the three colours, and only when neither can be seen: the Guardian
+   * leads every lap and the chaser closes every lap, which are the two things
+   * the procession is built around, and the middle is the part that is allowed
+   * to be different each time round.
+   */
+  #shuffleUnseen() {
+    const hidden = this.walkers.filter((w) =>
+      w.z < LANE.hidden && w.kind !== "guardian" && w.kind !== "tinkywinky");
+    if (hidden.length < 2 || Math.random() > 0.02) return;
+    const a = hidden[Math.floor(Math.random() * hidden.length)];
+    let b = hidden[Math.floor(Math.random() * hidden.length)];
+    if (a === b) return;
+    // Positions, not models: nothing moves that anybody could be looking at.
+    const z = a.z; a.z = b.z; b.z = z;
+    const run = a.running; a.running = b.running; b.running = run;
+    const sp = a.speed; a.speed = b.speed; b.speed = sp;
+  }
+
+  /**
+   * How much room to leave in front of a walker as it joins the back.
+   *
+   * @param next  measuring the space for whoever comes AFTER this one, during
+   *              the initial line-up, rather than for this one
+   */
+  #lead(walker, next = false) {
+    const kind = next ? CAST[CAST.indexOf(walker.kind) + 1] : walker.kind;
+    if (kind === "guardian") return LANE.gap;
+    if (kind !== "tinkywinky") return LANE.spacing;
+    // The chaser's own roll decides how far back it starts, so a fast lap is
+    // one it spends closing rather than one it spends arriving early.
+    const [lo, hi] = LANE.chaserSpeed;
+    const pace = next ? 1 : (walker.speed - lo) / Math.max(hi - lo, 1e-6);
+    const [near, far] = LANE.chaserSpacing;
+    return near + (far - near) * THREE.MathUtils.clamp(pace, 0, 1);
+  }
+
+  #enter(walker) {
+    walker.model.root.visible = true;
+    walker.model.play("walk", 0);
+    // The chaser keeps its uneven kick; everybody else walks squarely.
+    walker.model.squareFeet = walker.kind === "tinkywinky" ? 0 : 1;
+    walker.running = false;
+    walker.speed = walker.kind === "tinkywinky"
       ? LANE.chaserSpeed[0] + Math.random() * (LANE.chaserSpeed[1] - LANE.chaserSpeed[0])
-      : LANE.speed;
-    this.#maybeTorch(kind);
+      // A little off the pace, per lap, per walker. Five bodies moving at
+      // exactly one speed with exactly one clip at exactly one phase is a row
+      // of clockwork, and the eye finds it immediately.
+      : LANE.speed * (1 + (Math.random() - 0.5) * LANE.pace);
+    // Somewhere else in the cycle, so nobody is in step with anybody.
+    walker.model.mixer.setTime(Math.random() * 4);
+    // And not walking a perfectly straight line down their own lane.
+    walker.model.root.position.x =
+      (OFFSET[walker.kind] ?? 0) + (Math.random() - 0.5) * LANE.wander;
+    this.#maybeTorch(walker);
   }
 
   /**
@@ -237,7 +356,8 @@ export class Showcase {
    * Hung off the hand bone, so it moves with the walk cycle instead of floating
    * alongside the model.
    */
-  #maybeTorch(kind) {
+  #maybeTorch(walker) {
+    const { kind, model } = walker;
     // The Guardian brings the searchlight out the first time and rolls for it
     // after that. A one-in-ten prop nobody has seen yet is not a rarity, it is
     // an absence: most players watch the parade once, on their way into their
@@ -245,24 +365,26 @@ export class Showcase {
     const first = kind === "guardian" && !this.seenGuardian;
     if (kind === "guardian") this.seenGuardian = true;
 
-    let hand = null;
-    this.current.root.traverse((o) => {
-      if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
-    });
+    let hand = walker.hand;
+    if (!hand) {
+      model.root.traverse((o) => {
+        if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
+      });
+      walker.hand = hand;
+    }
     // Clear THIS character's hand, not whichever one was filled last.
     dropFromHand(hand);
-    this.torch = null;
-    this.current.grip?.(null);
-    this.current.afterPose = null;
+    walker.torch = null;
+    model.grip?.(null);
+    model.afterPose = null;
     if (!hand || (!first && Math.random() >= (TORCH_CHANCE[kind] ?? 0))) return;
     const t = makeTorch(torchFor(kind));
-    if (holdInHand(t, hand, this.current.root)) {
-      this.torch = t;
+    if (holdInHand(t, hand, model.root)) {
+      walker.torch = t;
       // And shut the hand round it, or it reads as balanced on an open palm.
-      this.current.grip?.(gripPoseFor(torchFor(kind)));
+      model.grip?.(gripPoseFor(torchFor(kind)));
       // Re-aimed after every pose, so the lamp hangs from its handle instead of
       // rolling over with the arm.
-      const model = this.current;
       model.afterPose = () => aimInHand(t, hand, model.root);
     }
   }
@@ -276,12 +398,6 @@ export class Showcase {
     if (!this.models) this.#build();
     if (!this.current) return false;
 
-    const speed = this.frozen ? 0 : (this.speed ?? LANE.speed);
-    if (!this.frozen) {
-      this.z += speed * dt;
-      if (this.z > LANE.end) this.#take(this.index + 1, LANE.start);
-    }
-
     // No ground mist on the stage. The lid is partly an absolute world height
     // and this scene stands its cast at y=0 on a flat plane, which is a place
     // the mist has an opinion about and no business having one. Switched off
@@ -289,12 +405,81 @@ export class Showcase {
     // rendered per frame.
     setMist(0);
 
-    const model = this.current;
-    model.root.position.z = this.z;
-    model.root.position.y = 0;          // flat stage; plantFeet does the rest
-    model.root.rotation.y = this.turn ?? 0;   // walking towards the camera
-    model.update(dt, this.frozen ? (this.clipSpeed ?? 0) : speed);
-    this.#castTorch();
+    if (this.frozen) {
+      // Bench: one character, standing still, everybody else off stage.
+      const model = this.current;
+      model.root.position.set(0, 0, this.z);
+      model.root.rotation.y = this.turn ?? 0;
+      model.update(dt, this.clipSpeed ?? 0);
+      this.#castTorches();
+      renderer.render(this.scene, this.camera);
+      return true;
+    }
+
+    for (const w of this.walkers) {
+      w.z += w.speed * dt;
+      if (w.z > LANE.end) {
+        // Round to the back of the queue. The gap goes in front of the
+        // Guardian, which by then means behind the chaser - the last one in
+        // line when the Guardian is the one leaving.
+        let back = Infinity;
+        for (const other of this.walkers) back = Math.min(back, other.z);
+        this.#enter(w);          // rolls its pace first: the chaser's sets its own start
+        w.z = back - this.#lead(w);
+      }
+    }
+
+    // Nobody walks through anybody. Only the chaser and the runner move at
+    // their own pace, so this is the leash on them: the chaser closes the
+    // distance its roll bought it and then follows the group past the lens
+    // rather than through the back of it.
+    const order = [...this.walkers].sort((a, b) => b.z - a.z);
+    for (let i = 1; i < order.length; i++) {
+      order[i].z = Math.min(order[i].z, order[i - 1].z - LANE.clear);
+    }
+
+    // Whoever is directly in front of the chaser is running.
+    //
+    // Not a fixed member: the order changes, and the point is the position
+    // rather than the character. It is the one thing on the stage that says
+    // what the parade is - four of them walking and the fifth one hurrying,
+    // because of what is behind them.
+    const chaseAt = order.findIndex((w) => w.kind === "tinkywinky");
+    const runner = chaseAt > 0 ? order[chaseAt - 1] : null;
+    for (const w of this.walkers) {
+      if (w === runner) {
+        if (!w.running) {
+          w.running = true;
+          w.speed = LANE.runSpeed[0]
+            + Math.random() * (LANE.runSpeed[1] - LANE.runSpeed[0]);
+          w.model.play("chase", 0.35);
+        }
+      } else if (w.running) {
+        w.running = false;
+        w.speed = LANE.speed * (1 + (Math.random() - 0.5) * LANE.pace);
+        w.model.play("walk", 0.35);
+      }
+    }
+
+    // And two of the party change places, out where the fog has them.
+    //
+    // The rotation is otherwise fixed forever - the same three colours in the
+    // same order every lap - and shuffling anything visible would teleport a
+    // character. Swapping two that are both past the fog's far edge is the
+    // same reordering with nobody to see it.
+    this.#shuffleUnseen();
+
+    for (const w of this.walkers) {
+      w.model.root.position.z = w.z;
+      w.model.root.position.y = 0;      // flat stage; plantFeet does the rest
+      w.model.root.rotation.y = 0;      // walking towards the camera
+      w.model.update(dt, w.speed);
+    }
+    // The one nearest the lens, for anything that wants "the character on
+    // screen" - the bench, mostly.
+    this.current = order[0].model;
+    this.torch = order.find((w) => w.torch)?.torch ?? null;
+    this.#castTorches();
 
     renderer.render(this.scene, this.camera);
     return true;

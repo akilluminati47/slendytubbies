@@ -121,8 +121,8 @@ export function solveTwoBone(hip, knee, ankle, target, pole) {
  *
  * @param weight 0 leaves the clip alone, 1 puts the sole flat.
  */
-export function levelFoot(ankle, toe, normal, weight) {
-  if (weight <= 0.001) return;
+export function levelFoot(ankle, toe, normal, weight, forward = null, square = 0) {
+  if (weight <= 0.001 && square <= 0.001) return;
   ankle.updateWorldMatrix(true, false);
   _a.setFromMatrixPosition(ankle.matrixWorld);
   _b.setFromMatrixPosition(toe.matrixWorld);
@@ -133,6 +133,25 @@ export function levelFoot(ankle, toe, normal, weight) {
   _d.copy(_c).addScaledVector(normal, -_c.dot(normal));
   if (_d.lengthSq() < 1e-8) return;   // sole straight up the normal: nothing sane to do
   _d.normalize();
+
+  // And square the toes to the way they are walking.
+  //
+  // These clips are not mirrored: the left foot swings out to a third of a
+  // radian where the right stays inside a sixth, so one leg kicks and the other
+  // does not, and once you have seen it you cannot stop seeing it. Turning the
+  // sole toward the direction of travel - in the ground plane, so it does not
+  // undo the flattening above - costs the splay and buys the symmetry. The
+  // chaser keeps its kick: on that one it reads as a limp rather than a fault.
+  if (square > 0.001 && forward) {
+    _n.copy(forward).addScaledVector(normal, -forward.dot(normal));
+    if (_n.lengthSq() > 1e-8) {
+      // Toes pointing backwards on a rig would be squared to backwards; take
+      // whichever end of the line is the one facing the way they are going.
+      _n.normalize();
+      if (_n.dot(_d) < 0) _n.negate();
+      _d.lerp(_n, square).normalize();
+    }
+  }
 
   // Part of the way, so a foot in mid-swing keeps some of its shape: the whole
   // correction slerped back toward doing nothing.
