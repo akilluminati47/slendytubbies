@@ -29,13 +29,38 @@ export class Tubby {
     this.target = this.#wanderPoint();
     this.lostFor = 0;
     this.fleeLeft = 0;
+    this.stride = T.strides[0];
+    this.strideLeft = 0;
+    this.alignLeft = 0;
+    this.#rollStride();
     this.growl = 0;
     this.speedNow = 0;
+  }
+
+  /**
+   * Pick a walking pace and keep it for a while.
+   *
+   * Re-rolled on a timer rather than at every waypoint, so a change of pace
+   * happens mid-crossing where you can see it happen, instead of only ever at
+   * the moment it turns a corner.
+   */
+  #rollStride() {
+    this.stride = T.strides[Math.floor(Math.random() * T.strides.length)];
+    this.strideLeft = T.strideHold[0] + Math.random() * (T.strideHold[1] - T.strideHold[0]);
   }
 
   #wanderPoint() {
     const s = CFG.world.size * 0.42;
     return new THREE.Vector3((Math.random() - 0.5) * s * 2, 0, (Math.random() - 0.5) * s * 2);
+  }
+
+  /** Is that point inside the cone it is looking down? */
+  #inCone(pos) {
+    const toPoint = Math.atan2(pos.x - this.pos.x, pos.z - this.pos.z);
+    let diff = toPoint - this.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    return Math.abs(diff) <= T.sightHalfAngle;
   }
 
   /** Can it see the player right now? */
@@ -44,12 +69,32 @@ export class Tubby {
     const d = Math.hypot(dx, dz);
     const range = T.sightRange + (player.torchOn ? CFG.noise.torchBonus : 0);
     if (d > range) return false;
-    const toPlayer = Math.atan2(dx, dz);
-    let diff = toPlayer - this.heading;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    if (Math.abs(diff) > T.sightHalfAngle) return false;
+    if (!this.#inCone(player.pos)) return false;
     // Trees block line of sight - crouching behind one actually works.
+    return !this.#blocked(player.pos, d);
+  }
+
+  /**
+   * Is a torch being shone at it?
+   *
+   * A light in the dark carries a great deal further than a shape does, which
+   * is the point: the beam that lets you find dishes is also the thing that
+   * tells something across the map exactly where you are. Three conditions, all
+   * of them things the player can actually control - the beam has to be pointed
+   * at it, it has to be facing your way to catch the light, and nothing can be
+   * stood in between. That last one does most of the work in a forest of 420
+   * trunks, which is what keeps this from firing every few seconds.
+   */
+  #lit(player) {
+    if (!player.torchOn) return false;
+    const dx = this.pos.x - player.pos.x, dz = this.pos.z - player.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > T.torchRange || d < 1e-4) return false;
+    // Three.js cameras face -Z, so at yaw t the beam runs along (-sin t, -cos t).
+    const yaw = player.input?.yaw ?? 0;
+    const aim = (-Math.sin(yaw) * dx + -Math.cos(yaw) * dz) / d;
+    if (aim < Math.cos(T.torchBeam * Math.PI / 180)) return false;
+    if (!this.#inCone(player.pos)) return false;
     return !this.#blocked(player.pos, d);
   }
 
@@ -75,8 +120,22 @@ export class Tubby {
   update(dt, player, threats = null) {
     threats = threats || [player.pos];
     const fleeing = this.state === "flee";
-    const seen = !fleeing && player.alive && this.#sees(player);
-    const heard = !fleeing && player.alive && this.#hears(player);
+    const alive = !fleeing && player.alive;
+    // A beam in the face counts as being seen, at nearly twice the range.
+    const lit = alive && this.#lit(player);
+    const seen = alive && (this.#sees(player) || lit);
+    const heard = alive && this.#hears(player);
+
+    // What makes it snap round onto you: a jump, or a torch found from further
+    // off than it could ever have spotted you by shape. Both are the player
+    // announcing themselves rather than being caught out.
+    this.alignLeft = Math.max(0, this.alignLeft - dt);
+    const startled = alive &&
+      ((heard && player.noise >= T.alertNoise) ||
+       (lit && !this.#sees(player)));
+
+    this.strideLeft -= dt;
+    if (this.strideLeft <= 0) this.#rollStride();
 
     switch (this.state) {
       case "flee":
@@ -91,12 +150,14 @@ export class Tubby {
         break;
 
       case "patrol":
+        if (startled) this.#align(player.pos);
         if (seen) this.#enter("chase", player.pos);
         else if (heard) this.#enter("investigate", player.pos);
         else if (this.pos.distanceTo(this.target) < 2.5) this.target = this.#wanderPoint();
         break;
 
       case "investigate":
+        if (startled) this.#align(player.pos);
         if (seen) this.#enter("chase", player.pos);
         else if (heard) this.target.set(player.pos.x, 0, player.pos.z);
         else {
@@ -118,10 +179,12 @@ export class Tubby {
     }
 
     const speed = {
-      patrol: T.patrolSpeed, investigate: T.investigateSpeed,
+      patrol: this.stride, investigate: T.investigateSpeed,
       chase: T.chaseSpeed, flee: T.fleeSpeed,
     }[this.state];
-    const turn = fleeing ? T.fleeTurnRate : T.turnRate;
+    // It whips round when it has just been startled and when bolting; it swings
+    // round the rest of the time.
+    const turn = fleeing || this.alignLeft > 0 ? T.fleeTurnRate : T.turnRate;
 
     // Steer toward the target, then let the collision pass slide us round trees.
     const dx = this.target.x - this.pos.x, dz = this.target.z - this.pos.z;
@@ -165,9 +228,16 @@ export class Tubby {
 
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
-    // Patrolling counts as walking. It used to fall through to idle, which was
-    // harmless on the procedural stand-ins and foot-skates badly on a real clip.
+    // The clip is chosen by how fast it is actually travelling, not by which
+    // state it is in.
+    //
+    // A clip only carries speed/own inside the 0.82x-2.45x playback clamp, so
+    // the walk (0.429 m/s native) tops out at 1.05 - and investigate has always
+    // run at 2.2 on the walk clip, which is a five-fold skate nobody had put a
+    // number to. Anything above runAbove now takes the run instead, which fixes
+    // that and lets the brisk patrol stride be a jog rather than a glide.
     this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
+      : this.speedNow > T.runAbove ? "chase"
       : this.speedNow > 0.15 ? "walk" : "idle");
     this.model.update(dt, this.speedNow);
 
@@ -268,13 +338,32 @@ export class Tubby {
   }
 
   /**
+   * Swing round onto whatever that was, without breaking stride.
+   *
+   * The heading is set outright rather than steered, so the very next step is
+   * already in the right direction; the rendered facing is left to catch up
+   * over the following half second at the fast turn rate, which is what makes
+   * it read as a head snapping round rather than a body teleporting.
+   *
+   * Deliberately not a stop. A thing that halts to stare gives you a moment to
+   * use; a thing that simply corrects its course and keeps walking gives you
+   * none, and is the worse of the two to be on the wrong end of.
+   */
+  #align(at) {
+    this.heading = Math.atan2(at.x - this.pos.x, at.z - this.pos.z);
+    this.alignLeft = T.alignHold;
+    if (this.state === "patrol") this.#enter("investigate", at);
+    else this.target.set(at.x, 0, at.z);
+  }
+
+  /**
    * Drive this tubby from the host's broadcast instead of from its own AI.
    *
    * Only the host simulates the CPU Tinky Winky; guests just render what they
    * are told. Running the AI on every client would give each player a different
    * monster in a different place, and no amount of interpolation fixes that.
    */
-  netApply(pos, facing, state, dt) {
+  netApply(pos, facing, state, dt, speed) {
     if (pos) {
       // Guests run this every frame; lerp componentwise rather than allocating.
       const k = Math.min(1, dt * 12);
@@ -289,17 +378,26 @@ export class Tubby {
     }
     if (state) this.state = state;
 
+    // How fast it is going is on the wire now, because it is no longer implied
+    // by the state: a patrol picks a stride and keeps it, so a guest guessing
+    // "walking, about 1.5" would have every wander at the wrong pace and the
+    // brisk one skating badly.
+    if (typeof speed === "number") this.speedNow = speed;
+
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
+    // Same rule the host runs: the clip follows the speed, not the state.
     this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
-      : this.state === "patrol" || this.state === "investigate" ? "walk" : "idle");
-    this.model.update(dt, this.state === "chase" ? 5 : 1.5);
+      : this.speedNow > T.runAbove ? "chase"
+      : this.speedNow <= 0.15 ? "idle" : "walk");
+    this.model.update(dt, this.state === "chase" ? T.chaseSpeed : this.speedNow);
   }
 
   /** Compact form for the wire. */
   netState() {
     return { p: [+this.pos.x.toFixed(2), 0, +this.pos.z.toFixed(2)],
-             f: +this.facing.toFixed(3), s: this.state };
+             f: +this.facing.toFixed(3), s: this.state,
+             v: +this.speedNow.toFixed(2) };
   }
 
   /**

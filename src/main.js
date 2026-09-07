@@ -593,7 +593,7 @@ function frame() {
         const q = t.chooseQuarry(quarries());
         if (q) t.update(dt, q, threatPoints());
       }
-      else { const w = netWorld?.tubby?.[i]; t.netApply(w?.p, w?.f, w?.s, dt); }
+      else { const w = netWorld?.tubby?.[i]; t.netApply(w?.p, w?.f, w?.s, dt, w?.v); }
     }
     for (const r of remotes.values()) r.update(dt, camera);
     world.updateGlow(game.elapsed, spectator.pos);
@@ -662,7 +662,7 @@ function frame() {
         t.facing = w.f ?? t.facing;
         t.netSeen = true;
       }
-      t.netApply(w?.p, w?.f, w?.s, dt);
+      t.netApply(w?.p, w?.f, w?.s, dt, w?.v);
       // Tubby.takes, the same predicate the host's AI returns "kill" from, so a
       // guest is caught under exactly the conditions a host is - and, just as
       // importantly, escapes under exactly the same ones. This used to be a

@@ -60,7 +60,23 @@ export const CFG = {
     // where playback lands near 2.1x - a quick cadence on a short stride, which
     // is what the thing looks like, and no skating at either end. See
     // RiggedTubby.update, which does the division.
-    patrolSpeed: 0.9,
+    // Wandering is not one speed. It picks a stride and keeps it for a while,
+    // which is most of what makes a patrol look like something with a mind
+    // rather than a unit on rails.
+    //
+    // The numbers are not free: a clip only carries speed/own inside the
+    // 0.82x-2.45x playback clamp, and the walk was measured at 0.429 m/s, so it
+    // covers 0.35 to 1.05 before the feet start skating. The brisk stride is
+    // deliberately past that and picked up by the run clip instead (2.171 m/s
+    // native, good from 1.78), which is why it is 1.9 and not 1.4 - a tubby
+    // jogging across a clearing on patrol is a far better thing to catch sight
+    // of than one gliding.
+    strides: [0.45, 0.8, 1.9],
+    strideHold: [5, 13],  // seconds on one stride before rolling another
+    // Above this, play the run rather than the walk. Between the walk's 1.05
+    // ceiling and the run's 1.78 floor there is a band neither clip covers
+    // cleanly; this sits in the middle of it.
+    runAbove: 1.4,
     investigateSpeed: 2.2,
     chaseSpeed: 4.6,      // under player sprint of 6 - you can outrun it
     fleeSpeed: 11.0,      // bolts when someone takes a dish - far faster than you
@@ -80,6 +96,24 @@ export const CFG = {
     // Close enough behind that catching sight of it should land like a shock.
     heelsRange: 7.5,
     loseInterest: 6.0,    // seconds without a fix before giving up
+    // --- being startled ---------------------------------------------------
+    // Loud enough to make it stop dead and look. A jump is 34 m of noise and a
+    // dish is 26, so this catches the jump and nothing else - being startled by
+    // every pickup would make the beat wallpaper.
+    alertNoise: 30,
+    // It does not stop. It swings its head round onto you and keeps coming,
+    // which is worse: a thing that pauses gives you a moment, and a thing that
+    // simply corrects its course while walking gives you none.
+    alignHold: 0.5,       // seconds of fast turning after being startled
+    alertTurnRate: 7.0,   // rad/s - it whips round, it does not swing round
+    // --- being seen with a torch on ---------------------------------------
+    // A beam pointed at it carries far further than it can see you by. The
+    // player's torch is a 25 degree cone reaching 40 m, so this is a little
+    // past where the light visibly dies and well past the 26 m it can see - the
+    // trade being that the one thing letting you find dishes is also the one
+    // thing announcing you from across the map.
+    torchRange: 48,
+    torchBeam: 26,        // degrees off your view that still counts as lit up
   },
   pad: {
     deadzone: 0.18,

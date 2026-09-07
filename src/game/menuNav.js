@@ -119,6 +119,19 @@ export class MenuNav {
         el.classList.contains("tab"));
       if (selected >= 0) this.index = selected;
       this.#paint();
+      // Nothing else this frame. The press that brought us here is still being
+      // reported - it is a rising edge, and this is the same frame it rose on -
+      // so carrying on would let one tap of A do two jobs.
+      //
+      // Which is exactly what it did. Pressing A at the title dismissed the
+      // title AND clicked the first button on the screen behind it, so the pad
+      // shot straight past the mode and lobby screens into a solo game. Being
+      // caught mid-jump did the same thing to the end card: the A that was a
+      // jump a moment ago landed on "Try again".
+      //
+      // Arriving somewhere and acting on it are two presses. This is the line
+      // that says so.
+      return;
     } else if (this.items.some((el) => el.offsetParent === null || el.disabled)) {
       // The lobby list repaints under us as players come and go.
       const current = this.items[this.index];

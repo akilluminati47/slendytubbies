@@ -36,12 +36,32 @@ mapping; only the printed labels differ, and Nintendo transposes A/B and X/Y phy
 
 ## How it plays
 
-The tubby never cheats. It finds you two ways and only two ways:
+The tubby never cheats. It finds you three ways and only three ways:
 
 * **Sight** — a ~100° cone out to 26 m, blocked by tree trunks. Your torch adds 4 m.
 * **Hearing** — a radius set by what you are doing: standing still 1.4 m, walking 9 m,
   sprinting 22 m. Landing is a 14 m burst, taking a dish is a 26 m burst, and
   **jumping is the loudest thing in the game at 34 m**.
+* **Your torch** — a beam pointed at it carries **48 m**, nearly twice as far as it
+  can make out a shape. It has to be facing your way to catch the light and
+  nothing can be stood in between, which in a forest of 420 trunks is what keeps
+  this from firing constantly. The one thing that lets you find dishes is the one
+  thing that announces you from across the map.
+
+Anything loud enough — a jump, or a torch found from beyond its sight — makes it
+**swing round onto you without breaking stride**. Its heading is set outright, so
+the very next step is already in the right direction; only the rendered facing
+catches up, over the following half second, which is what makes it read as a head
+snapping round rather than a body teleporting. It does not stop to stare: a thing
+that halts gives you a moment to use, and a thing that just corrects its course
+and keeps walking gives you none.
+
+Wandering is not one speed: it picks a stride — a slow prowl, an amble, or a
+brisk jog — and keeps it for five to thirteen seconds. The three are chosen
+around what the clips can carry: a clip only plays back between 0.82× and 2.45×,
+so the walk (0.429 m/s) covers 0.35–1.05 m/s and the brisk stride is deliberately
+past that and picked up by the run instead. Catching sight of one *jogging* across
+a clearing on patrol is a much worse moment than watching one glide.
 
 Jumping also hands back a tenth of the stamina bar, per hop. That is deliberate: you can
 keep sprinting indefinitely by hopping, and the price is that you are never unheard again
