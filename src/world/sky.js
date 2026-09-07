@@ -112,6 +112,10 @@ export class Sky {
       // shares its cloud field as well as its trees - and two different rounds
       // never open under the same sky.
       uSeed: { value: new THREE.Vector2(rand() * 512, rand() * 512) },
+      // Where in the day the sky is, 0 to 1. Everything the cloud does with
+      // time is driven off this rather than off a clock that only counts up,
+      // which is what lets a day close the loop exactly - see the shader.
+      uDay: { value: 0 },
     };
     this.material = new THREE.ShaderMaterial({
       side: THREE.BackSide,
@@ -130,6 +134,7 @@ export class Sky {
         uniform float uStars, uHaze, uTime;
         uniform vec3 uFog, uCloud, uCloudLit, uCloudDark;
         uniform vec2 uSeed;
+        uniform float uDay;
 
         float hash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -226,7 +231,29 @@ export class Sky {
           // treeline, which is what perspective on a real deck does anyway.
           if (d.y > 0.0 && uCloud.x > 0.01) {
             vec2 deck = d.xz / (d.y + 0.28) * 1.7 + uSeed;
-            vec2 drift = vec2(uTime * 0.0042, uTime * 0.0016);
+
+            // Time on a circle, not on a line.
+            //
+            // A clock that only counts up walks the cloud field off to
+            // infinity: the sky never repeats, which sounds like a virtue until
+            // you want a day to be a thing that comes round again. Sampling
+            // along a closed path instead means the field is back exactly where
+            // it started after twenty-four hours, so a seed owns one day and
+            // that day loops for as long as anybody stays in it.
+            //
+            // Three orbits at three rates, not one. A single circle would carry
+            // the whole field round rigidly - clouds sliding past with their
+            // shapes frozen. Moving the mass, the scallop and the warp at
+            // different rates means the lobes swell and thin and change their
+            // minds as they go, which is what a sky actually does, and because
+            // every rate is a whole multiple of the day they all still come
+            // home together.
+            float a = uDay * 6.2831853;
+            // Big radius: over a few minutes this reads as a steady drift
+            // rather than as anything going round.
+            vec2 drift = vec2(cos(a), sin(a)) * 3.4;
+            vec2 breath = vec2(cos(a * 2.0), sin(a * 2.0)) * 0.9;
+            vec2 swell = vec2(cos(a * 3.0 + 1.7), sin(a * 3.0 + 1.7)) * 0.55;
 
             // A slow warp of the domain, so the lobes lean and pile instead of
             // sitting in a grid of identical puffs.
@@ -238,8 +265,8 @@ export class Sky {
             // Barely any domain warp. A strong one drags the field out into
             // filaments, and filaments are half of why the second pass looked
             // like something scraped out of a pumpkin.
-            vec2 warp = vec2(fbm(deck * 0.8 + drift * 0.6),
-                             fbm(deck * 0.8 + drift * 0.6 + 5.2)) - 0.5;
+            vec2 warp = vec2(fbm(deck * 0.8 + swell),
+                             fbm(deck * 0.8 + swell + 5.2)) - 0.5;
             vec2 q = deck * 1.15 + drift + warp * 0.14;
 
             // Plain fbm for the mass, NOT billow.
@@ -253,7 +280,7 @@ export class Sky {
             // finer octave rather than from adding it to the mass. Added in, it
             // just makes the whole cloud noisy; used as a wobble on the
             // boundary, it scallops the outline and leaves the middle solid.
-            float scallop = (fbm(q * 3.3 + 11.0) - 0.5) * 0.13;
+            float scallop = (fbm(q * 3.3 + 11.0 + breath) - 0.5) * 0.13;
             float body = mass - scallop;
             // Coverage as a threshold on the field: raising it grows cloud out
             // of a clear sky rather than fading a grey sheet over it.
@@ -426,6 +453,9 @@ export class Sky {
 
     // --- cloud ---------------------------------------------------------------
     this.uniforms.uTime.value = this.elapsed;
+    // The hour itself, normalised. It wraps at 24 on its own, so the cloud
+    // phase wraps with it and the loop closes without anybody managing it.
+    this.uniforms.uDay.value = this.hour / 24;
     this.uniforms.uCloud.value.set(
       0.16 + cloud * 0.78,      // how much of the sky it takes
       0.25 + cloud * 0.6,       // how dark the undersides go
