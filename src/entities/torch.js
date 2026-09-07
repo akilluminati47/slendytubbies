@@ -56,6 +56,16 @@ const HAND_BEAM = 3.4;
  */
 const HELD_PUNCH = 3.4;
 
+/**
+ * How many motes ride in a beam.
+ *
+ * Dense. The point of them is that switching a torch on in a wood fills the
+ * air in front of you with everything that was already there and invisible, and
+ * a handful of tidy specks does not say that - it has to look like too many to
+ * count.
+ */
+const MOTES = 900;
+
 /** The colour of a lit lens, before any punch is applied. */
 const GLASS_TINT = 0xfff1d2;
 
@@ -96,7 +106,10 @@ const RIGS = {
     // is enormous - shrinking it to a sensible 16 cm made it a slightly bigger
     // flashlight, which says nothing at all.
     scale: 1.1,            // 0.253 units deep -> 28 cm of lamp head
-    hold: [0.20, -0.20, -0.26],
+    // Down into the corner. It is a big lamp and it was taking a third of the
+    // screen from the middle of the frame; sitting it low and right leaves the
+    // view to the thing you are pointing it at.
+    hold: [0.235, -0.25, -0.255],
     tilt: [0.04, -0.06, 0.06],
     lens: 0.16,
     length: 0.30,          // a lamp, but one a tubby can actually carry
@@ -176,49 +189,205 @@ export async function loadTorchAssets() {
 }
 
 /**
+ * One clock for every beam and every mote, read at draw time.
+ *
+ * Off the wall clock rather than the game's dt, so nothing has to remember to
+ * tick it - there are five torches on the menu and up to four in a round, and
+ * a drift that stops because somebody forgot to pass a delta is a bug waiting
+ * to be found by somebody else.
+ */
+const beamTime = () => performance.now() * 0.001;
+
+const BEAM_NOISE = /* glsl */`
+  float bHash(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  float bNoise(vec3 x) {
+    vec3 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(bHash(i + vec3(0,0,0)), bHash(i + vec3(1,0,0)), f.x),
+                   mix(bHash(i + vec3(0,1,0)), bHash(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix(bHash(i + vec3(0,0,1)), bHash(i + vec3(1,0,1)), f.x),
+                   mix(bHash(i + vec3(0,1,1)), bHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+  }
+`;
+
+/**
  * The shaft of light.
  *
- * Not a shader. The falloff is baked into per-vertex alpha - bright at the lens,
- * nothing by the far end - which costs one attribute and no compile and reads
- * the same as the expensive version at the size it is drawn. Additive, so it
- * brightens what is behind it rather than fogging it, and it never writes depth
- * so it cannot cut a hole in whatever it passes over.
+ * A cone with a colour on it is a cone: hard silhouette, flat face, and from
+ * anywhere off its axis - which is where you are in first person, since the
+ * lamp sits down in the corner - it reads as a bent sheet of card hanging under
+ * the torch rather than as light in the air. Three things fix that, and none of
+ * them is more geometry.
+ *
+ * It fades by how much of it you are looking THROUGH. The dot of the view ray
+ * with the surface normal is thin at the rim and thick down the middle, which
+ * is exactly how a volume of haze behaves and costs one dot product; the hard
+ * outline goes because the edge is now the part that fades to nothing.
+ *
+ * It is broken up by noise that drifts along the beam, so the shaft has
+ * structure that moves rather than being a solid wash.
+ *
+ * And it fades out close to the camera, because the first half metre of a cone
+ * whose apex is beside your eye is a wall across the screen and nothing else.
+ *
+ * Additive and depth-write off, so it brightens what is behind it rather than
+ * fogging it and cannot cut a hole in whatever it passes over. Not fogged: the
+ * fog would dim it by distance from the camera, and the camera is the thing
+ * holding it.
  */
-function beamCone(len, angle) {
+function beamCone(len, angle, punch = 1) {
   const r = Math.tan(angle) * len;
-  const geo = new THREE.ConeGeometry(r, len, 18, 1, true);
+  const geo = new THREE.ConeGeometry(r, len, 24, 6, true);
   // Point it down -Z with the apex on the lens: +Y becomes +Z, then slide the
   // whole thing back so the tip sits at the origin.
   geo.rotateX(Math.PI / 2);
   geo.translate(0, 0, -len / 2);
 
-  const pos = geo.attributes.position;
-  const col = new Float32Array(pos.count * 4);
-  for (let i = 0; i < pos.count; i++) {
-    const t = Math.min(1, Math.abs(pos.getZ(i)) / len);   // 0 at the lens
-    col[i * 4] = 1; col[i * 4 + 1] = 0.94; col[i * 4 + 2] = 0.78;
-    col[i * 4 + 3] = (1 - t) ** 3 * 0.075;
-  }
-  geo.setAttribute("color", new THREE.BufferAttribute(col, 4));
-
-  const beam = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-    vertexColors: true,
+  const mat = new THREE.ShaderMaterial({
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    // Only the far wall. DoubleSide draws both walls of the cone and additive
-    // blending sums them, which doubled the brightness and gave the shaft a
-    // hard silhouette wherever it crossed something pale - a bright rectangle
-    // on the nearest tree trunk.
-    side: THREE.BackSide,
-    // Fogging the beam would dim it by distance from the CAMERA, and the camera
-    // is the thing holding it.
-    fog: false,
-    toneMapped: false,
-  }));
+    side: THREE.DoubleSide,
+    uniforms: {
+      uTime: { value: 0 },
+      uLen: { value: len },
+      uPunch: { value: punch },
+      uNear: { value: 0.55 },
+      uColor: { value: new THREE.Color(0xfff0cf) },
+    },
+    vertexShader: /* glsl */`
+      varying vec3 vLocal;
+      varying vec3 vNrm;
+      varying vec3 vRay;
+      void main() {
+        vLocal = position;
+        vNrm = normalize(mat3(modelMatrix) * normal);
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vRay = world.xyz - cameraPosition;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform float uTime, uLen, uPunch, uNear;
+      uniform vec3 uColor;
+      varying vec3 vLocal;
+      varying vec3 vNrm;
+      varying vec3 vRay;
+      ${BEAM_NOISE}
+      void main() {
+        float along = clamp(-vLocal.z / uLen, 0.0, 1.0);
+        // How much haze this ray crosses: thick down the axis, nothing at the
+        // rim, which is what takes the outline off it.
+        float thick = pow(abs(dot(normalize(vRay), vNrm)), 1.4);
+        // And thinner the further from the lens, faster than linearly.
+        float reach = pow(1.0 - along, 2.4);
+        // Structure, drifting away from the lens.
+        float n = bNoise(vLocal * (7.0 / uLen) + vec3(0.0, 0.0, uTime * 1.1));
+        n = 0.45 + 0.55 * n;
+        // The apex is beside your eye in first person; without this the first
+        // half metre of it is a wall across the screen.
+        float near = smoothstep(0.0, uNear, length(vRay));
+        float a = 0.085 * uPunch * thick * reach * n * near;
+        if (a < 0.002) discard;
+        gl_FragColor = vec4(uColor * a, a);
+      }
+    `,
+  });
+
+  const beam = new THREE.Mesh(geo, mat);
   beam.frustumCulled = false;
   beam.renderOrder = 3;
+  // One clock, read at draw time, so nothing has to remember to tick it.
+  beam.onBeforeRender = () => { mat.uniforms.uTime.value = beamTime(); };
   return beam;
+}
+
+/**
+ * Dust in the beam.
+ *
+ * The thing that sells a shaft of light is not the shaft, it is what is
+ * floating in it - a beam with nothing in it is a shape, and a beam with motes
+ * in it is air. They live in the cone's own space so they travel with the
+ * torch, and they drift and wrap in the vertex shader so nothing is updated on
+ * the CPU per frame.
+ *
+ * Points rather than quads: a couple of hundred of them cost one draw call and
+ * they are round because gl_PointCoord is round if you ask it to be.
+ */
+function beamMotes(len, angle, count = 130) {
+  const seeds = new Float32Array(count * 3);
+  const phase = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    // Spread across the cone's cross-section, biased inward so the middle of
+    // the shaft is busier than its edges.
+    const a = Math.random() * Math.PI * 2;
+    const rr = Math.sqrt(Math.random()) * 0.85;
+    seeds[i * 3] = Math.cos(a) * rr;
+    seeds[i * 3 + 1] = Math.sin(a) * rr;
+    seeds[i * 3 + 2] = Math.random();
+    phase[i] = Math.random() * 6.2831853;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  geo.setAttribute("seed", new THREE.BufferAttribute(seeds, 3));
+  geo.setAttribute("phase", new THREE.BufferAttribute(phase, 1));
+
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uLen: { value: len },
+      uSpread: { value: Math.tan(angle) },
+      uColor: { value: new THREE.Color(0xfff4dc) },
+      uSize: { value: 34 },
+    },
+    vertexShader: /* glsl */`
+      uniform float uTime, uLen, uSpread, uSize;
+      attribute vec3 seed;
+      attribute float phase;
+      varying float vFade;
+      void main() {
+        // Down the beam and round again, each at its own rate.
+        float t = fract(seed.z + uTime * (0.035 + seed.x * 0.02));
+        float z = -t * uLen;
+        // The cone widens with distance, so the motes have to as well.
+        float spread = uSpread * t * uLen;
+        vec2 swirl = vec2(
+          seed.x + sin(uTime * 0.5 + phase) * 0.06,
+          seed.y + cos(uTime * 0.43 + phase) * 0.06);
+        vec3 local = vec3(swirl * spread, z);
+        vec4 mv = modelViewMatrix * vec4(local, 1.0);
+        // Brightest in the middle of their run: they arrive and leave rather
+        // than blinking on at the lens and off at the end.
+        vFade = sin(t * 3.14159) * (0.35 + 0.65 * fract(phase));
+        gl_PointSize = uSize * (0.35 + 0.65 * (1.0 - t)) / max(-mv.z, 0.15);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform vec3 uColor;
+      varying float vFade;
+      void main() {
+        vec2 d = gl_PointCoord - 0.5;
+        float r = dot(d, d);
+        if (r > 0.25) discard;
+        float a = vFade * (1.0 - r * 4.0) * 0.5;
+        gl_FragColor = vec4(uColor * a, a);
+      }
+    `,
+  });
+
+  const motes = new THREE.Points(geo, mat);
+  motes.frustumCulled = false;
+  motes.renderOrder = 4;
+  motes.onBeforeRender = () => { mat.uniforms.uTime.value = beamTime(); };
+  return motes;
 }
 
 /**
@@ -239,6 +408,9 @@ export function makeTorch(kind = "handheld") {
   if (body) group.add(body);
 
   const beam = beamCone(rig.cone, rig.angle);
+  // Parented to the shaft, so they are scaled, moved and hidden with it and
+  // nothing has to keep two objects in step.
+  beam.add(beamMotes(rig.cone, rig.angle, MOTES));
   beam.position.z = -rig.lens;
   group.add(beam);
 
@@ -574,10 +746,7 @@ export function holdInHand(torch, bone, root) {
   // carried torch reads as a carried torch from across the lane.
   torch.beam.visible = true;
   torch.beam.scale.setScalar(1);
-  // Additive blending multiplies the material's colour by the per-vertex one,
-  // and none of this is tone mapped, so a colour above white is simply a
-  // brighter beam - no second material and no recompile.
-  torch.beam.material.color.setScalar(HELD_PUNCH);
+  torch.beam.material.uniforms.uPunch.value = HELD_PUNCH;
   // Re-set from the hex rather than multiplied, because holdInHand runs again
   // every time the bench moves a slider and a multiply would compound.
   torch.glow.material.color.setHex(GLASS_TINT).multiplyScalar(HELD_PUNCH * 0.55);

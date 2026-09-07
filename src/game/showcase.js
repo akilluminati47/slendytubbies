@@ -77,9 +77,12 @@ const LANE = {
   // off their own lane they drift, per lap. The stagger, in other words.
   pace: 0.22,
   wander: 0.7,
-  // The one at the back of the party is running to catch the group up before
-  // the thing behind them does.
+  // Running, once the thing behind them is close enough to be a reason.
   runSpeed: [3.0, 3.9],
+  // How near the chaser has to get before they run, and how much further it
+  // has to fall behind before they stop.
+  panic: 10.0,
+  calm: 6.0,
   // Beyond this the fog has them completely, which is where two of them can
   // change places without anybody seeing it happen.
   hidden: -28.0,
@@ -338,9 +341,14 @@ export class Showcase {
       : LANE.speed * (1 + (Math.random() - 0.5) * LANE.pace);
     // Somewhere else in the cycle, so nobody is in step with anybody.
     walker.model.mixer.setTime(Math.random() * 4);
-    // And not walking a perfectly straight line down their own lane.
-    walker.model.root.position.x =
-      (OFFSET[walker.kind] ?? 0) + (Math.random() - 0.5) * LANE.wander;
+    // And not walking a perfectly straight line down their own lane - except
+    // the chaser, which comes straight down the middle every time. It is the
+    // one of the five you are meant to get a proper look at, and the lens is
+    // pointed at the centre, so wandering it off to one side means the pass
+    // where you would have seen the mask is the pass where you did not.
+    walker.model.root.position.x = walker.kind === "tinkywinky"
+      ? 0
+      : (OFFSET[walker.kind] ?? 0) + (Math.random() - 0.5) * LANE.wander;
     this.#maybeTorch(walker);
   }
 
@@ -438,26 +446,31 @@ export class Showcase {
       order[i].z = Math.min(order[i].z, order[i - 1].z - LANE.clear);
     }
 
-    // Whoever is directly in front of the chaser is running.
+    // Who is running, and it is the chaser that decides.
     //
-    // Not a fixed member: the order changes, and the point is the position
-    // rather than the character. It is the one thing on the stage that says
-    // what the parade is - four of them walking and the fifth one hurrying,
-    // because of what is behind them.
-    const chaseAt = order.findIndex((w) => w.kind === "tinkywinky");
-    const runner = chaseAt > 0 ? order[chaseAt - 1] : null;
+    // Not a fixed member and not a fixed number: whoever it has got close to
+    // breaks into a run, and on a lap where it rolled fast that is two or three
+    // of them by the time it reaches the lens. Four walking and one hurrying is
+    // the shape of the game; the party finding out at different moments is what
+    // stops the parade being a walk cycle with extra bodies.
+    //
+    // Hysteresis on the way out, or somebody sitting exactly at the threshold
+    // flickers between the two clips forever.
+    const chaser = this.walkers.find((w) => w.kind === "tinkywinky");
     for (const w of this.walkers) {
-      if (w === runner) {
-        if (!w.running) {
-          w.running = true;
-          w.speed = LANE.runSpeed[0]
-            + Math.random() * (LANE.runSpeed[1] - LANE.runSpeed[0]);
-          w.model.play("chase", 0.35);
-        }
-      } else if (w.running) {
-        w.running = false;
+      if (w === chaser || !chaser) continue;
+      const ahead = w.z - chaser.z;
+      const scared = ahead > 0
+        && ahead < LANE.panic + (w.running ? LANE.calm : 0);
+      if (scared === !!w.running) continue;
+      w.running = scared;
+      if (scared) {
+        w.speed = LANE.runSpeed[0]
+          + Math.random() * (LANE.runSpeed[1] - LANE.runSpeed[0]);
+        w.model.play("chase", 0.3);
+      } else {
         w.speed = LANE.speed * (1 + (Math.random() - 0.5) * LANE.pace);
-        w.model.play("walk", 0.35);
+        w.model.play("walk", 0.45);
       }
     }
 
