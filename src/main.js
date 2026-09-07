@@ -15,7 +15,7 @@ import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
 import { Jumpscare } from "./game/jumpscare.js";
 import { MenuNav } from "./game/menuNav.js";
-import { installTuner } from "./game/tuner.js";
+import { installTuner, TUNING } from "./game/tuner.js";
 import { Spectator } from "./game/spectate.js";
 import { NetClient, seedFromKey, ROLE_LABEL } from "./net/client.js";
 import { RemotePlayer } from "./net/remote.js";
@@ -242,7 +242,10 @@ const ui = new UI(settings, net, {
     host = true;
     myRole = "guardian";
     buildWorld(SOLO_SEED);
-    spawnTubby("tinkywinky");     // the CPU is always Tinky Winky
+    // No monster on the tuning bench. You cannot judge a surface with something
+    // hunting you, and being caught mid-drag ends the round and takes the world
+    // you were looking at with it. The panel can put it back.
+    if (!TUNING) spawnTubby("tinkywinky");   // the CPU is always Tinky Winky
     begin();
   },
 
@@ -281,7 +284,13 @@ const ui = new UI(settings, net, {
 menuNav = new MenuNav(ui);
 
 // Sliders for the procedural surfaces, behind ?tune=1. A tool, not a feature.
-installTuner();
+installTuner({
+  setChaser: (on) => {
+    if (on) { if (!tubbies.length) spawnTubby("tinkywinky"); return; }
+    for (const t of tubbies) t.dispose(scene);
+    tubbies.length = 0;
+  },
+});
 
 /* -------------------------------------------------------------- net events */
 

@@ -49,8 +49,14 @@ const CSS = `
 #tuner .hint { color:#6f6a5e; font-size:10.5px; margin-top:6px; }
 `;
 
-export function installTuner() {
-  if (!new URLSearchParams(location.search).has("tune")) return null;
+/** Is the game running as a tuning bench rather than as a game? */
+export const TUNING = new URLSearchParams(location.search).has("tune");
+
+/**
+ * @param hooks.setChaser  (on) => void - spawn or remove the monster
+ */
+export function installTuner(hooks = {}) {
+  if (!TUNING) return null;
 
   const style = document.createElement("style");
   style.textContent = CSS;
@@ -80,6 +86,23 @@ export function installTuner() {
     el.appendChild(grp);
   }
 
+  // The monster is off while you tune, because you cannot look at a rock for
+  // ninety seconds with something hunting you - and being caught mid-drag ends
+  // the round and takes the world with it.
+  let chaserOn = false;
+  const chaser = document.createElement("button");
+  const paintChaser = () => {
+    chaser.textContent = chaserOn ? "Chaser: on" : "Chaser: off";
+    chaser.style.color = chaserOn ? "#d8a0a0" : "#c9e0cd";
+  };
+  chaser.addEventListener("click", () => {
+    chaserOn = !chaserOn;
+    hooks.setChaser?.(chaserOn);
+    paintChaser();
+  });
+  paintChaser();
+  el.appendChild(chaser);
+
   const set = document.createElement("button");
   set.textContent = "Set these";
   el.appendChild(set);
@@ -88,7 +111,8 @@ export function installTuner() {
   el.appendChild(out);
   const hint = document.createElement("div");
   hint.className = "hint";
-  hint.textContent = "Esc frees the mouse. Nothing here ships without ?tune=1.";
+  hint.textContent = "Esc frees the mouse. Reload to start over. " +
+    "Nothing here ships without ?tune=1.";
   el.appendChild(hint);
 
   /** Everything carved of one kind - the ground is one material, rocks are three. */
