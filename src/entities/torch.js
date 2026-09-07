@@ -407,10 +407,9 @@ export function makeTorch(kind = "handheld") {
   const body = model ? model.clone(true) : null;
   if (body) group.add(body);
 
+  // No dust of its own: the air belongs to the world - see world/motes.js -
+  // and a beam finds what is already in it rather than carrying a supply.
   const beam = beamCone(rig.cone, rig.angle);
-  // Parented to the shaft, so they are scaled, moved and hidden with it and
-  // nothing has to keep two objects in step.
-  beam.add(beamMotes(rig.cone, rig.angle, MOTES));
   beam.position.z = -rig.lens;
   group.add(beam);
 

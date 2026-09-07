@@ -15,6 +15,7 @@ import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
 import { installMenuSfx } from "./game/menuSfx.js";
 import { installTorchBench, TORCH_BENCH } from "./game/torchBench.js";
+import { Motes } from "./world/motes.js";
 import { torchFor } from "./entities/torch.js";
 import { Jumpscare } from "./game/jumpscare.js";
 import { MenuNav } from "./game/menuNav.js";
@@ -76,6 +77,8 @@ await loadTorchAssets();
 // before anything else so the title screen is never empty.
 // Metres until the next footfall - see the frame loop.
 let strideLeft = 0;
+/** The dust and the bugs in the air. Rebuilt with the world. */
+let motes = null;
 const showcase = new Showcase();
 showcase.resize(innerWidth, innerHeight);
 installMenuSfx(audio);
@@ -116,6 +119,8 @@ let worldSeed = SOLO_SEED;
 function buildWorld(seed) {
   worldSeed = seed >>> 0;
   world = new World(scene, worldSeed);
+  motes?.dispose();
+  motes = new Motes(scene);
   // The last round's player, if there was one. Its torch and its lights live on
   // the camera, which survives a restart - so without this they stack up.
   player?.dispose();
@@ -807,6 +812,10 @@ function frame() {
     // half a stride late.
     strideLeft = Math.min(strideLeft, 0.25);
   }
+
+  // The air, lit by whatever the player is carrying.
+  motes?.update(dt, camera.getWorldPosition(_eye), world.sky.hour,
+    player.torchOn ? player.torch : null, heightAt(player.pos.x, player.pos.z));
 
   const got = player.tickCollect(dt, world.custards);
   if (got) {
