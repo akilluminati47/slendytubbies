@@ -113,12 +113,22 @@ const HEIGHT = /* glsl */`
  * @param mottle how much the albedo varies with the same field
  * @param tint   what the low parts of the surface are tinted toward
  */
+/**
+ * Everything carved so far, so a tuner can reach the live uniforms.
+ *
+ * The uniform objects do not exist until the material first compiles, which is
+ * the first frame it is drawn - so they are collected here as that happens
+ * rather than looked up through the renderer's private property map.
+ */
+export const CARVED = [];
+
 export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } = {}) {
   const tintCol = new THREE.Color(tint);
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uSurfBump = { value: bump };
     shader.uniforms.uSurfMottle = { value: mottle };
     shader.uniforms.uSurfTint = { value: tintCol };
+    CARVED.push({ mat, kind, u: shader.uniforms });
 
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>\n${COMMON}`)

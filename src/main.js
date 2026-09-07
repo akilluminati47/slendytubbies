@@ -15,6 +15,7 @@ import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
 import { Jumpscare } from "./game/jumpscare.js";
 import { MenuNav } from "./game/menuNav.js";
+import { installTuner } from "./game/tuner.js";
 import { Spectator } from "./game/spectate.js";
 import { NetClient, seedFromKey, ROLE_LABEL } from "./net/client.js";
 import { RemotePlayer } from "./net/remote.js";
@@ -278,6 +279,9 @@ const ui = new UI(settings, net, {
 });
 
 menuNav = new MenuNav(ui);
+
+// Sliders for the procedural surfaces, behind ?tune=1. A tool, not a feature.
+installTuner();
 
 /* -------------------------------------------------------------- net events */
 
