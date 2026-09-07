@@ -16,15 +16,18 @@ export const CFG = {
   player: {
     // Eye height, and it is the tubby's rather than a person's.
     //
-    // It was 1.7, which is where a grown adult's eyes are and nowhere near
-    // where this character's are: the rigged models stand 1.27 m and carry
-    // their eyes at about two thirds of that, so the camera floated a whole
-    // head and shoulders above the body everyone else could see. Other players
-    // came up to your chest while you came up to theirs.
+    // Measured on a placed model in a live map: it stands 1.838 m from sole to
+    // crown - which does match tubby.height below after all - and its eye
+    // sockets sit 1.404 m up, 76% of the way. So 1.7 was a person's eye height
+    // on a character 30 cm shorter, and everyone floated above the body the
+    // other players could see.
     //
-    // Measured off the skinned vertices of a loaded model rather than taken
-    // from tubby.height below, which is a design figure the rig does not match.
-    height: 0.84,
+    // It briefly read 0.84 here, which put the camera at chest height on the
+    // people you were playing with. That came from measuring a REMOTE's skinned
+    // vertices, and a remote's transform chain does not give the numbers a
+    // placed model does - it reported the same tubby as 1.27 m tall. Anything
+    // measured off this rig has to come off a model standing in the world.
+    height: 1.40,
     radius: 0.35,
     walkSpeed: 3.1,
     sprintSpeed: 6.0,

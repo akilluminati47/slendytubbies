@@ -229,6 +229,11 @@ vendor/three/  the five three.js files the game imports, so it deploys standalon
 tools/         serve.py · fetch_sketchfab.py · rig_transfer.py · gen_credits.py
 ```
 
+Eye height is **1.40 m**, measured on a placed model in a live map: it stands 1.838 m sole
+to crown and its eye sockets sit 1.404 m up. Do not measure this off a *remote* — a remote's
+transform chain reports the same tubby as 1.27 m tall, which is how the camera briefly ended
+up at 0.84 and put you at chest height on the people you were playing with.
+
 ### The torch you can see
 
 There was only ever a `SpotLight` — light arriving from nowhere, which is fine until you
