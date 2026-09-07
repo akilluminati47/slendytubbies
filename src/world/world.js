@@ -184,7 +184,7 @@ export class World {
   }
 
   #scatter() {
-    const built = plantWorld(this.scene, {
+    const built = this.flora = plantWorld(this.scene, {
       rand: this.rand,
       heightAt,
       size: CFG.world.size,
@@ -305,6 +305,44 @@ export class World {
       c.halo.scale.setScalar(2.4 * (0.55 + fall * 0.45));
     }
     if (c.goop) c.goop.material.emissiveIntensity = 1.15 * fall;
+  }
+
+  /**
+   * Take the whole round back out of the scene.
+   *
+   * Nothing ever needed this while a restart was a page reload - the browser
+   * threw the lot away for us. It is not a reload any more, because that also
+   * threw away the WebSocket, the lobby, and everybody's name with it, so a
+   * round now has to be dismantled properly or a second one is built on top of
+   * the first: two forests, two skies, and two of every light.
+   */
+  dispose() {
+    const drop = (o) => {
+      if (!o) return;
+      this.scene.remove(o);
+      o.geometry?.dispose?.();
+      if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+      else o.material?.dispose?.();
+    };
+    for (const m of this.flora?.meshes ?? []) drop(m);
+    drop(this.ground);
+    for (const c of this.custards) {
+      this.scene.remove(c.group);
+      for (const m of c.meshes) drop(m);
+      if (c.halo) { this.scene.remove(c.halo); c.halo.material.dispose(); }
+    }
+    if (this.stains) {
+      for (const d of [...this.stains.children]) drop(d);
+      this.scene.remove(this.stains);
+    }
+    this.scene.remove(this.custardGlow);
+    this.custardGlow.dispose();
+    this.rain.dispose(this.scene);
+    this.sky.dispose(this.scene);
+    this.scene.fog = null;
+    this.custards.length = 0;
+    this.obstacles.length = 0;
+    this.grid.clear();
   }
 
   /**

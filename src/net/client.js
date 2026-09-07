@@ -236,8 +236,15 @@ export class NetClient extends EventTarget {
   sendWorld(tubby, custards) { this.#send({ t: "world", tubby, custards }); }
   sendTook(i) { this.#send({ t: "took", i }); }
   sendDead() { this.#send({ t: "dead" }); }
-  /** Host only; the server ignores it from anyone else. */
-  sendRestart() { this.#send({ t: "restart" }); }
+  /**
+   * Host only; the server ignores it from anyone else.
+   *
+   * The seed travels with it. The map is normally derived from the lobby key,
+   * which is the right answer for the first round and the wrong one for the
+   * second - everybody already knows where the ten dishes are. The host picks
+   * a number and everyone builds the same new wasteland from it.
+   */
+  sendRestart(seed) { this.#send({ t: "restart", seed: seed >>> 0 }); }
 
   close() {
     clearTimeout(this.pollTimer);

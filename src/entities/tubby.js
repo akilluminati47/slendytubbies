@@ -404,6 +404,11 @@ export class Tubby {
     this.model.update(dt, this.state === "chase" ? T.chaseSpeed : this.speedNow);
   }
 
+  /** Take it out of the scene, for a round that is ending without a reload. */
+  dispose(scene) {
+    scene.remove(this.root);
+  }
+
   /** Compact form for the wire. */
   netState() {
     return { p: [+this.pos.x.toFixed(2), 0, +this.pos.z.toFixed(2)],

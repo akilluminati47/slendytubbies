@@ -210,7 +210,10 @@ export class Lobby {
         // everyone else out of a game they are still playing.
         if (me.id !== this.hostId) return;
         for (const p of this.players.values()) p.dead = false;
-        this.#broadcast({ t: "restart" }, null);
+        // The seed rides along so every client builds the same new map. It is
+        // the host's number, passed through untouched - the server has no
+        // opinion about what a world looks like.
+        this.#broadcast({ t: "restart", seed: msg.seed >>> 0 }, null);
         break;
 
       case "ping":

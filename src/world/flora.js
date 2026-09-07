@@ -331,7 +331,7 @@ export function sowGrass(scene, { rand, heightAt, count, half, at = { x: 0, z: 0
   grass.castShadow = false;
   grass.receiveShadow = true;
   scene.add(grass);
-  return tufts.length;
+  return grass;
 }
 
 /**
@@ -346,7 +346,10 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   const v = new THREE.Vector3(), sc = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
   const half = size / 2 - 6;
-  const built = {};
+  // Every mesh this puts in the scene, handed back so the caller can take the
+  // whole round out again. A restart used to be a page reload, so nothing ever
+  // needed removing; now that it is not, anything added has to be returnable.
+  const built = { meshes: [] };
 
   // --- trees -------------------------------------------------------------
   // Height first, everything else derived from it. 9 m saplings to 23 m
@@ -410,6 +413,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   trunks.castShadow = crowns.castShadow = true;
   trunks.receiveShadow = crowns.receiveShadow = true;
   scene.add(trunks, crowns);
+  built.meshes.push(trunks, crowns);
   built.trees = trees.length;
 
   // --- rocks -------------------------------------------------------------
@@ -448,6 +452,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     mesh.name = "flora:rock" + gi;
     mesh.castShadow = mesh.receiveShadow = true;
     scene.add(mesh);
+    built.meshes.push(mesh);
     rocksPlaced += list.length;
   });
   built.rocks = rocksPlaced;
@@ -494,16 +499,19 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
+    built.meshes.push(mesh);
     limbCount += list.length;
   });
   built.branches = limbCount;
 
   // --- grass -------------------------------------------------------------
-  built.grass = sowGrass(scene, {
+  const grass = sowGrass(scene, {
     rand, heightAt, count: counts.grass,
     half: { x: size * 0.47, z: size * 0.47 },
     clear,
   });
+  built.grass = grass.count;
+  built.meshes.push(grass);
 
   return built;
 }

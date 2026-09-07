@@ -291,6 +291,15 @@ export class Sky {
     this.update(0);
   }
 
+  /** Take the sky back out of the scene. */
+  dispose(scene) {
+    scene.remove(this.dome, this.hemi, this.key);
+    this.dome.geometry.dispose();
+    this.material.dispose();
+    this.hemi.dispose();
+    this.key.dispose();
+  }
+
   /** Is the sun above the horizon? Drives the gauge's glow. */
   get daylight() { return this.hour > DAWN && this.hour < DUSK; }
 

@@ -98,11 +98,30 @@ const game = { found: 0, total: 0, over: null, elapsed: 0, gasped: false };
  * key, so every player generates an identical map from the password alone and
  * no terrain is ever transmitted.
  */
+let worldSeed = SOLO_SEED;
+
 function buildWorld(seed) {
-  world = new World(scene, seed);
+  worldSeed = seed >>> 0;
+  world = new World(scene, worldSeed);
   player = new Player(camera, input, world, rig);
   wrist = new WristHUD();
   spectator = new Spectator(camera, rig);
+
+  // Stand everybody a couple of metres apart.
+  //
+  // Every player used to start on the origin, which meant a lobby began with
+  // four tubbies occupying the same cubic metre and every camera looking at the
+  // inside of somebody else's belly. It was survivable while a new round meant a
+  // page reload, because the others had not finished loading yet - restarting in
+  // place puts them all there at once and it is the first thing you see.
+  //
+  // Placed by role rather than at random so it is the same on every client, and
+  // well inside the 18 m the dishes are kept clear of.
+  const spot = ["guardian", "laalaa", "po", "dipsy"].indexOf(myRole);
+  if (spot > 0) {
+    const a = (spot / 4) * Math.PI * 2;
+    player.pos.set(Math.sin(a) * 2.6, 0, Math.cos(a) * 2.6);
+  }
   game.total = world.custards.length;
   $("total").textContent = game.total;
 }
@@ -236,7 +255,7 @@ const ui = new UI(settings, net, {
   },
 
   onResume: () => resume(),
-  onRestart: () => location.reload(),
+  onRestart: () => restartRound(),
   onEnterVR: async () => {
     audio.unlock();
     try {
@@ -344,9 +363,10 @@ net.addEventListener("over", () => {
   endGame("dead", "All caught", "");
 });
 
-net.addEventListener("restart", () => {
-  // The host called a new run; everyone reloads into the same lobby together.
-  location.reload();
+net.addEventListener("restart", (e) => {
+  // The host called a new run. Everybody rebuilds in place, on the seed the
+  // host chose, and the lobby is untouched.
+  restartRound(e.detail?.seed);
 });
 
 net.addEventListener("closed", () => {
@@ -428,6 +448,14 @@ function survivors() {
  * over when the server says everyone is down, which it can see and we cannot.
  */
 function beginSpectating() {
+  // Not if the run is already finished.
+  //
+  // The last player to die reaches this at the end of their own capture
+  // sequence, which runs for about two seconds - and the server declares the
+  // round over the moment their death arrives, so the end card is already up by
+  // then. Starting to spectate on top of it put the spectator banner over the
+  // card and left the client apparently without a Play again at all.
+  if (game.over) return;
   spectating = true;
   player.alive = false;
   player.torch.intensity = 0;
@@ -453,8 +481,68 @@ function endGame(kind, headline, detail) {
   document.body.classList.remove("spectating");
   // Online, only the host may start the next run - a guest hitting retry would
   // otherwise drop out of a lobby everyone else is still sitting in.
-  ui.showEnd(headline, detail, online ? { host, onAgain: () => net.sendRestart() } : null);
+  ui.showEnd(headline, detail, online
+    ? { host, onAgain: () => net.sendRestart(newSeed()) }
+    : null);
   if (input.xr.presenting) input.xr.pulse(1, 400);
+}
+
+/**
+ * A number for the next map, so a second round is not the first one again.
+ *
+ * Only the host ever calls this; it travels with the restart so everybody
+ * builds the same wasteland. Solo keeps its fixed seed - the same map every
+ * time is deliberate there.
+ */
+function newSeed() {
+  return (Math.random() * 0xffffffff) >>> 0;
+}
+
+/**
+ * Start the next round without reloading the page.
+ *
+ * This used to be location.reload(), with a comment claiming everyone reloaded
+ * "into the same lobby together". They did not. A reload drops the WebSocket,
+ * and with it the lobby, the password, the roles and everyone's name - so
+ * pressing Play again put the whole party back on the title screen, which is
+ * exactly what it looked like from the inside.
+ *
+ * Rebuilding in place keeps the socket open, so the lobby, the names and who is
+ * host all survive by virtue of never having gone anywhere.
+ */
+function restartRound(seed) {
+  scare = null;
+  spectating = false;
+  spectator?.stop();
+  document.body.classList.remove("spectating");
+
+  // Out with the old round. Nothing here used to exist because the browser did
+  // this part for us.
+  for (const t of tubbies) t.dispose(scene);
+  tubbies.length = 0;
+  world?.dispose();
+  world = null;
+
+  // The people stay. Only their state resets - a body from the last round
+  // lying in a field in this one is not a callback anybody wants.
+  for (const r of remotes.values()) {
+    r.setDead(false);
+    r.seen = false;
+  }
+
+  game.found = 0;
+  game.over = null;
+  game.elapsed = 0;
+  game.gasped = false;
+  netWorld = null;
+  netAccum = 0;
+  $("found").textContent = "0";
+
+  buildWorld(online ? (seed >>> 0 || worldSeed) : SOLO_SEED);
+  spawnTubby("tinkywinky");
+  $("dread").style.opacity = 0;
+  setDrain(0);
+  begin();
 }
 
 /**
