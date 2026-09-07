@@ -27,6 +27,18 @@ const BASE = new URL("../../assets/game/torch", import.meta.url).href;
  * searchlight is a quarter of a unit deep down +Z with the glass on the
  * positive end. `yaw` turns that end to face -Z, which is where a camera looks.
  */
+/**
+ * How far a carried torch's visible shaft reaches, in metres.
+ *
+ * The same for both. The lamps are deliberately different sizes - that is how
+ * you read the Guardian across a clearing - but a shaft of light scaled off the
+ * size of the thing holding it made the black torch look like it had a dud
+ * battery, which is a different claim entirely and not one the game means to
+ * make. Equal reach; the cone angles still differ, so the searchlight throws
+ * the wider beam.
+ */
+const HAND_BEAM = 1.9;
+
 const RIGS = {
   handheld: {
     dir: `${BASE}/handheld/scene.gltf`,
@@ -39,8 +51,8 @@ const RIGS = {
     hold: [0.175, -0.145, -0.36],
     tilt: [0.05, -0.08, 0.10],
     lens: 0.115,           // metres from the group's origin to the glass
-    length: 0.21,          // how long it should end up when held in a hand
-    handBeam: 1.1,         // and how far its shaft carries when carried
+    length: 0.23,          // how long it should end up when held in a hand
+    handBeam: HAND_BEAM,   // and how far its shaft carries when carried
     cone: 3.4,
     angle: 0.44,           // matches the SpotLight exactly
   },
@@ -56,7 +68,7 @@ const RIGS = {
     tilt: [0.04, -0.06, 0.06],
     lens: 0.16,
     length: 0.30,          // a lamp, but one a tubby can actually carry
-    handBeam: 1.9,
+    handBeam: HAND_BEAM,
     cone: 4.2,
     // A wider throw than the handheld, because it is a bigger lamp and should
     // look like one. The SpotLight is widened to match in Player.
@@ -180,7 +192,8 @@ export function makeTorch(kind = "handheld") {
   group.name = "torch:held";
 
   const model = cache?.[kind] ?? cache?.handheld;
-  if (model) group.add(model.clone(true));
+  const body = model ? model.clone(true) : null;
+  if (body) group.add(body);
 
   const beam = beamCone(rig.cone, rig.angle);
   beam.position.z = -rig.lens;
@@ -200,8 +213,8 @@ export function makeTorch(kind = "handheld") {
 
   group.position.set(...rig.hold);
   group.rotation.set(...rig.tilt);
-  return { group, beam, glow, angle: rig.angle, lens: rig.lens, length: rig.length,
-           cone: rig.cone, handBeam: rig.handBeam };
+  return { group, body, beam, glow, angle: rig.angle, lens: rig.lens,
+           length: rig.length, cone: rig.cone, handBeam: rig.handBeam };
 }
 
 /**
@@ -212,6 +225,73 @@ export function makeTorch(kind = "handheld") {
  * scales on these rigs are not 1, so the group is divided back out to keep the
  * prop life-sized whatever the hand it is attached to.
  */
+/** The longest side of an object's world-space bounding box, in metres. */
+function worldSpan(obj) {
+  obj.updateWorldMatrix(true, true);
+  const s = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+  return Math.max(s.x, s.y, s.z);
+}
+
+/** How far along the wrist-to-knuckle run to fall back to, when there is no skin. */
+const PALM = 0.42;
+
+/**
+ * The middle of the palm, in the hand bone's own space.
+ *
+ * Not the bone's origin. On these rigs the hand bone sits a quarter of a metre
+ * from the mitten it drives - projecting both to the screen puts the joint in
+ * empty air below the hand - so hanging the torch at the origin left it
+ * floating under the palm with daylight between the two, which is exactly what
+ * it looked like.
+ *
+ * So ask the skin instead of the skeleton. Every vertex the bone drives is
+ * pulled back through its inverse bind matrix into the bone's own space and
+ * averaged by weight, which lands on the middle of the visible mitten by
+ * construction and needs to know nothing about how any particular rig is built.
+ * Bind space, not the current pose, so it is the same answer mid-stride as it
+ * is standing still - and cached on the bone, because it cannot change.
+ *
+ * Falls back to a fraction of the way toward the knuckles when nothing is
+ * skinned to the bone at all.
+ */
+function palmOffset(bone, root) {
+  if (bone.userData.palmLocal) return bone.userData.palmLocal.clone();
+
+  const sum = new THREE.Vector3(), v = new THREE.Vector3();
+  let weight = 0;
+  root?.traverse?.((skin) => {
+    if (!skin.isSkinnedMesh) return;
+    const bi = skin.skeleton.bones.indexOf(bone);
+    if (bi < 0) return;
+    const inv = skin.skeleton.boneInverses[bi];
+    const { position, skinIndex, skinWeight } = skin.geometry.attributes;
+    if (!skinIndex || !skinWeight) return;
+    for (let i = 0; i < position.count; i++) {
+      let w = 0;
+      for (let j = 0; j < 4; j++) {
+        if (skinIndex.getComponent(i, j) === bi) w += skinWeight.getComponent(i, j);
+      }
+      if (w <= 0.05) continue;
+      v.fromBufferAttribute(position, i).applyMatrix4(skin.bindMatrix).applyMatrix4(inv);
+      sum.addScaledVector(v, w);
+      weight += w;
+    }
+  });
+
+  if (weight > 0) sum.divideScalar(weight);
+  else {
+    const bones = bone.children.filter((b) => b.isBone);
+    const knuckles = bones.find((b) => /finger|index|middle/i.test(b.name))
+      ?? bones.filter((b) => !/thumb/i.test(b.name))
+        .sort((a, b) => b.position.lengthSq() - a.position.lengthSq())[0]
+      ?? bones[0];
+    if (knuckles) sum.copy(knuckles.position).multiplyScalar(PALM);
+  }
+
+  bone.userData.palmLocal = sum.clone();
+  return sum;
+}
+
 export function holdInHand(torch, bone, root) {
   if (!bone) return false;
   // Whatever was in this hand before goes first.
@@ -226,9 +306,8 @@ export function holdInHand(torch, bone, root) {
   bone.updateWorldMatrix(true, false);
   bone.matrixWorld.decompose(pos, rot, scl);
 
-  // Sat in the middle of the palm. The bone's origin IS the palm, so the offset
-  // is nothing more than a nudge off the joint itself.
-  torch.group.position.set(0, 0, 0);
+  // Sat in the middle of the palm - see palmOffset.
+  torch.group.position.copy(palmOffset(bone, root));
   torch.group.scale.setScalar(1);
 
   // A shorter shaft, not no shaft.
@@ -236,12 +315,12 @@ export function holdInHand(torch, bone, root) {
   // Killing the beam outright fixed the crowbar - four metres of cone swinging
   // off a wrist - and created a worse problem: a small unlit black object held
   // low against a dark body is invisible, which is exactly how it looked. The
-  // cone is scaled uniformly instead, so it keeps its angle and loses its
-  // reach, and a carried torch reads as a carried torch from across the lane.
+  // cone is scaled instead, so it keeps its angle and loses its reach, and a
+  // carried torch reads as a carried torch from across the lane. Its scale is
+  // set below, once we know what the group's own scale ended up as.
   torch.beam.visible = true;
-  torch.beam.scale.setScalar(torch.handBeam / torch.cone);
-  // The glass reads brighter too, for the same reason.
-  torch.glow.scale.multiplyScalar(1.6);
+  torch.beam.scale.setScalar(1);
+  // The glass reads brighter too, for the same reason. Its size is set below.
   torch.glow.material.opacity = 1;
 
   // Pointed where the character is looking, not down a finger.
@@ -271,11 +350,40 @@ export function holdInHand(torch, bone, root) {
   // hand's world scale is not the number that ends up applied to a child of it.
   // The searchlight arrived five and a half metres long. Measuring the result
   // and correcting it needs to know nothing about the chain at all.
-  torch.group.updateWorldMatrix(true, true);
-  const box = new THREE.Box3().setFromObject(torch.group);
-  const size = box.getSize(new THREE.Vector3());
-  const longest = Math.max(size.x, size.y, size.z);
+  //
+  // Measure the BODY, though - not the group. The group contains the beam, and
+  // the beam is metres long where the torch is centimetres, so a box round the
+  // group is a box round the light. Sizing that to 21 cm sized the LIGHT to
+  // 21 cm and dragged the torch down with it to a black chip four centimetres
+  // long: the searchlight only looked survivable because its model is huge to
+  // start with. What we want set is the length of the object in the hand.
+  const longest = worldSpan(torch.body ?? torch.group);
   if (longest > 1e-5) torch.group.scale.setScalar(torch.length / longest);
+
+  // Now slide the group so the torch you can SEE is on the palm.
+  //
+  // Putting the group's origin there is not the same thing: these rips carry
+  // their own pivots, and this one's is off the back of the barrel, so a torch
+  // pinned to the palm by its origin still hangs below the mitten. Shift by the
+  // gap between the body's drawn centre and the target, which needs no
+  // knowledge of where any particular author put their origin.
+  torch.group.updateWorldMatrix(true, true);
+  const palmWorld = bone.localToWorld(palmOffset(bone, root));
+  const drawn = new THREE.Box3().setFromObject(torch.body ?? torch.group)
+    .getCenter(new THREE.Vector3());
+  const origin = new THREE.Vector3().setFromMatrixPosition(torch.group.matrixWorld);
+  torch.group.position.copy(bone.worldToLocal(origin.add(palmWorld).sub(drawn)));
+
+  // And the same treatment for the shaft and the glass, for the same reason.
+  //
+  // Working the beam's scale out from the group's - cone * k, and solve - is
+  // the crowbar mistake wearing a different hat: it leaves out every scale
+  // between the bone and the world, which on these rigs is a factor of two.
+  // Measuring what actually came out needs to know nothing about the chain.
+  const reach = worldSpan(torch.beam);
+  if (reach > 1e-5) torch.beam.scale.multiplyScalar(torch.handBeam / reach);
+  const glass = worldSpan(torch.glow);
+  if (glass > 1e-5) torch.glow.scale.multiplyScalar(torch.length * 0.42 / glass);
   return true;
 }
 

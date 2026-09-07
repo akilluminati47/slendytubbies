@@ -966,6 +966,7 @@ renderer.setAnimationLoop(frame);
 // Debug handle: __dbg.tp(x, z), __dbg.here() to warp a tubby onto you, __dbg.reveal().
 window.__dbg = {
   game, tubbies, remotes, scene, camera, input, rig, renderer, audio, settings, ui, net,
+  showcase,
   get menuNav() { return menuNav; },
   pause, resume,
   get world() { return world; },
