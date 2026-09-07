@@ -320,7 +320,26 @@ function applyCustardMask(mask) {
   if (found !== game.found) {
     game.found = found;
     $("found").textContent = found;
+    checkWon();
   }
+}
+
+/**
+ * Has the lobby finished?
+ *
+ * Called from everywhere the count can move, and that is the point. The win
+ * used to be tested in exactly one place - the frame after YOU walked onto a
+ * dish - so a guest picking up the tenth one ended their own round and left
+ * everybody else standing in a finished wasteland at 10 of 10, waiting for
+ * something that was never going to happen. The objective belongs to the lobby,
+ * so the test has to live wherever the lobby's count changes.
+ */
+function checkWon() {
+  if (game.over || game.found < game.total) return false;
+  endGame("won", "You got out",
+    `All ${game.total} dishes recovered in ${game.elapsed.toFixed(0)} seconds.` +
+    `<br>It is still out there.`);
+  return true;
 }
 net.addEventListener("took", (e) => {
   const c = world?.custards[e.detail.i];
@@ -338,6 +357,7 @@ net.addEventListener("took", (e) => {
     ui.tally(game.total - game.found);
     if (who) ui.flash(`${who.name} found custard: ${game.found}/${game.total}`);
   }
+  checkWon();
 });
 net.addEventListener("dead", (e) => {
   const r = remotes.get(e.detail.id);
@@ -732,11 +752,7 @@ function frame() {
     if (online) net.sendTook(world.custards.indexOf(got));
     // It does not bolt. Slendytubbies 1 rules: taking a dish makes noise and the
     // noise is the point - it comes towards you, it does not give you a breather.
-    if (game.found >= game.total) {
-      endGame("won", "You got out",
-        `All ${game.total} dishes recovered in ${game.elapsed.toFixed(0)} seconds.<br>It is still out there.`);
-      return;
-    }
+    if (checkWon()) return;
   }
 
   let threat = 0;

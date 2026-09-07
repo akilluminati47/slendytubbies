@@ -157,8 +157,17 @@ Caught alone, the run ends. Caught in a lobby, you drop into **third-person
 spectating** on a survivor — camera control only, jump to cycle who you watch. The run is
 over only when the server sees that everyone is down, which it can tell and a client cannot.
 
+The run ends for **everybody at once**, on either ending: the win is tested wherever the
+lobby's count moves rather than only in the frame after *you* walked onto a dish, so a
+guest picking up the tenth one ends the round for the host too instead of leaving them
+standing in a finished wasteland at 10/10.
+
 The end screen is then **host-gated**: only the host gets a live "Play again", which
-broadcasts a restart to the whole lobby. A guest hitting retry would otherwise tear
+broadcasts a restart to the whole lobby. That restart rebuilds the round **in place** —
+it used to be `location.reload()`, which drops the WebSocket and takes the lobby, the
+password, the roles and everyone's name with it, so pressing it put the whole party back
+on the title screen. The seed rides on the message, because the map is otherwise derived
+from the lobby key and a second round would be the first one again. A guest hitting retry would otherwise tear
 themselves out of a lobby everyone else is still sitting in, so guests are told who they are
 waiting on and offered "Leave lobby" instead. The server drops `restart` from anyone but the
 host, so the gate is real rather than a hidden button.
