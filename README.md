@@ -248,7 +248,18 @@ Downscaled to 256 on the way into `assets/game/` they are 1.2 MB, colour maps as
 normal/roughness kept as PNG, where blocking would crawl over the shell as facets.
 
 On the menu, one appearance in ten walks past carrying theirs, hung off the hand bone so it
-moves with the walk cycle. Rolled per appearance rather than fixed per character: nobody
+moves with the walk cycle. The prop is sized by measuring what came out and correcting it,
+not by dividing out the hand bone's world scale — these rigs carry scale at several joints
+and a rewritten set of inverse binds, so that number is not what ends up applied to a child
+of the bone, and the searchlight arrived five and a half metres long.
+
+The fingers **do not** close on it, and the machinery to do so is present but switched off
+(`GRIP_ENABLED` in `tubbyModel.js`). The rig has finger bones and rotating them moves the
+fingertip 19 cm toward the palm — which is why it looked right when it was measured rather
+than looked at. What it does to the skin is shear the whole mitten into a curved blade
+hanging off the wrist, because the weights on those bones cover far more of the hand than
+their names suggest. At full strength it is a scythe; by the point it is small enough not to
+be one, it is not visibly closing anything either. Rolled per appearance rather than fixed per character: nobody
 carrying one is a lifeless line-up, and everybody carrying one stops reading as something
 you were lucky to catch.
 

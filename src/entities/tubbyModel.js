@@ -78,8 +78,25 @@ const _dq = new THREE.Quaternion();
 const _dq2 = new THREE.Quaternion();
 const _scr = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
-/** Which way a finger bends, in its own frame. Established by looking. */
+/** Which way a finger bends, in its own frame. */
 const GRIP_AXIS = new THREE.Vector3(1, 0, 0);
+/**
+ * Whether to close the hand round a held torch. It is off, and it is off
+ * because these fingers do not bend.
+ *
+ * The rig does have them - Fingers_R1, Fingers_R2 and a thumb - and rotating
+ * them does move the fingertip 19 cm toward the palm, which is why this looked
+ * like it worked when it was measured rather than looked at. What it actually
+ * does to the skin is shear the whole mitten into a long curved blade hanging
+ * off the wrist. The weights on those bones cover far more of the hand than
+ * their names suggest, so there is no rotation that reads as a curl: at full
+ * strength it is a scythe, and by the point it is small enough not to be one
+ * (about 0.15) it is not visibly closing anything either.
+ *
+ * Left in place rather than deleted because the machinery is right and only the
+ * axis is a guess. Whoever works out the mitten's real bend axis flips this.
+ */
+const GRIP_ENABLED = false;
 // A hair of sink so the sole meets the ground rather than hovering on it.
 const FOOT_SINK = 0.01;
 
@@ -1161,7 +1178,7 @@ class RiggedTubby {
    * keeps swinging the arm and the hand simply stays shut while it does.
    */
   #closeHand() {
-    if (this.gripAmount <= 0.001) return;
+    if (!GRIP_ENABLED || this.gripAmount <= 0.001) return;
     for (const [bone, angle] of this.gripBones) {
       _dq.setFromAxisAngle(GRIP_AXIS, angle * this.gripAmount);
       bone.quaternion.multiply(_dq);
