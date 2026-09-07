@@ -24,6 +24,15 @@ import { makeTubby } from "../entities/tubbyModel.js";
  */
 
 /** Guardian first, the playable three next, the chaser last. */
+/** How often each of them comes past with a torch in hand. */
+const TORCH_CHANCE = {
+  laalaa: 1,
+  po: 1,
+  dipsy: 1,
+  guardian: 0.10,
+  tinkywinky: 0,
+};
+
 const CAST = ["guardian", "laalaa", "po", "dipsy", "tinkywinky"];
 
 const LANE = {
@@ -145,13 +154,13 @@ export class Showcase {
   }
 
   /**
-   * One in ten of them walks past carrying their torch.
+   * Who walks past carrying their torch.
    *
-   * Rolled per appearance rather than fixed per character, so the parade is the
-   * same cast in the same order every time and occasionally one of them is lit -
-   * which is worth more than either extreme. Nobody carrying one is a lifeless
-   * line-up; everybody carrying one is a torchlit procession and stops reading
-   * as a coincidence you were lucky to catch.
+   * The three colour players always do - they are the ones you play as, and a
+   * torch is the thing you spend the whole game holding. The Guardian only
+   * occasionally brings the searchlight out, which is what makes it worth
+   * seeing when it does. The chaser never carries anything: it is the reason
+   * everyone else needs a light.
    *
    * Hung off the hand bone, so it moves with the walk cycle instead of floating
    * alongside the model.
@@ -165,7 +174,7 @@ export class Showcase {
     dropFromHand(hand);
     this.torch = null;
     this.current.grip?.(0);
-    if (!hand || Math.random() >= 0.10) return;
+    if (!hand || Math.random() >= (TORCH_CHANCE[kind] ?? 0)) return;
     const t = makeTorch(torchFor(kind));
     if (holdInHand(t, hand, this.current.root)) {
       this.torch = t;

@@ -247,8 +247,11 @@ Their 4K textures were 25.8 MB between them, to light a prop held 20 cm from the
 Downscaled to 256 on the way into `assets/game/` they are 1.2 MB, colour maps as JPEG and
 normal/roughness kept as PNG, where blocking would crawl over the shell as facets.
 
-On the menu, one appearance in ten walks past carrying theirs, hung off the hand bone so it
-moves with the walk cycle. The prop is sized by measuring what came out and correcting it,
+On the menu the three colour players always walk past carrying theirs — they are the ones
+you play as, and a torch is the thing you spend the whole game holding. The Guardian brings
+the searchlight out one appearance in ten, which is what makes it worth seeing when it does.
+The chaser never carries anything: it is the reason everyone else needs a light. Hung off
+the hand bone, so it moves with the walk cycle. The prop is sized by measuring what came out and correcting it,
 not by dividing out the hand bone's world scale — these rigs carry scale at several joints
 and a rewritten set of inverse binds, so that number is not what ends up applied to a child
 of the bone, and the searchlight arrived five and a half metres long.
