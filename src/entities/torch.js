@@ -40,6 +40,7 @@ const RIGS = {
     tilt: [0.05, -0.08, 0.10],
     lens: 0.115,           // metres from the group's origin to the glass
     length: 0.21,          // how long it should end up when held in a hand
+    handBeam: 1.1,         // and how far its shaft carries when carried
     cone: 3.4,
     angle: 0.44,           // matches the SpotLight exactly
   },
@@ -55,6 +56,7 @@ const RIGS = {
     tilt: [0.04, -0.06, 0.06],
     lens: 0.16,
     length: 0.30,          // a lamp, but one a tubby can actually carry
+    handBeam: 1.9,
     cone: 4.2,
     // A wider throw than the handheld, because it is a bigger lamp and should
     // look like one. The SpotLight is widened to match in Player.
@@ -198,7 +200,8 @@ export function makeTorch(kind = "handheld") {
 
   group.position.set(...rig.hold);
   group.rotation.set(...rig.tilt);
-  return { group, beam, glow, angle: rig.angle, lens: rig.lens, length: rig.length };
+  return { group, beam, glow, angle: rig.angle, lens: rig.lens, length: rig.length,
+           cone: rig.cone, handBeam: rig.handBeam };
 }
 
 /**
@@ -228,11 +231,18 @@ export function holdInHand(torch, bone, root) {
   torch.group.position.set(0, 0, 0);
   torch.group.scale.setScalar(1);
 
-  // A hand-held torch has no beam. The shaft is four metres long and drawn from
-  // the lens; hanging that off a wrist gives you a translucent girder swinging
-  // through the scene, which is most of what made the Guardian's look like a
-  // crowbar. The light itself comes from elsewhere in both cases that use this.
-  torch.beam.visible = false;
+  // A shorter shaft, not no shaft.
+  //
+  // Killing the beam outright fixed the crowbar - four metres of cone swinging
+  // off a wrist - and created a worse problem: a small unlit black object held
+  // low against a dark body is invisible, which is exactly how it looked. The
+  // cone is scaled uniformly instead, so it keeps its angle and loses its
+  // reach, and a carried torch reads as a carried torch from across the lane.
+  torch.beam.visible = true;
+  torch.beam.scale.setScalar(torch.handBeam / torch.cone);
+  // The glass reads brighter too, for the same reason.
+  torch.glow.scale.multiplyScalar(1.6);
+  torch.glow.material.opacity = 1;
 
   // Pointed where the character is looking, not down a finger.
   //

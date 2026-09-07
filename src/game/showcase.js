@@ -41,6 +41,11 @@ const LANE = {
   // dark; from here they fade up almost immediately.
   start: -16.5,
   end: 2.0,          // past the camera, out of frame
+  // The chaser does not amble. It comes past at its own pace, rolled each time,
+  // so the one appearance in five that is the monster is also the one you
+  // cannot set your watch by - and fast enough that the run clip picks it up
+  // rather than the walk.
+  chaserSpeed: [2.6, 5.4],
   // Half-extents of the patch worth sowing. Only what the 40 degree lens can
   // see from z=0 through 19 m of fog is ever drawn, so sowing the whole 60 m
   // plane would be triangles nobody looks at.
@@ -150,6 +155,9 @@ export class Showcase {
     this.current.root.visible = true;
     this.current.root.position.x = OFFSET[kind] ?? 0;
     this.current.play("walk", 0);
+    this.speed = kind === "tinkywinky"
+      ? LANE.chaserSpeed[0] + Math.random() * (LANE.chaserSpeed[1] - LANE.chaserSpeed[0])
+      : LANE.speed;
     this.#maybeTorch(kind);
   }
 
@@ -192,7 +200,8 @@ export class Showcase {
     if (!this.models) this.#build();
     if (!this.current) return false;
 
-    this.z += LANE.speed * dt;
+    const speed = this.speed ?? LANE.speed;
+    this.z += speed * dt;
     if (this.z > LANE.end) this.#take(this.index + 1, LANE.start);
 
     // No ground mist on the stage. The lid is partly an absolute world height
@@ -206,7 +215,7 @@ export class Showcase {
     model.root.position.z = this.z;
     model.root.position.y = 0;          // flat stage; plantFeet does the rest
     model.root.rotation.y = 0;          // walking towards the camera
-    model.update(dt, LANE.speed);
+    model.update(dt, speed);
 
     renderer.render(this.scene, this.camera);
     return true;
