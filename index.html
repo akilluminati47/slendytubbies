@@ -190,6 +190,22 @@
   .screen.glass::before { content:""; position:absolute; inset:0; z-index:0;
     background:radial-gradient(125% 85% at 50% 42%,
       rgba(5,5,7,.42) 0%, rgba(4,4,6,.82) 100%); }
+  /* None of this is a document.
+     Dragging across the HUD or a menu and pulling a blue selection out of it is
+     a web-page behaviour, and it is the fastest way to make a game feel like a
+     page. The one exception is the thing you are meant to type into. */
+  body, .screen, #hud { -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent; }
+  input, textarea { -webkit-user-select:text; user-select:text; }
+
+  /* No focus rectangles either. The browser's ring is a second cursor competing
+     with the one this game draws itself (.nav-focus), and it lands on whatever
+     was last clicked whether or not anybody is navigating by keyboard. Text
+     fields keep a focus state, because there it means "your typing goes here"
+     rather than "you are hovering this". */
+  :focus, :focus-visible { outline:none; }
+  .field input:focus { border-color:#6d7f63; background:rgba(12,14,11,.9); }
+
   .card { position:relative; z-index:1; display:grid; gap:26px;
     justify-items:center; text-align:center;
     padding:clamp(26px,4.2vw,46px) clamp(24px,4.6vw,54px);
@@ -245,13 +261,60 @@
   /* Pause and the end card sit over a live world rather than the parade, so
      their scrim is heavier - enough to stop the forest competing with the
      buttons, not so much that you forget the game is still there. */
-  #pause.glass::before, #end.glass::before {
+  #pause.glass::before {
     background:radial-gradient(130% 90% at 50% 45%,
       rgba(4,4,6,.72) 0%, rgba(3,3,4,.93) 100%); }
+  /* The end card gets a far lighter scrim than the pause menu, and it has to.
+     The scrim is painted UNDER the card, so it is most of what the card's
+     backdrop-filter has to blur - at the pause menu's 0.72-to-0.93 there is
+     almost nothing left behind it and the panel comes out as a flat dark
+     rectangle with a border. Glass needs something to be glass in front of.
+     The pause menu keeps the heavy one: it carries a long settings list that
+     has to stay readable over a lit forest. */
+  #end.glass::before {
+    background:radial-gradient(130% 95% at 50% 45%,
+      rgba(4,4,6,.30) 0%, rgba(3,3,4,.74) 100%); }
+  /* And a little more of its own body, to make up the legibility the lighter
+     scrim gives away. */
+  #end .card { background:rgba(10,10,13,.58); }
   #pause { align-content:start; justify-content:center;
     padding-top:8vh; overflow-y:auto; }
   #pause .card { max-width:min(560px,94vw); gap:18px; }
   #end .card { min-width:min(360px,88vw); }
+
+  /* ------------------------------------------------- on-screen keyboard --
+     Sits over the lobby rather than inside its card, so the field being typed
+     into stays visible above it. Pointer events are on: a pad player is the
+     reason it exists, but nobody should find a keyboard that ignores a click. */
+  #osk { position:fixed; left:50%; bottom:3.5vh; transform:translateX(-50%);
+    z-index:20; display:grid; gap:7px; justify-items:center;
+    padding:16px clamp(12px,2.4vw,22px) 14px;
+    border:1px solid rgba(226,220,204,.12); border-radius:18px;
+    background:rgba(10,10,13,.62);
+    -webkit-backdrop-filter:blur(22px) saturate(118%);
+    backdrop-filter:blur(22px) saturate(118%);
+    box-shadow:0 30px 80px -30px #000; }
+  @supports not (backdrop-filter:blur(1px)) { #osk { background:rgba(7,7,9,.95); } }
+  #osk.hide { display:none; }
+  .osk-preview { font-family:var(--num); font-size:15px; letter-spacing:.08em;
+    color:var(--ink); min-height:20px; padding:0 4px 4px;
+    max-width:min(520px,88vw); overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .osk-row { display:flex; gap:6px; }
+  .osk-key { width:clamp(30px,4.6vw,42px); height:clamp(30px,4.6vw,42px);
+    display:grid; place-items:center; cursor:pointer;
+    font-family:var(--num); font-size:clamp(12px,1.5vw,15px);
+    color:#98907f; background:rgba(18,20,17,.6);
+    border:1px solid var(--line); border-radius:9px; }
+  .osk-key.wide-2 { width:clamp(64px,9.6vw,90px); }
+  .osk-key.wide-4 { width:clamp(132px,20vw,186px); }
+  /* The cursor, and the same green the menu cursor uses - a pad player should
+     not have to learn two different "you are here". */
+  .osk-key.on { color:var(--ink); border-color:#8fae82;
+    background:rgba(38,48,34,.85); box-shadow:0 0 0 1px rgba(143,174,130,.35); }
+  .osk-key.live { color:#c9e0cd; border-color:#6d7f63; }
+  .osk-hint { font-size:11px; letter-spacing:.06em; color:#6f6a5e; padding-top:3px; }
+  .osk-hint b { color:#98907f; font-weight:400; }
   #pause h2, #lobby h2 { font-size:21px; letter-spacing:.01em; font-weight:400;
     margin-bottom:10px; }
   /* The settings list reads as one inset panel rather than a stack of loose
@@ -606,6 +669,10 @@
     <p class="sub" id="end-wait" hidden></p>
   </div>
 </div>
+
+<!-- The pad's keyboard. Outside the screens because it overlays whichever one
+     owns the field being typed into. -->
+<div id="osk" class="hide"></div>
 
 <!-- Lives outside the screens so title and mode can share one element rather
      than each carrying a copy that could drift apart. -->

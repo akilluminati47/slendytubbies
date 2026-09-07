@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { setMist } from "../world/groundFog.js";
+import { sowGrass } from "../world/flora.js";
+import { rng } from "../world/world.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 
 /**
@@ -29,6 +31,10 @@ const LANE = {
   // dark; from here they fade up almost immediately.
   start: -16.5,
   end: 2.0,          // past the camera, out of frame
+  // Half-extents of the patch worth sowing. Only what the 40 degree lens can
+  // see from z=0 through 19 m of fog is ever drawn, so sowing the whole 60 m
+  // plane would be triangles nobody looks at.
+  grassArea: { x: 13, z: 15 },
   speed: 1.9,        // m/s; walking at the lens hides what skating there is
   firstStart: -7.5,  // the first one is already in view when the title appears
 };
@@ -63,11 +69,31 @@ export class Showcase {
     rim.position.set(-3.5, 2.6, -7);
     this.scene.add(rim);
 
+    // The stage floor, in the drained palette rather than the wasteland's own.
+    // The menu is the game with the colour taken out of it - the same thing the
+    // dread overlay does when something is close - so the ground under the cast
+    // is a grey with barely any green left in it rather than the field green
+    // the map uses.
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(60, 60),
-      new THREE.MeshStandardMaterial({ color: 0x14170f, roughness: 1 }));
+      new THREE.MeshStandardMaterial({ color: 0x1b1d1a, roughness: 1 }));
     ground.rotation.x = -Math.PI / 2;
     this.scene.add(ground);
+
+    // Grass, and only grass: no trees and no rocks, because anything with a
+    // silhouette competes with the one silhouette this screen exists to show.
+    // Three times the density the map uses - the cast walks through a strip a
+    // few metres wide and it wants to look like a field, not a verge - and
+    // drained of colour to match the floor.
+    sowGrass(this.scene, {
+      rand: rng(0x5ee1),          // its own stream, so it never moves
+      heightAt: () => 0,          // a flat stage
+      count: Math.round(LANE.grassArea.x * 2 * LANE.grassArea.z * 2 * 3.2),
+      half: LANE.grassArea,
+      at: { x: 0, z: -8 },
+      sat: 0.14,
+      name: "showcase:grass",
+    });
 
     this.models = null;      // built on first draw, once the rigs exist
     this.index = 0;

@@ -30,6 +30,13 @@ hold-to-repeat), A selects, B goes back, the bumpers switch tabs, Start pauses a
 Sliders take left/right directly rather than making you "enter" them first, which is the one
 thing that would make settings worse on a pad than a mouse.
 
+Text fields open an **on-screen keyboard** (`src/game/osk.js`). Every screen was pad-
+navigable except the two that matter most for playing with anybody else: a lobby needs a
+name and a private lobby needs a password, and neither can be typed with a stick — a
+controller player could reach the Public list and nothing else. It is its own grid rather
+than a reuse of the menu cursor, because on a keyboard all four directions mean position
+and the menu's list walk has no way to say that.
+
 Anything laid out side by side — the Public/Private tabs, the VR turning row — is **one
 stop, walked with left and right**. Up and down step past the whole row. Asking a player to
 press *down* to get from Public to Private is asking them to walk vertically along something

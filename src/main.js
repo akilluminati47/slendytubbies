@@ -91,7 +91,7 @@ const remotes = new Map();
 // feet. Reused: this is read every frame and a fresh vector each time bought
 // nothing.
 const _eye = new THREE.Vector3();
-const game = { found: 0, total: 0, over: null, elapsed: 0 };
+const game = { found: 0, total: 0, over: null, elapsed: 0, gasped: false };
 
 /**
  * Build the wasteland. The seed matters: in multiplayer it comes from the lobby
@@ -186,6 +186,7 @@ function spawnTubby(kind) {
 }
 
 function begin() {
+  game.gasped = false;
   input.touch.setInGame(true);
   ui.show("game");
   input.lock();
@@ -480,26 +481,29 @@ function endGame(kind, headline, detail) {
  * only inside seven and a half metres, by which point the realisation is
  * academic.
  *
- * Once per chase. The flag clears when it gives up, so glancing back and forth
- * at something that is already after you does not machine-gun it.
+ * Once a run. Not once a chase - the sound is somebody realising what they are
+ * sharing a forest with, and you only get to realise that once. Every encounter
+ * after the first is carried by the heartbeat and the red, both of which already
+ * answer to range and so say "it is close" without ever saying "oh god" again.
  */
 function checkSpotted(dt) {
   if (!player?.alive || spectating) return;
   // You cannot flinch at what you cannot make out, and the fog decides that -
   // which moves with the weather and the hour, exactly as it should.
   const canSee = scene.fog ? scene.fog.far : 40;
+  if (game.gasped) return;
   for (const t of tubbies) {
-    if (!t.eyesOnYou(player)) { t.seenCue = false; continue; }
-    if (t.seenCue) continue;
+    if (!t.eyesOnYou(player)) continue;
     const dx = t.pos.x - player.pos.x, dz = t.pos.z - player.pos.z;
     const d = Math.hypot(dx, dz) || 1e-6;
     if (d > canSee) continue;
     // Three.js cameras face -Z, so at yaw t the view runs along (-sin t, -cos t).
     const look = (-Math.sin(input.yaw) * dx + -Math.cos(input.yaw) * dz) / d;
     if (look < Math.cos(CFG.tubby.lookAngle * Math.PI / 180)) continue;
-    t.seenCue = true;
+    game.gasped = true;
     input.gamepad.rumble(0.7, game.elapsed);
     audio.playSample("jumpscare", 0.8);
+    return;
   }
 }
 

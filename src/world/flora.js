@@ -281,6 +281,60 @@ function needleColor(rand) {
 }
 
 /**
+ * Sow grass over a patch of ground.
+ *
+ * Pulled out of plantWorld because the menu stage wants grass and nothing else -
+ * no trees, no rocks, no collision grid to consult - and the alternative was a
+ * second copy of the same twenty lines that would drift from this one.
+ *
+ * @param half   half-extents of the patch, around `at`
+ * @param clear  optional (x,z) => is this spot free of anything solid
+ * @param sat    multiplier on how much colour the blades keep, for callers that
+ *               want the drained look rather than a living field
+ */
+export function sowGrass(scene, { rand, heightAt, count, half, at = { x: 0, z: 0 },
+                                  clear = null, sat = 1, name = "flora:grass" }) {
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const v = new THREE.Vector3(), sc = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+
+  // Dense enough that neighbouring clumps touch, which is the difference
+  // between ground cover and a scattering of spikes. It is the single biggest
+  // line item on the map - about two thirds of every triangle drawn - which is
+  // affordable only because it is one draw call and casts no shadows.
+  const tufts = [];
+  for (let i = 0; i < count; i++) {
+    const x = at.x + (rand() - 0.5) * half.x * 2;
+    const z = at.z + (rand() - 0.5) * half.z * 2;
+    if (clear && !clear(x, z)) continue;
+    tufts.push({ x, z, k: 0.7 + rand() * 0.9, rot: rand() * 6.283,
+                 // Greener in the hollows, where the water is.
+                 wet: THREE.MathUtils.clamp(0.5 - heightAt(x, z) * 0.1, 0, 1),
+                 j: rand() });
+  }
+  const grass = new THREE.InstancedMesh(grassGeometry(rand), new THREE.MeshStandardMaterial({
+    color: 0xffffff, roughness: 1, metalness: 0, flatShading: true,
+  }), tufts.length);
+  tufts.forEach((g, i) => {
+    q.setFromAxisAngle(up, g.rot);
+    grass.setMatrixAt(i, m.compose(
+      v.set(g.x, heightAt(g.x, g.z) - 0.02, g.z), q, sc.set(g.k, g.k * (0.8 + g.j * 0.5), g.k)));
+    grass.setColorAt(i, _c.setHSL(
+      0.16 + g.wet * 0.09 + (g.j - 0.5) * 0.03,
+      (0.22 + g.wet * 0.24) * sat,
+      0.075 + g.j * 0.055));
+  });
+  grass.name = name;
+  // No shadows. Putting this many tufts through the torch's depth pass is the
+  // single most expensive thing this file could ask for, and it would buy a
+  // pattern of specks nobody would ever identify as grass.
+  grass.castShadow = false;
+  grass.receiveShadow = true;
+  scene.add(grass);
+  return tufts.length;
+}
+
+/**
  * Everything scattered on the ground, built into `scene`.
  *
  * @param place  World.place, so trees and rocks still go through the same
@@ -445,37 +499,11 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   built.branches = limbCount;
 
   // --- grass -------------------------------------------------------------
-  // Dense enough that neighbouring clumps touch, which is the difference
-  // between ground cover and a scattering of spikes. It is the single biggest
-  // line item on the map - about two thirds of every triangle drawn - which is
-  // affordable only because it is one draw call and casts no shadows.
-  const tufts = [];
-  for (let i = 0; i < counts.grass; i++) {
-    const x = (rand() - 0.5) * size * 0.94, z = (rand() - 0.5) * size * 0.94;
-    if (!clear(x, z)) continue;
-    tufts.push({ x, z, k: 0.7 + rand() * 0.9, rot: rand() * 6.283,
-                 // Greener in the hollows, where the water is.
-                 wet: THREE.MathUtils.clamp(0.5 - heightAt(x, z) * 0.1, 0, 1),
-                 j: rand() });
-  }
-  const grass = new THREE.InstancedMesh(grassGeometry(rand), white(), tufts.length);
-  tufts.forEach((g, i) => {
-    q.setFromAxisAngle(up, g.rot);
-    grass.setMatrixAt(i, m.compose(
-      v.set(g.x, heightAt(g.x, g.z) - 0.02, g.z), q, sc.set(g.k, g.k * (0.8 + g.j * 0.5), g.k)));
-    grass.setColorAt(i, _c.setHSL(
-      0.16 + g.wet * 0.09 + (g.j - 0.5) * 0.03,
-      0.22 + g.wet * 0.24,
-      0.075 + g.j * 0.055));
+  built.grass = sowGrass(scene, {
+    rand, heightAt, count: counts.grass,
+    half: { x: size * 0.47, z: size * 0.47 },
+    clear,
   });
-  // No shadows. Eighteen thousand tufts through the torch's depth pass is the
-  // single most expensive thing this file could ask for, and it would buy a
-  // pattern of specks nobody would ever identify as grass.
-  grass.name = "flora:grass";
-  grass.castShadow = false;
-  grass.receiveShadow = true;
-  scene.add(grass);
-  built.grass = tufts.length;
 
   return built;
 }

@@ -11,6 +11,8 @@
  * kept in a hand-written list - new controls are then navigable for free, and
  * the order always matches what the player sees.
  */
+import { Osk } from "./osk.js";
+
 const FOCUSABLE = [
   ".tab",
   ".lobby-row:not([disabled])",
@@ -27,6 +29,7 @@ export class MenuNav {
     this.index = 0;
     this.screen = null;
     this.items = [];
+    this.osk = new Osk(document.getElementById("osk"));
   }
 
   /** The screen the player is actually looking at, or null while playing. */
@@ -141,6 +144,16 @@ export class MenuNav {
     if (!screenEl || !padActive) {   // in game, or no controller: nothing to do
       this.screen = null;
       this.#clear();
+      if (this.osk.open) this.osk.hide();
+      return;
+    }
+
+    // While the keyboard is up it owns every direction, because on a grid they
+    // all mean position. Letting the menu cursor move underneath it would have
+    // the player typing into a field they had already left.
+    if (this.osk.open) {
+      if (this.osk.handle(nav)) return;
+      this.#paint();      // it just closed; put the cursor back on the field
       return;
     }
 
@@ -201,8 +214,15 @@ export class MenuNav {
 
     if (nav.accept) {
       const el = this.items[this.index];
-      if (el?.tagName === "INPUT" && el.type !== "range") el.focus();
-      else el?.click();
+      if (el?.tagName === "INPUT" && el.type !== "range") {
+        // Focus alone was the old behaviour and it was no use at all: an
+        // insertion point is not much of a gift to somebody holding a pad. The
+        // field gets a keyboard it can actually reach.
+        el.focus();
+        this.osk.show(el);
+        return;
+      }
+      el?.click();
       // Whatever we just pressed may have swapped the screen out under us.
       queueMicrotask(() => {
         const now = this.#activeScreen();
