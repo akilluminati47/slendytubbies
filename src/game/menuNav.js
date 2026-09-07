@@ -144,7 +144,11 @@ export class MenuNav {
     if (!screenEl || !padActive) {   // in game, or no controller: nothing to do
       this.screen = null;
       this.#clear();
-      if (this.osk.open) this.osk.hide();
+      // Only put the keyboard away when there is no menu left to type into.
+      // Closing it because no pad is attached would have shut it a frame after
+      // a mouse or a touch opened it - it belongs to the field now, not to the
+      // controller.
+      if (!screenEl && this.osk.open) this.osk.hide();
       return;
     }
 

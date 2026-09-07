@@ -34,6 +34,9 @@ const ROWS = [
   ],
 ];
 
+/** Text fields this keyboard is willing to drive. */
+const FIELD = ".field input, #lobby input[type=text], #lobby input[type=password]";
+
 export class Osk {
   constructor(root) {
     this.root = root;
@@ -43,7 +46,39 @@ export class Osk {
     this.col = 0;
     this.caps = false;
     this.cells = [];
+    this.blocked = false;   // is the field being held read-only for us
     this.#build();
+    this.#listen();
+  }
+
+  /**
+   * Open on a tap or a click, not only on a pad press.
+   *
+   * Delegated from the document rather than bound to the fields, because the
+   * lobby rebuilds its panes when you switch tabs and anything bound to the
+   * old inputs would quietly stop working.
+   *
+   * On touch the field is held read-only while this is up. A tap would
+   * otherwise summon the operating system's own keyboard, which on a phone
+   * resizes the viewport out from under the game and puts two keyboards on
+   * screen at once. On a desktop it is left alone: a real keyboard still types
+   * into it, and this is the alternative rather than the replacement.
+   */
+  #listen() {
+    document.addEventListener("pointerdown", (e) => {
+      const field = e.target.closest?.(FIELD);
+      if (field) { this.show(field, e.pointerType === "touch"); return; }
+      // A press anywhere else puts it away - except on the keyboard itself,
+      // whose own keys handle their clicks.
+      if (this.open && !e.target.closest?.("#osk")) this.hide();
+    }, true);
+
+    addEventListener("keydown", (e) => {
+      if (!this.open) return;
+      // A real keyboard is present after all; get out of its way.
+      if (e.key === "Escape") this.hide();
+      else if (e.key.length === 1 || e.key === "Backspace") this.hide();
+    });
   }
 
   #build() {
@@ -66,7 +101,14 @@ export class Osk {
         // Clickable too. A pad player is the reason this exists, but a touch
         // player has one of these already and a mouse player might still reach
         // for it, and neither should find a keyboard that ignores them.
-        b.addEventListener("click", () => { this.#press(spec.key); this.#paint(); });
+        // Pointer users get the cursor moved to whatever they hit as well as
+        // the keystroke, so a pad picked up mid-word carries on from there
+        // rather than from wherever it was last left.
+        b.addEventListener("click", () => {
+          this.row = r; this.col = c;
+          this.#press(spec.key);
+          this.#paint();
+        });
         line.appendChild(b);
         this.cells[r][c] = b;
       });
@@ -80,18 +122,37 @@ export class Osk {
     this.root.appendChild(hint);
   }
 
-  /** Point it at a field and show it. */
-  show(input) {
+  /**
+   * Point it at a field and show it.
+   *
+   * @param block hold the field read-only, so the device's own keyboard stays
+   *              down. Touch only - see #listen.
+   */
+  show(input, block = false) {
+    if (this.open && this.target === input) return;
+    this.#release();
     this.target = input;
     this.open = true;
     this.caps = false;
     this.row = 1;
     this.col = 0;
+    if (block) {
+      this.blocked = true;
+      input.readOnly = true;
+      input.blur();
+    }
     this.root.classList.remove("hide");
     this.#paint();
   }
 
+  /** Give the field back, whatever we did to it. */
+  #release() {
+    if (this.blocked && this.target) this.target.readOnly = false;
+    this.blocked = false;
+  }
+
   hide() {
+    this.#release();
     this.open = false;
     this.target = null;
     this.root.classList.add("hide");
