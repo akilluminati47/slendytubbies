@@ -211,10 +211,16 @@ export function makeTorch(kind = "handheld") {
   glow.position.z = -rig.lens;
   group.add(glow);
 
+  const torch = { group, body, beam, glow, angle: rig.angle, lens: rig.lens,
+                  length: rig.length, cone: rig.cone, handBeam: rig.handBeam };
+  // rig.lens above is the fallback for a model that never loaded; when there is
+  // one, the glass is measured off it. The first-person torch hangs from the
+  // camera and never goes through holdInHand, so it has to be done here too.
+  alignToGlass(torch);
+
   group.position.set(...rig.hold);
   group.rotation.set(...rig.tilt);
-  return { group, body, beam, glow, angle: rig.angle, lens: rig.lens,
-           length: rig.length, cone: rig.cone, handBeam: rig.handBeam };
+  return torch;
 }
 
 /**
@@ -236,28 +242,42 @@ function worldSpan(obj) {
 const PALM = 0.42;
 
 /**
- * The middle of the palm, in the hand bone's own space.
+ * How far the torch sinks into the mitten, as a fraction of its own thickness.
  *
- * Not the bone's origin. On these rigs the hand bone sits a quarter of a metre
- * from the mitten it drives - projecting both to the screen puts the joint in
- * empty air below the hand - so hanging the torch at the origin left it
- * floating under the palm with daylight between the two, which is exactly what
- * it looked like.
- *
- * So ask the skin instead of the skeleton. Every vertex the bone drives is
- * pulled back through its inverse bind matrix into the bone's own space and
- * averaged by weight, which lands on the middle of the visible mitten by
- * construction and needs to know nothing about how any particular rig is built.
- * Bind space, not the current pose, so it is the same answer mid-stride as it
- * is standing still - and cached on the bone, because it cannot change.
- *
- * Falls back to a fraction of the way toward the knuckles when nothing is
- * skinned to the bone at all.
+ * Nearly nothing. It rests ON the palm rather than inside it - centring it in
+ * the hand's volume buried the barrel in the mitten - but a prop exactly
+ * tangent to a surface reads as levitating beside it, so it bites a little.
  */
-function palmOffset(bone, root) {
-  if (bone.userData.palmLocal) return bone.userData.palmLocal.clone();
+const BITE = 0.18;
 
-  const sum = new THREE.Vector3(), v = new THREE.Vector3();
+/**
+ * Where a torch sits in a hand, in the hand bone's own space.
+ *
+ * Three numbers, all read off the model:
+ *
+ *   point  the middle of the visible mitten. NOT the bone's origin - on these
+ *          rigs the hand bone sits a quarter of a metre from the mitten it
+ *          drives, which is why a torch pinned to the origin hung in empty air
+ *          below the hand. Every vertex the bone drives is pulled back through
+ *          its inverse bind matrix and averaged by weight, so it lands in the
+ *          middle of the hand by construction, whatever the rig.
+ *
+ *   dir    which way is palm-side. The thumb is the only cue a rig reliably
+ *          gives you for this - it sticks out across the gripping face - so it
+ *          is the thumb bone's offset with the along-the-fingers part taken
+ *          out of it, leaving the across-the-palm part.
+ *
+ *   reach  how far it is from that middle out to the palm's surface, along
+ *          dir. The far edge of the same vertices.
+ *
+ * Bind space rather than the current pose, so the answer is the same mid-stride
+ * as standing still, and cached on the bone because it cannot change.
+ */
+function handGrip(bone, root) {
+  if (bone.userData.grip) return bone.userData.grip;
+
+  const point = new THREE.Vector3(), v = new THREE.Vector3();
+  const mine = [];
   let weight = 0;
   root?.traverse?.((skin) => {
     if (!skin.isSkinnedMesh) return;
@@ -273,23 +293,87 @@ function palmOffset(bone, root) {
       }
       if (w <= 0.05) continue;
       v.fromBufferAttribute(position, i).applyMatrix4(skin.bindMatrix).applyMatrix4(inv);
-      sum.addScaledVector(v, w);
+      mine.push(v.clone());
+      point.addScaledVector(v, w);
       weight += w;
     }
   });
 
-  if (weight > 0) sum.divideScalar(weight);
-  else {
-    const bones = bone.children.filter((b) => b.isBone);
-    const knuckles = bones.find((b) => /finger|index|middle/i.test(b.name))
-      ?? bones.filter((b) => !/thumb/i.test(b.name))
-        .sort((a, b) => b.position.lengthSq() - a.position.lengthSq())[0]
-      ?? bones[0];
-    if (knuckles) sum.copy(knuckles.position).multiplyScalar(PALM);
-  }
+  const bones = bone.children.filter((b) => b.isBone);
+  const thumb = bones.find((b) => /thumb/i.test(b.name));
+  const knuckles = bones.find((b) => /finger|index|middle/i.test(b.name))
+    ?? bones.filter((b) => !/thumb/i.test(b.name))
+      .sort((a, b) => b.position.lengthSq() - a.position.lengthSq())[0]
+    ?? bones[0];
 
-  bone.userData.palmLocal = sum.clone();
-  return sum;
+  if (weight > 0) point.divideScalar(weight);
+  else if (knuckles) point.copy(knuckles.position).multiplyScalar(PALM);
+
+  // Palm-side: the thumb, with the along-the-fingers part removed.
+  const dir = new THREE.Vector3();
+  if (thumb) {
+    dir.copy(thumb.position);
+    if (knuckles && knuckles !== thumb) {
+      const along = knuckles.position.clone().normalize();
+      dir.addScaledVector(along, -dir.dot(along));
+    }
+  }
+  if (dir.lengthSq() < 1e-8) dir.set(0, 0, -1);   // no thumb to go on
+  dir.normalize();
+
+  let reach = 0;
+  for (const q of mine) reach = Math.max(reach, q.sub(point).dot(dir));
+
+  bone.userData.grip = { point, dir, reach };
+  return bone.userData.grip;
+}
+
+/** Half an object's world extent along a world direction. */
+function halfAlong(obj, dir) {
+  obj.updateWorldMatrix(true, true);
+  const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+  return 0.5 * (Math.abs(dir.x) * size.x + Math.abs(dir.y) * size.y
+    + Math.abs(dir.z) * size.z);
+}
+
+/** The uniform part of an object's world scale. */
+function worldScale(obj) {
+  const e = obj.matrixWorld.elements;
+  return (Math.hypot(e[0], e[1], e[2]) + Math.hypot(e[4], e[5], e[6])
+    + Math.hypot(e[8], e[9], e[10])) / 3;
+}
+
+/**
+ * Put the beam and the bulb on the glass.
+ *
+ * `lens` used to be a hand-measured distance from the group's origin, and the
+ * group's origin is wherever the model's author happened to leave their pivot -
+ * so on the searchlight the cone started somewhere inside the lamp housing and
+ * the bulb sat off the edge of the lens. Once the rig's yaw is baked in the
+ * glass is simply the front face of the body, and a face is something the
+ * geometry can be asked for.
+ */
+function alignToGlass(torch) {
+  if (!torch.body) return;
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  const toGroup = new THREE.Matrix4();
+  torch.group.updateWorldMatrix(true, true);
+  const inv = new THREE.Matrix4().copy(torch.group.matrixWorld).invert();
+  torch.body.traverse((m) => {
+    const pos = m.geometry?.attributes?.position;
+    if (!pos) return;
+    toGroup.multiplyMatrices(inv, m.matrixWorld);
+    for (let i = 0; i < pos.count; i++) {
+      box.expandByPoint(v.fromBufferAttribute(pos, i).applyMatrix4(toGroup));
+    }
+  });
+  if (box.isEmpty()) return;
+
+  // The lens looks down -Z, so the glass is the box's -Z face, centred.
+  const mid = box.getCenter(new THREE.Vector3());
+  torch.beam.position.set(mid.x, mid.y, box.min.z);
+  torch.glow.position.copy(torch.beam.position);
 }
 
 export function holdInHand(torch, bone, root) {
@@ -306,8 +390,7 @@ export function holdInHand(torch, bone, root) {
   bone.updateWorldMatrix(true, false);
   bone.matrixWorld.decompose(pos, rot, scl);
 
-  // Sat in the middle of the palm - see palmOffset.
-  torch.group.position.copy(palmOffset(bone, root));
+  torch.group.position.set(0, 0, 0);
   torch.group.scale.setScalar(1);
 
   // A shorter shaft, not no shaft.
@@ -360,19 +443,30 @@ export function holdInHand(torch, bone, root) {
   const longest = worldSpan(torch.body ?? torch.group);
   if (longest > 1e-5) torch.group.scale.setScalar(torch.length / longest);
 
-  // Now slide the group so the torch you can SEE is on the palm.
+  // The bulb and the cone go on the glass, now that the body is its final size.
+  alignToGlass(torch);
+
+  // And now slide the group so the torch you can SEE rests on the palm.
   //
-  // Putting the group's origin there is not the same thing: these rips carry
-  // their own pivots, and this one's is off the back of the barrel, so a torch
-  // pinned to the palm by its origin still hangs below the mitten. Shift by the
-  // gap between the body's drawn centre and the target, which needs no
-  // knowledge of where any particular author put their origin.
+  // Putting the group's ORIGIN there is not the same thing - these rips carry
+  // their own pivots, and this one's is off the back of the barrel - and
+  // putting the body's CENTRE there is not it either: that is the middle of the
+  // hand's VOLUME, so the barrel ends up buried inside the mitten. It wants to
+  // come back out along the palm-side direction until it is resting on the
+  // surface, touching rather than sunk.
   torch.group.updateWorldMatrix(true, true);
-  const palmWorld = bone.localToWorld(palmOffset(bone, root));
+  const grip = handGrip(bone, root);
+  const palmWorld = bone.localToWorld(grip.point.clone());
+  const dirWorld = bone.localToWorld(grip.point.clone().add(grip.dir))
+    .sub(palmWorld).normalize();
+  const clear = grip.reach * worldScale(bone)
+    + halfAlong(torch.body ?? torch.group, dirWorld) * (1 - BITE * 2);
+
   const drawn = new THREE.Box3().setFromObject(torch.body ?? torch.group)
     .getCenter(new THREE.Vector3());
   const origin = new THREE.Vector3().setFromMatrixPosition(torch.group.matrixWorld);
-  torch.group.position.copy(bone.worldToLocal(origin.add(palmWorld).sub(drawn)));
+  torch.group.position.copy(bone.worldToLocal(
+    origin.add(palmWorld).sub(drawn).addScaledVector(dirWorld, clear)));
 
   // And the same treatment for the shaft and the glass, for the same reason.
   //
