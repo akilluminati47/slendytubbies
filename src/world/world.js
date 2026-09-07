@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { Sky } from "./sky.js";
 import { makeCustard } from "./custard.js";
+import { Rain } from "./rain.js";
+import { plantWorld } from "./flora.js";
 
 /** Deterministic PRNG so a seed always rebuilds the same wasteland. */
 export function rng(seed) {
@@ -36,6 +38,10 @@ export class World {
     // The sky owns the lighting as well as the backdrop: the two have to agree
     // about what time it is, and there is only one answer to that.
     this.sky = new Sky(scene, this.rand);
+    // Built dry and left in the scene. It costs nothing while it is not
+    // raining - the mesh is simply hidden - and building it on demand would
+    // mean a stall at the exact moment the weather turns.
+    this.rain = new Rain(scene);
     // Created once, before any dish exists, and never removed.
     this.custardGlow = new THREE.PointLight(0xf070ee, 0, 9, 2);
     scene.add(this.custardGlow);
@@ -151,70 +157,49 @@ export class World {
     return null;
   }
 
-  #scatter() {
-    const s = CFG.world.size, half = s / 2 - 6;
-    const trunkGeo = new THREE.CylinderGeometry(0.22, 0.34, 7, 5);
-    const crownGeo = new THREE.ConeGeometry(2.3, 6, 6);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x241c14, roughness: 1 });
-    const crownMat = new THREE.MeshStandardMaterial({ color: 0x16240f, roughness: 1, flatShading: true });
-
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
-
-    // Place first, instance second - the real count is only known after rejection.
-    const trees = [];
-    const edgeCount = Math.floor(CFG.world.treeCount * 0.3);
-    for (let i = 0; i < CFG.world.treeCount; i++) {
-      const edge = i < edgeCount;
-      const k = 0.7 + this.rand() * 0.7;
-      // Crowns interlock a little (0.62) or the forest reads as an orchard; the
-      // treeline packs tighter still so it stays an unbroken wall.
-      const space = 2.3 * k * (edge ? 0.42 : 0.62);
-      const spot = this.place(space, 0.5 * k, () => {
-        if (edge) {
-          const a = this.rand() * Math.PI * 2, r = half - this.rand() * 10;
-          return [Math.cos(a) * r, Math.sin(a) * r];
+  /**
+   * Is this spot free of anything solid?
+   *
+   * A cheap read of the same hash place() uses, for the things that are only
+   * decoration. Grass and fallen branches do not need a slot reserved for them
+   * and running sixteen thousand of them through the rejection grid would cost
+   * a great deal of work to prevent something nobody would ever notice - but
+   * one growing out of the middle of a boulder is noticeable, and this is two
+   * bucket lookups.
+   */
+  #clear(x, z) {
+    const cx = Math.floor(x / this.cell), cz = Math.floor(z / this.cell);
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const bucket = this.grid.get((cx + i) + ',' + (cz + j));
+        if (!bucket) continue;
+        for (const o of bucket) {
+          if (o.r <= 0) continue;
+          const keep = o.r + 0.35;
+          if ((x - o.x) ** 2 + (z - o.z) ** 2 < keep * keep) return false;
         }
-        return [(this.rand() - 0.5) * s * 0.9, (this.rand() - 0.5) * s * 0.9];
-      });
-      if (spot) trees.push({ x: spot.x, z: spot.z, k, rot: this.rand() * 6.283 });
+      }
     }
+    return true;
+  }
 
-    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, trees.length);
-    const crowns = new THREE.InstancedMesh(crownGeo, crownMat, trees.length);
-    trees.forEach((t, i) => {
-      const y = heightAt(t.x, t.z);
-      q.setFromAxisAngle(up, t.rot);
-      sc.set(t.k, t.k, t.k);
-      m.compose(new THREE.Vector3(t.x, y + 3.5 * t.k, t.z), q, sc);
-      trunks.setMatrixAt(i, m);
-      m.compose(new THREE.Vector3(t.x, y + 8.5 * t.k, t.z), q, sc);
-      crowns.setMatrixAt(i, m);
+  #scatter() {
+    const built = plantWorld(this.scene, {
+      rand: this.rand,
+      heightAt,
+      size: CFG.world.size,
+      place: (space, hit, pick) => this.place(space, hit, pick),
+      clear: (x, z) => this.#clear(x, z),
+      counts: {
+        tree: CFG.world.treeCount,
+        rock: CFG.world.rockCount,
+        branch: CFG.world.branchCount,
+        grass: CFG.world.grassCount,
+      },
     });
-    trunks.castShadow = crowns.castShadow = true;
-    this.scene.add(trunks, crowns);
-
-    const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x3b3b38, roughness: 1, flatShading: true });
-    const rocks = [];
-    for (let i = 0; i < CFG.world.rockCount; i++) {
-      const k = 0.6 + this.rand() * 1.5;
-      const spot = this.place(k * 1.05, k * 0.8,
-        () => [(this.rand() - 0.5) * s * 0.85, (this.rand() - 0.5) * s * 0.85]);
-      if (spot) rocks.push({ x: spot.x, z: spot.z, k, rot: this.rand() * 6.283,
-                            ax: [this.rand(), this.rand(), this.rand()] });
-    }
-    const rockMesh = new THREE.InstancedMesh(rockGeo, rockMat, rocks.length);
-    rocks.forEach((r, i) => {
-      q.setFromAxisAngle(new THREE.Vector3(...r.ax).normalize(), r.rot);
-      m.compose(new THREE.Vector3(r.x, heightAt(r.x, r.z) + r.k * 0.4, r.z), q, sc.set(r.k, r.k * 0.7, r.k));
-      rockMesh.setMatrixAt(i, m);
-    });
-    rockMesh.castShadow = true;
-    this.scene.add(rockMesh);
-
-    console.info('[world] ' + trees.length + '/' + CFG.world.treeCount + ' trees, ' +
-      rocks.length + '/' + CFG.world.rockCount + ' rocks placed without overlap');
+    console.info('[world] ' + built.trees + '/' + CFG.world.treeCount + ' trees, ' +
+      built.rocks + ' rocks, ' + built.branches + ' branches, ' +
+      built.grass + ' grass tufts');
   }
 
   #custard() {
@@ -244,11 +229,11 @@ export class World {
         break;
       }
 
-      const { group: g, meshes, halo, height } = makeCustard();
+      const { group: g, meshes, halo, goop, height } = makeCustard();
       g.rotation.y = this.rand() * Math.PI * 2;   // hide the shared silhouette
       g.position.set(spot.x, heightAt(spot.x, spot.z) + height / 2, spot.z);
       this.scene.add(g);
-      this.custards.push({ group: g, meshes, halo,
+      this.custards.push({ group: g, meshes, halo, goop,
         pos: new THREE.Vector3(spot.x, 0, spot.z), taken: false });
     }
   }
@@ -268,6 +253,7 @@ export class World {
       if (c.taken) continue;
       const d = (c.pos.x - from.x) ** 2 + (c.pos.z - from.z) ** 2;
       if (d < bestD) { bestD = d; best = c; }
+      this.#dim(c, Math.sqrt(d));
     }
     if (!best) {
       this.custardGlow.intensity = 0;   // intensity, never visibility
@@ -275,6 +261,48 @@ export class World {
     }
     this.custardGlow.position.set(best.pos.x, heightAt(best.pos.x, best.pos.z) + 0.19, best.pos.z);
     this.custardGlow.intensity = 10 + Math.sin(t * 2 + best.pos.x) * 3;
+  }
+
+  /**
+   * How brightly a dish burns from where you are standing.
+   *
+   * The goop and its halo both ignore fog - that is deliberate, and it is the
+   * only reason a dish sixty metres away exists at all rather than being erased
+   * by haze. But ignoring fog also meant the far ones burned exactly as hard as
+   * the one at your feet, so a map of ten read as ten equal lamps hanging in the
+   * dark with no sense of which was near. They are dimmed by distance instead:
+   * still findable, no longer shouting.
+   *
+   * It never reaches zero. Fading a dish out completely would put us back to
+   * dishes that seem to arrive one at a time as you walk into them, which is
+   * the thing the fog exemption was introduced to fix.
+   */
+  #dim(c, dist) {
+    if (c.taken) return;
+    // Full strength inside the torch's reach, easing to a floor by the far
+    // side of the map.
+    const k = THREE.MathUtils.clamp((dist - 16) / 74, 0, 1);
+    const fall = 1 - k * k * 0.82;          // 1.0 near, 0.18 at the far end
+    if (c.halo) {
+      c.halo.material.opacity = 0.95 * fall;
+      // Shrunk as well as dimmed. A halo that keeps its world size while losing
+      // its brightness turns into a large soft smudge; pulling both back keeps
+      // it reading as a point of light.
+      c.halo.scale.setScalar(2.4 * (0.55 + fall * 0.45));
+    }
+    if (c.goop) c.goop.material.emissiveIntensity = 1.15 * fall;
+  }
+
+  /**
+   * The weather, from where the camera happens to be standing.
+   *
+   * Separate from updateGlow because it wants the eye rather than the feet: the
+   * shower is a box hung on the camera and hanging it on the ground would put
+   * the player's head through the lid of it.
+   */
+  tickWeather(dt, eye) {
+    this.rain.setColor(this.scene.fog ? this.scene.fog.color : this.sky.uniforms.uHorizon.value);
+    this.rain.update(dt, eye, this.sky.rainfall);
   }
 
   /** Take a dish: hide its meshes only. Nothing here touches a light. */

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CFG } from "./game/config.js";
 import { Input } from "./engine/input.js";
 import { World, heightAt } from "./world/world.js";
+import { installGroundFog } from "./world/groundFog.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
 import { loadTubbyAssets, tickTV } from "./entities/tubbyModel.js";
@@ -29,6 +30,11 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
+
+// Before anything can draw. three bakes the fog chunks into a program the first
+// time it renders with a material, so a patch applied later would only reach
+// whatever had not compiled yet - which is a maddening half-fogged world.
+installGroundFog();
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 400);
@@ -81,6 +87,10 @@ let scare = null;        // the capture sequence, while it is playing
 
 const tubbies = [];
 const remotes = new Map();
+// Where the camera actually is, for anything hung on the eye rather than the
+// feet. Reused: this is read every frame and a fresh vector each time bought
+// nothing.
+const _eye = new THREE.Vector3();
 const game = { found: 0, total: 0, over: null, elapsed: 0 };
 
 /**
@@ -587,6 +597,7 @@ function frame() {
     }
     for (const r of remotes.values()) r.update(dt, camera);
     world.updateGlow(game.elapsed, spectator.pos);
+    world.tickWeather(dt, camera.getWorldPosition(_eye));
     if (online) {
       netAccum += dt;
       if (netAccum >= 1 / 15) {
@@ -670,6 +681,7 @@ function frame() {
   for (const r of remotes.values()) r.update(dt, camera);
 
   world.updateGlow(game.elapsed, player.pos);
+  world.tickWeather(dt, camera.getWorldPosition(_eye));
 
   if (online) {
     netAccum += dt;

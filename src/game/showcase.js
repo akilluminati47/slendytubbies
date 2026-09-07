@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { setMist } from "../world/groundFog.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 
 /**
@@ -125,6 +126,13 @@ export class Showcase {
 
     this.z += LANE.speed * dt;
     if (this.z > LANE.end) this.#take(this.index + 1, LANE.start);
+
+    // No ground mist on the stage. The lid is partly an absolute world height
+    // and this scene stands its cast at y=0 on a flat plane, which is a place
+    // the mist has an opinion about and no business having one. Switched off
+    // for the draw rather than worked around, since only one scene is ever
+    // rendered per frame.
+    setMist(0);
 
     const model = this.current;
     model.root.position.z = this.z;

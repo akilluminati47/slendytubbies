@@ -273,29 +273,52 @@ __dbg.overlaps()   // placement sanity check - must be 0
 __dbg.stopRumble() // kill a stuck controller vibration
 ```
 
-## Not built yet
+## The wasteland
 
-The environment list, in the order it is meant to happen. Everything here is
-scenery and weather — none of it changes how the game plays, which is why it
-keeps getting bumped.
+Everything scattered on the ground is **one geometry drawn many times**, with all
+of the variety per-instance — a matrix and a colour. Modelling five kinds of tree
+costs five draw calls and still gives you five kinds of tree; deriving height,
+girth, taper and colour from the seeded generator gives you as many as you have
+instances, out of one. The whole map is 42 draw calls.
 
-**Ground cover and scenery.** Grass, bark, evergreen branches and rocks, as
-instanced meshes with per-instance variation driven by a seeded hash: real-world
-height distributions, trunk taper, bark roughness that varies with age. Diversity
-out of one draw call per species rather than out of more models.
+The numbers are real ones. A spruce runs 9–23 m here, and **age is a single
+number that drives everything else**: the big ones are the old ones, so they get
+stout trunks, grey furrowed bark and wide lower whorls, while the young ones are
+thin red-brown whips. Crown radius is about an eighth of height, which is not
+just a look — the crown is what the placement grid keeps clear, so getting it
+wrong thins the whole forest out by making trees reject their own neighbours.
+Rocks come from three solids, squashed unevenly and half-buried. Grass is clumps
+at roughly one every metre and a half, which is a dead heath rather than a lawn,
+and casts no shadows: 16,000 tufts through the torch's depth pass would be the
+most expensive thing on the map in exchange for specks nobody could identify.
 
-**Daylight.** White cloud and a sun in a blue sky. The dome
-([`src/world/sky.js`](src/world/sky.js)) already runs a full 24 hours in
-48 minutes and already carries a sun disc and its glow, but the palette was
-tuned for a game that starts between 18:00 and 02:00 and daytime currently
-reads as a washed-out night. Clouds do not exist at all — `uHaze` fades the
-whole sky towards the horizon colour, which is overcast as a single flat number
-rather than as anything with a shape.
+### Sky and weather
 
-**Rain.** A named weather state (`clear / hazy / overcast / rain`) already
-drives fog, star density and light level, and the hour ring on the HUD already
-goes cold when it rains. What is missing is the rain itself: nothing falls, and
-nothing is wet.
+The dome runs a full 24 hours in 48 minutes, always starting between 18:00 and
+02:00. Cloud is four octaves of noise on a deck overhead, drifting, with coverage
+grown out of a clear sky by raising a threshold rather than fading a grey sheet
+over it. The projection divides by `d.y + 0.28` rather than `d.y`, which caps it
+at about 3.5 instead of running to infinity at the horizon — the same fix the
+star field needed, for the same reason.
+
+Rain is a box of 2,200 streaks that travels with the camera. Nothing moves on the
+CPU: each drop knows where it started and the vertex shader works out where it
+has fallen to, wrapping with a modulo, so a downpour costs one uniform write a
+frame.
+
+### Ground mist
+
+Fog is a sphere around the camera — everything at forty metres is equally lost
+whether it is on a rise or in a hollow. Mist pools instead. It is done by
+patching three's own fog chunks rather than by adding geometry, so it costs a
+dozen instructions on a number already being computed, and it reaches every
+fogged material at once — mist that swallowed the ground but not the tubby stood
+in it would look worse than none.
+
+The lid is the higher of an absolute height and a fixed hug above the ground, so
+it is a lake filling the hollows and a shallow layer everywhere else at the same
+time. It has a colour of its own, deliberately not the fog's: at night the fog is
+tuned nearly to black, and mist painted in that colour is black on black.
 
 ## Licence / credits
 

@@ -102,7 +102,10 @@ export function makeCustard() {
   const body = new THREE.Mesh(s.bowl, s.matBowl);
   const lip = new THREE.Mesh(s.rim, s.matRim);
   const bottom = new THREE.Mesh(s.base, s.matBowl);
-  const custard = new THREE.Mesh(s.fill, s.matFill);
+  // The goop gets its own material rather than the shared one, because the far
+  // dishes have to be dimmed individually. Ten materials for ten meshes that
+  // were never batched anyway - the sharing bought nothing here.
+  const custard = new THREE.Mesh(s.fill, s.matFill.clone());
   body.castShadow = lip.castShadow = true;
   g.add(body, lip, bottom, custard);
 
@@ -129,5 +132,5 @@ export function makeCustard() {
   halo.renderOrder = 2;
   g.add(halo);
 
-  return { group: g, meshes: [body, lip, bottom, custard], halo, height: H };
+  return { group: g, meshes: [body, lip, bottom, custard], halo, goop: custard, height: H };
 }

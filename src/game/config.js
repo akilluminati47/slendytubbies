@@ -5,7 +5,12 @@ export const CFG = {
     fogNear: 4,
     fogFar: 46,
     treeCount: 420,
-    rockCount: 90,
+    rockCount: 110,
+    // Ground cover. Neither collides with anything and neither casts a shadow,
+    // so the only cost is triangles in one draw call apiece - which is why
+    // these numbers can be this large.
+    branchCount: 260,
+    grassCount: 16000,
     custardCount: 10,
   },
   player: {
