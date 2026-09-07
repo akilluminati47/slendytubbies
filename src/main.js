@@ -317,7 +317,12 @@ net.addEventListener("dead", (e) => {
   // stain lands identically on every screen without a byte of it travelling -
   // and walking back into a clearing you have already lost somebody in is most
   // of what the mark is for.
-  world?.stain(r.current.x, r.current.z, 1.15);
+  //
+  // Their last REPORTED position, not the one we happen to have interpolated to.
+  // `current` is a render smoothing that lags the truth by a fraction of a
+  // second, and by a great deal more than that if this tab has been throttled -
+  // which put the mark five metres from the body on the first live test.
+  if (r.seen) world?.stain(r.target.x, r.target.z, 1.15);
   r.setDead(true);
   ui.flash(`${r.name} was caught`);
   // If we were watching them, move on rather than staring at a body.
