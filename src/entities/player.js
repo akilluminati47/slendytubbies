@@ -23,6 +23,8 @@ export class Player {
     this.stamina = CFG.player.staminaMax;
     this.battery = CFG.player.batteryMax;
     this.torchOn = true;
+    this.jumped = false;    // one-frame flags, read by main's audio
+    this.clicked = false;
     this.noise = 0;        // metres of hearing radius this frame
     this.bob = 0;
     this.bobAmount = 0;    // eased, so bob never starts or stops abruptly
@@ -131,7 +133,9 @@ export class Player {
   update(dt) {
     if (!this.alive) return;
     const intent = this.input.intent;
+    this.jumped = false;
 
+    const wasLit = this.torchOn;
     if (intent.torch && this.battery > 0) this.torchOn = !this.torchOn;
     if (this.battery <= 0) this.torchOn = false;
     if (this.torchOn) this.battery = Math.max(0, this.battery - dt);
@@ -141,6 +145,9 @@ export class Player {
     this.torch.intensity = this.torchOn ? CFG.player.torchIntensity : 0;
     this.fill.intensity = this.torchOn ? 6 : 1.2;
     this.#showHeld(this.torchOn);
+    // The switch was thrown - by the player, or by the battery running out
+    // under them, which is worth hearing precisely because they did not do it.
+    this.clicked = this.torchOn !== wasLit;
 
     // --- jump -----------------------------------------------------------
     // Coyote time: still jumpable for a moment after walking off a lip. Without
@@ -158,6 +165,10 @@ export class Player {
       this.stamina = Math.min(CFG.player.staminaMax,
                               this.stamina + CFG.player.jumpStamina);
       this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.jump);
+      // Raised for exactly one frame, for whoever wants to make a noise about
+      // it. "grounded went false" is not the same event - walking off a lip
+      // does that too, and a ledge should not sound like a jump.
+      this.jumped = true;
     }
     if (!this.grounded || this.lift > 0) {
       this.vy -= CFG.player.gravity * dt;

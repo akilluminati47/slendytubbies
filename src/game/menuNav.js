@@ -24,8 +24,9 @@ const FOCUSABLE = [
 ].join(",");
 
 export class MenuNav {
-  constructor(ui) {
+  constructor(ui, audio) {
     this.ui = ui;
+    this.audio = audio;
     this.index = 0;
     this.screen = null;
     this.items = [];
@@ -86,6 +87,10 @@ export class MenuNav {
     if (!this.items.length) return;
     this.index = (this.index + delta + this.items.length) % this.items.length;
     this.#paint();
+    // A pad never fires pointerover, so the cursor has to say so itself. The
+    // other half - choosing - ends in .click() and is heard by menuSfx, so
+    // selection sounds the same however you got there.
+    this.audio?.blip();
   }
 
   /**

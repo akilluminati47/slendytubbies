@@ -8,6 +8,9 @@
  * both starts the game and unlocks audio in the same gesture, so the wind is
  * already playing by the time the player sees the wasteland.
  */
+/** How loud the theme sits under everything else. */
+const MUSIC_GAIN = 0.42;
+
 export class Audio {
   constructor() {
     this.ctx = null;
@@ -17,6 +20,10 @@ export class Audio {
     // name -> ArrayBuffer while we are waiting for a gesture, then AudioBuffer.
     this.samples = new Map();
     this.pending = new Map();
+    // The looping music, and which sample it is - see music().
+    this.playing = null;
+    this.musicName = null;
+    this.gritBuf = null;
   }
 
   /**
@@ -196,9 +203,200 @@ export class Audio {
     }
   }
 
+  /* ------------------------------------------------------------ footfall -- */
+
+  /**
+   * White noise, made once and shared.
+   *
+   * Every impact in the game is a pitched thump with a scatter of grit on top;
+   * the thump says how heavy it was and the grit says what it hit. One buffer
+   * serves all of them - the variation comes from where in it each burst starts
+   * and how it is filtered, which is free.
+   */
+  #grit() {
+    if (this.gritBuf) return this.gritBuf;
+    const len = Math.floor(this.ctx.sampleRate * 0.4);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.gritBuf = buf;
+    return buf;
+  }
+
+  /** A burst of filtered noise: the scuff on top of a footfall, or a switch. */
+  #scuff(when, { peak = 0.1, dur = 0.09, hz = 1600, q = 0.7 } = {}) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.#grit();
+    // Two steps in a row should not be the same step.
+    src.playbackRate.value = 0.82 + Math.random() * 0.36;
+    const f = ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.frequency.value = hz;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(peak, when);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    src.connect(f).connect(g).connect(this.nodes.master);
+    src.start(when, Math.random() * 0.2);
+    src.stop(when + dur + 0.02);
+  }
+
+  /**
+   * One footfall.
+   *
+   * The same two parts as the landing, scaled - because they are the same event
+   * at different speeds, and a sprint that sounded like a different instrument
+   * from the landing you finish it with would come apart. A full run lands just
+   * under the jump, which is what makes running the loud way to travel.
+   *
+   * @param power 0 at a crawl, 1 at a full sprint.
+   */
+  step(power = 0.5) {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    const p = Math.max(0, Math.min(1, power));
+    this.#thump(t, 96 + p * 26, 0.07 + p * 0.05, 0.045 + p * 0.165, this.nodes.master);
+    this.#scuff(t, { peak: 0.03 + p * 0.09, dur: 0.05 + p * 0.06, hz: 1500 + p * 900 });
+  }
+
+  /**
+   * The push-off.
+   *
+   * A step, not a grunt - it is a foot leaving the ground, and the character
+   * makes no other vocal sound in the game, so one here would be a voice
+   * arriving from nowhere. Pitched above a walking step and shorter, so a jump
+   * and its landing read as two ends of one movement.
+   */
+  jumpStep() {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    this.#thump(t, 142, 0.09, 0.19, this.nodes.master);
+    this.#scuff(t, { peak: 0.10, dur: 0.11, hz: 2100 });
+  }
+
   land() {
     if (!this.ready) return;
-    this.#thump(this.ctx.currentTime, 120, 0.14, 0.25, this.nodes.master);
+    const t = this.ctx.currentTime;
+    this.#thump(t, 120, 0.14, 0.25, this.nodes.master);
+    this.#scuff(t, { peak: 0.13, dur: 0.14, hz: 1300 });
+  }
+
+  /**
+   * The switch.
+   *
+   * Two of them, because there are two torches and they are not the same
+   * object. The slim black one is a plastic thumb-switch: one bright tick with
+   * a smaller one behind it. The Guardian's lamp is a lever on a metal housing,
+   * so it is lower, heavier, and takes two beats to finish - the same
+   * information the size of the thing already gives you, arriving through the
+   * other ear.
+   */
+  torchClick(kind = "handheld") {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    if (kind === "searchlight") {
+      this.#scuff(t, { peak: 0.30, dur: 0.035, hz: 900, q: 1.4 });
+      this.#thump(t, 190, 0.05, 0.13, this.nodes.master);
+      this.#scuff(t + 0.05, { peak: 0.17, dur: 0.03, hz: 620, q: 1.6 });
+    } else {
+      this.#scuff(t, { peak: 0.22, dur: 0.02, hz: 3200, q: 1.1 });
+      this.#scuff(t + 0.02, { peak: 0.10, dur: 0.02, hz: 2300, q: 1.3 });
+    }
+  }
+
+  /* ---------------------------------------------------------------- menu -- */
+
+  /**
+   * The cursor moved.
+   *
+   * Deliberately tiny. This is the sound you will hear more than any other in
+   * the game - every hover, every stick flick down a settings list - so it has
+   * to survive being heard fifty times in ten seconds, which rules out anything
+   * with a tail on it.
+   */
+  blip() {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(740, t);
+    osc.frequency.exponentialRampToValueAtTime(880, t + 0.05);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.06, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    osc.connect(g).connect(this.nodes.master);
+    osc.start(t);
+    osc.stop(t + 0.09);
+  }
+
+  /**
+   * Chosen.
+   *
+   * Also what the title screen says when it lets you in - the first press and
+   * every press after it are the same act, so they are the same sound, and it
+   * doubles as proof the audio context actually started.
+   */
+  select() {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    [560, 840].forEach((f, i) => {
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = f;
+      const at = t + i * 0.055;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.15, at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.18);
+      osc.connect(g).connect(this.nodes.master);
+      osc.start(at);
+      osc.stop(at + 0.2);
+    });
+  }
+
+  /* --------------------------------------------------------------- music -- */
+
+  /**
+   * The theme, looping, faded in and out.
+   *
+   * Called every frame with whether it should be playing, rather than started
+   * and stopped from half a dozen places - the screens it belongs to are the
+   * screens the parade is on, and that is already one question with one answer,
+   * so asking it repeatedly is cheaper than keeping two things in step.
+   *
+   * The name is claimed before the decode is awaited, so a screen that comes
+   * and goes faster than an mp3 decodes cannot leave a second copy playing.
+   */
+  async music(name, on) {
+    if (!this.ready) return;
+    if (!on) {
+      this.musicName = null;
+      const live = this.playing;
+      if (!live) return;
+      this.playing = null;
+      const t = this.ctx.currentTime;
+      live.gain.gain.cancelScheduledValues(t);
+      live.gain.gain.setValueAtTime(live.gain.gain.value, t);
+      live.gain.gain.linearRampToValueAtTime(0.0001, t + 0.6);
+      try { live.src.stop(t + 0.7); } catch { /* already stopped */ }
+      return;
+    }
+    if (this.musicName === name) return;
+    this.musicName = name;
+    const buf = await this.#decode(name);
+    if (!buf || this.musicName !== name || this.playing) return;
+    const src = this.ctx.createBufferSource();
+    const gain = this.ctx.createGain();
+    src.buffer = buf;
+    src.loop = true;
+    const t = this.ctx.currentTime;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(MUSIC_GAIN, t + 1.4);
+    src.connect(gain).connect(this.nodes.master);
+    src.start(t);
+    this.playing = { src, gain };
   }
 
   /** Long, ugly, and final. */

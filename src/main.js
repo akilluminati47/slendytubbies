@@ -13,6 +13,8 @@ import { Settings } from "./game/settings.js";
 import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
+import { installMenuSfx } from "./game/menuSfx.js";
+import { torchFor } from "./entities/torch.js";
 import { Jumpscare } from "./game/jumpscare.js";
 import { MenuNav } from "./game/menuNav.js";
 import { installTuner, TUNING } from "./game/tuner.js";
@@ -62,6 +64,7 @@ const settings = new Settings();
 const net = new NetClient();
 settings.apply(renderer, audio);
 
+audio.preload("theme", "./assets/game/theme.mp3");
 audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
 audio.preload("scream", "./assets/game/scream.mp3");
 
@@ -70,8 +73,11 @@ await loadTorchAssets();
 
 // The menu backdrop. Built after the rigs so it has something to parade, and
 // before anything else so the title screen is never empty.
+// Metres until the next footfall - see the frame loop.
+let strideLeft = 0;
 const showcase = new Showcase();
 showcase.resize(innerWidth, innerHeight);
+installMenuSfx(audio);
 
 /* -------------------------------------------------------------- game state */
 
@@ -235,6 +241,9 @@ const ui = new UI(settings, net, {
     // an AudioContext.
     audio.unlock();
     settings.apply(renderer, audio);
+    // And say so. Pressing anything to begin IS a selection, so it gets the
+    // selection sound - which also proves out loud that the context started.
+    audio.select();
   },
 
   onSolo: () => {
@@ -281,7 +290,7 @@ const ui = new UI(settings, net, {
   },
 });
 
-menuNav = new MenuNav(ui);
+menuNav = new MenuNav(ui, audio);
 
 // Sliders for the procedural surfaces, behind ?tune=1. A tool, not a feature.
 installTuner({
@@ -726,6 +735,9 @@ function frame() {
   if (!running || paused || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
     // or reading the end card - the real world stays behind the panel.
+    // The theme belongs to the screens the parade is on, and the parade already
+    // knows which those are, so it is asked rather than told.
+    audio.music("theme", showcase.wanted(running));
     if (!showcase.draw(dt, renderer, running)) renderer.render(scene, camera);
     return;
   }
@@ -767,6 +779,29 @@ function frame() {
   const wasGrounded = player.grounded;
   player.update(dt);
   if (!wasGrounded && player.grounded) audio.land();
+  if (player.jumped) audio.jumpStep();
+  if (player.clicked) audio.torchClick(torchFor(myRole));
+
+  // Footsteps, paced by distance rather than by time.
+  //
+  // A timer gives you the same cadence at every speed, which is the one thing a
+  // walk and a sprint definitely do not share. Counting metres instead means
+  // the stride length is the thing that is fixed - as it is on a real pair of
+  // legs - so the feet speed up on their own, and they stop dead the moment you
+  // do without anything having to notice that you stopped.
+  const groundSpeed = Math.hypot(player.vel.x, player.vel.z);
+  if (player.grounded && groundSpeed > 0.6) {
+    strideLeft -= groundSpeed * dt;
+    if (strideLeft <= 0) {
+      const power = Math.min(1, groundSpeed / CFG.player.sprintSpeed);
+      strideLeft = 0.92 + power * 0.5;
+      audio.step(power);
+    }
+  } else {
+    // Land with a foot ready to go, so the first step after a jump is not
+    // half a stride late.
+    strideLeft = Math.min(strideLeft, 0.25);
+  }
 
   const got = player.tickCollect(dt, world.custards);
   if (got) {
