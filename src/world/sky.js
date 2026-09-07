@@ -5,9 +5,9 @@ import { MIST, MIST_COLOR } from "./groundFog.js";
 /**
  * A night that moves.
  *
- * A round is a single pass through a compressed day: forty-eight minutes for
- * twenty-four hours, so an in-game hour is two real ones. It always starts in
- * the evening - somewhere between six and two - because the game is about being
+ * A round is a single pass through a compressed day: one in-game minute per real
+ * second, so an hour is a minute and the whole day is twenty-four of them. It
+ * always starts in the evening - somewhere between six and two - because the game is about being
  * outside in the dark, and starting at noon would give away an hour of it.
  *
  * The dome is one sphere seen from the inside with everything drawn in its
@@ -17,9 +17,18 @@ import { MIST, MIST_COLOR } from "./groundFog.js";
  *
  */
 
-const DAY_MINUTES = 48;                     // real minutes for a full day
+/**
+ * One in-game minute per real second.
+ *
+ * Which makes an hour a minute and a day twenty-four of them. The old rate was
+ * half that, and the trouble with it was not the length of the day so much as
+ * the pace: at two real minutes to the hour nothing on the clock ever appeared
+ * to be moving, so the light changed without the world seeming to. A minute a
+ * minute is slow enough to sit in and fast enough to watch.
+ */
+const DAY_MINUTES = 24;                     // real minutes for a full day
 const DAY_SECONDS = DAY_MINUTES * 60;
-const HOUR = DAY_SECONDS / 24;              // 120s of real time per hour
+const HOUR = DAY_SECONDS / 24;              // 60s of real time per in-game hour
 
 /** Sunrise and sunset, in hours. Deliberately a long night. */
 const DAWN = 6.4;

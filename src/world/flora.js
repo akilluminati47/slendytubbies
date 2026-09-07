@@ -90,19 +90,111 @@ function crownGeometry() {
 
 /* ---------------------------------------------------------------- branches -- */
 
-/** A fallen limb: a length of wood with two stubs off it. */
-function branchGeometry() {
-  const parts = [];
-  const main = new THREE.CylinderGeometry(0.028, 0.045, 1.0, 5);
-  main.rotateZ(Math.PI / 2);
-  parts.push(main);
-  for (const [at, ang, len] of [[0.12, 0.7, 0.34], [-0.2, -0.95, 0.26]]) {
-    const s = new THREE.CylinderGeometry(0.014, 0.024, len, 4);
-    s.translate(0, len * 0.5, 0);
-    s.rotateZ(ang);
-    s.translate(at, 0.01, 0);
-    parts.push(s);
+/**
+ * Deadwood, in six shapes.
+ *
+ * One geometry meant every stick on the map was the same stick at different
+ * sizes, and its two stubs were planted straight through the middle of the main
+ * limb - so they met inside it and read as one lump rather than as a branch with
+ * branches. Both problems are the same problem: a fallen limb is a shape, and
+ * shapes have to differ.
+ *
+ * So there are six of them, and the offshoots are seated ON the surface at
+ * angles round the limb rather than driven through its axis, spaced apart down
+ * its length and separated in azimuth so no two ever meet. Six geometries is
+ * six draw calls for the whole map's worth of deadwood, which at this count is
+ * cheaper than one of the trees.
+ */
+const BRANCH_KINDS = ["whole", "snapped", "forked", "bare", "splintered", "twin"];
+
+/**
+ * One offshoot, seated on the surface of a limb lying along +X.
+ *
+ * @param px    where along the limb, in its own units
+ * @param phi   which way round the limb it points
+ * @param splay how far it is swept toward the limb's tip rather than straight out
+ */
+function offshoot(px, r, phi, splay, len, thick, toward) {
+  const g = new THREE.CylinderGeometry(thick * 0.5, thick, len, 4);
+  // Base at the origin, so the rotation below pivots about where it joins.
+  g.translate(0, len * 0.5, 0);
+  // Radial, then swept along the limb. A real branch leaves its parent leaning
+  // toward the tip, not square to it.
+  const radial = new THREE.Vector3(0, Math.cos(phi), Math.sin(phi));
+  const dir = radial.clone().multiplyScalar(Math.cos(splay))
+    .addScaledVector(new THREE.Vector3(toward, 0, 0), Math.sin(splay)).normalize();
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+  // Seated a hair inside the surface so there is no gap, and no further: driven
+  // to the axis is what made them collide with each other in the middle.
+  g.translate(px + dir.x * -0.004,
+              radial.y * r * 0.85, radial.z * r * 0.85);
+  return g;
+}
+
+/** A splintered end: a few slivers running on past where the wood gave way. */
+function splinters(atX, r, rand, n = 3) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const len = r * (1.6 + rand() * 3.4);
+    const g = new THREE.CylinderGeometry(0.0006, r * (0.20 + rand() * 0.22), len, 3);
+    g.translate(0, len * 0.5, 0);
+    const a = rand() * Math.PI * 2, tilt = 0.10 + rand() * 0.24;
+    const dir = new THREE.Vector3(
+      Math.sign(atX), Math.cos(a) * tilt, Math.sin(a) * tilt).normalize();
+    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+    g.translate(atX, Math.cos(a) * r * 0.4, Math.sin(a) * r * 0.4);
+    out.push(g);
   }
+  return out;
+}
+
+function branchGeometry(rand, kind) {
+  const parts = [];
+  // The limb itself. Length and girth are independent, so a stout log and a
+  // long whip are both reachable before the per-instance scale touches it.
+  const L = kind === "splintered" ? 0.42 + rand() * 0.3
+          : kind === "twin" ? 0.7 + rand() * 0.35
+          : 0.85 + rand() * 0.45;
+  const r = (kind === "bare" ? 0.05 : 0.032) * (0.7 + rand() * 0.85);
+  const seg = 5;
+
+  // A snapped limb tapers to nothing at one end; an intact one keeps its tip.
+  const tipR = kind === "snapped" || kind === "splintered" ? r * 0.32 : r * 0.6;
+  const main = new THREE.CylinderGeometry(tipR, r, L, seg);
+  main.rotateZ(Math.PI / 2);   // lie it along +X, tip toward -X
+  parts.push(main);
+
+  // Offshoots, spaced down the limb and around it so no two can ever meet.
+  // Positions are drawn from separate bands and the azimuths are pushed a third
+  // of a turn apart, which is what stops them growing into one another.
+  const count = { whole: 3, snapped: 2, forked: 1, bare: 0, splintered: 1, twin: 2 }[kind];
+  let phi = rand() * Math.PI * 2;
+  for (let i = 0; i < count; i++) {
+    const band = (i + 0.25 + rand() * 0.5) / (count + 0.4);
+    const px = (band - 0.5) * L * 0.86;
+    // At least a third of a turn on from the last one, plus a little slop.
+    phi += 2.09 + rand() * 1.2;
+    const splay = 0.55 + rand() * 0.55;
+    const len = kind === "forked" ? L * (0.42 + rand() * 0.22)
+                                  : L * (0.16 + rand() * 0.22);
+    const thick = (kind === "forked" ? r * 0.75 : r * (0.4 + rand() * 0.28));
+    parts.push(offshoot(px, r * 0.92, phi, splay, len, thick, rand() < 0.72 ? -1 : 1));
+  }
+
+  if (kind === "splintered") parts.push(...splinters(-L * 0.5, tipR, rand, 3));
+  if (kind === "snapped") parts.push(...splinters(-L * 0.5, tipR, rand, 2));
+  if (kind === "twin") {
+    // A second limb fallen alongside the first, not touching it.
+    const l2 = L * (0.5 + rand() * 0.35), r2 = r * (0.55 + rand() * 0.4);
+    const g = new THREE.CylinderGeometry(r2 * 0.5, r2, l2, 4);
+    g.rotateZ(Math.PI / 2);
+    g.rotateY(0.3 + rand() * 0.7);
+    // Clear of the first by more than both radii, so they lie side by side.
+    g.translate((rand() - 0.5) * L * 0.3, -r * 0.35 + r2 * 0.35,
+                (r + r2) * (1.6 + rand() * 1.4));
+    parts.push(g);
+  }
+
   const merged = BufferGeometryUtils.mergeGeometries(parts, false);
   for (const p of parts) p.dispose();
   return merged;
@@ -210,6 +302,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   for (let i = 0; i < counts.tree; i++) {
     const edge = i < edgeCount;
     const age = rand();
+    const stout = rand();
     const h = 9 + age * 14;
     // The widest whorl, which is what has to be kept clear. Crowns interlock a
     // little (0.62) or the forest reads as an orchard; the treeline packs
@@ -217,7 +310,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     const spread = h * 0.155 * 0.62;
     // Trunk radius, in metres, for a collision the player can feel. About a
     // third of a metre on a big one.
-    const trunkR = h * 0.055 * (0.19 + age * 0.10);
+    const trunkR = h * 0.055 * (0.19 + age * 0.10) * (0.82 + stout * stout * 1.05);
     const spot = place(spread * (edge ? 0.68 : 1), Math.max(trunkR * 1.6, 0.3), () => {
       if (edge) {
         const a = rand() * Math.PI * 2, r = half - rand() * 10;
@@ -231,7 +324,13 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
                            // are stout, young ones are whips. The trunk
                            // geometry is a unit-height stick of radius 0.055,
                            // so this is a multiplier on that, not a radius.
-                           girth: h * (0.19 + age * 0.10),
+                           //
+                           // The squared term is an independent stoutness on
+                           // top of age, and squared so that most trees sit near
+                           // the slim end with a long tail out to the fat ones -
+                           // which is what a stand looks like. Tying girth to
+                           // height alone made every big tree the same big tree.
+                           girth: h * (0.19 + age * 0.10) * (0.82 + stout * stout * 1.05),
                            bark: barkColor(age, rand).getHex(),
                            needle: needleColor(rand).getHex() });
   }
@@ -252,6 +351,8 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     trunks.setColorAt(i, _c.setHex(t.bark));
     crowns.setColorAt(i, _c.setHex(t.needle));
   });
+  trunks.name = "flora:trunks";
+  crowns.name = "flora:crowns";
   trunks.castShadow = crowns.castShadow = true;
   trunks.receiveShadow = crowns.receiveShadow = true;
   scene.add(trunks, crowns);
@@ -290,6 +391,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
         sc.set(r.sx, r.sy, r.sz)));
       mesh.setColorAt(i, _c.setHex(r.color));
     });
+    mesh.name = "flora:rock" + gi;
     mesh.castShadow = mesh.receiveShadow = true;
     scene.add(mesh);
     rocksPlaced += list.length;
@@ -301,26 +403,46 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   // rejecting them against every trunk on the map would cost a great deal of
   // work to prevent something nobody would notice; a cheap "is this spot solid"
   // test is enough to keep them out of the middle of a rock.
-  const limbs = [];
+  //
+  // Six shapes, each its own instanced mesh, and each stick additionally
+  // stretched and fattened independently by its instance - so length and girth
+  // vary on top of the shape rather than only with it, and a short thick log
+  // and a long thin whip are both reachable from the same geometry.
+  const limbBuckets = BRANCH_KINDS.map(() => []);
   for (let i = 0; i < counts.branch; i++) {
     const x = (rand() - 0.5) * size * 0.88, z = (rand() - 0.5) * size * 0.88;
     if (!clear(x, z)) continue;
-    limbs.push({ x, z, k: 0.5 + rand() * 1.1, rot: rand() * 6.283,
-                 roll: rand() * 6.283, age: rand() });
+    limbBuckets[Math.floor(rand() * BRANCH_KINDS.length)].push({
+      x, z,
+      len: 0.55 + rand() * 1.25,
+      girth: 0.6 + rand() * 1.1,
+      rot: rand() * 6.283,
+      roll: rand() * 6.283,
+      age: rand(),
+    });
   }
-  const branches = new THREE.InstancedMesh(branchGeometry(), white(), limbs.length);
-  limbs.forEach((b, i) => {
-    q.setFromAxisAngle(up, b.rot);
-    q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), b.roll));
-    branches.setMatrixAt(i, m.compose(
-      v.set(b.x, heightAt(b.x, b.z) + 0.03 * b.k, b.z), q, sc.set(b.k, b.k, b.k)));
-    // Deadwood: greyer than the tree it fell off.
-    branches.setColorAt(i, _c.setHSL(0.08, 0.12 - b.age * 0.08, 0.07 + b.age * 0.05));
+  let limbCount = 0;
+  BRANCH_KINDS.forEach((kind, ki) => {
+    const list = limbBuckets[ki];
+    if (!list.length) return;
+    const mesh = new THREE.InstancedMesh(branchGeometry(rand, kind), white(), list.length);
+    list.forEach((b, i) => {
+      q.setFromAxisAngle(up, b.rot);
+      q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), b.roll));
+      mesh.setMatrixAt(i, m.compose(
+        v.set(b.x, heightAt(b.x, b.z) + 0.03 * b.girth, b.z), q,
+        sc.set(b.len, b.girth, b.girth)));
+      // Deadwood: greyer than the tree it fell off, and greyer the longer it
+      // has been lying there.
+      mesh.setColorAt(i, _c.setHSL(0.08, 0.12 - b.age * 0.08, 0.07 + b.age * 0.05));
+    });
+    mesh.name = "flora:deadwood:" + kind;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    limbCount += list.length;
   });
-  branches.castShadow = true;
-  branches.receiveShadow = true;
-  scene.add(branches);
-  built.branches = limbs.length;
+  built.branches = limbCount;
 
   // --- grass -------------------------------------------------------------
   // Dense enough that neighbouring clumps touch, which is the difference
@@ -349,6 +471,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   // No shadows. Eighteen thousand tufts through the torch's depth pass is the
   // single most expensive thing this file could ask for, and it would buy a
   // pattern of specks nobody would ever identify as grass.
+  grass.name = "flora:grass";
   grass.castShadow = false;
   grass.receiveShadow = true;
   scene.add(grass);

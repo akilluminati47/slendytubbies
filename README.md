@@ -288,7 +288,14 @@ stout trunks, grey furrowed bark and wide lower whorls, while the young ones are
 thin red-brown whips. Crown radius is about an eighth of height, which is not
 just a look — the crown is what the placement grid keeps clear, so getting it
 wrong thins the whole forest out by making trees reject their own neighbours.
-Rocks come from three solids, squashed unevenly and half-buried. Grass is 46,000
+Trunk thickness is an axis of its own on top of age — squared, so most trees sit
+near the slim end with a long tail out to the fat ones, which is what a stand
+looks like; the placed range is 16 cm to 132 cm across. Deadwood comes in six
+shapes (whole, snapped, forked, bare, splintered, and a twin pair) with the
+offshoots seated on the surface of the limb and pushed a third of a turn apart,
+so no two ever meet — one geometry had them driven through the axis where they
+collided in the middle. Rocks come from three solids, squashed unevenly and
+half-buried. Grass is 46,000
 clumps, dense enough that neighbours touch — the difference between ground cover
 and a scattering of spikes — and casts no shadows, because putting that many
 tufts through the torch's depth pass would be the most expensive thing on the map
@@ -296,8 +303,8 @@ in exchange for specks nobody could identify.
 
 ### Sky and weather
 
-The dome runs a full 24 hours in 48 minutes, always starting between 18:00 and
-02:00. Cloud is four octaves of noise on a deck overhead, drifting, with coverage
+The dome runs at one in-game minute per real second — an hour a minute, a day in
+24 — always starting between 18:00 and 02:00. Cloud is four octaves of noise on a deck overhead, drifting, with coverage
 grown out of a clear sky by raising a threshold rather than fading a grey sheet
 over it. The projection divides by `d.y + 0.28` rather than `d.y`, which caps it
 at about 3.5 instead of running to infinity at the horizon — the same fix the
