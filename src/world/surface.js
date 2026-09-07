@@ -120,6 +120,38 @@ const HEIGHT = /* glsl */`
  * the first frame it is drawn - so they are collected here as that happens
  * rather than looked up through the renderer's private property map.
  */
+/**
+ * How each kind reads its object-space sample.
+ *
+ * Bark and ground take the raw local position. Bark HAS to: a trunk instance is
+ * scaled (girth, height, girth) - a fifth of a metre across and twenty tall -
+ * and the furrow field is hand-anisotropic to match, running one period every
+ * five centimetres round the trunk and every thirty metres up it. Correcting
+ * that for the instance scale would undo the very thing that makes furrows
+ * furrows.
+ *
+ * Rock cannot. Boulders are instanced from a unit solid at 0.5 to 2.2 metres
+ * and squashed about half as tall as they are wide, so a field sampled in the
+ * raw local space arrives stretched by whatever that instance happens to be:
+ * grain four times coarser on the big ones than the small, flattened into
+ * horizontal bands on every one of them. Multiplying the sample by the
+ * instance's own scale puts it back into metres, so a boulder's grain is the
+ * size stone grain is, whatever size the boulder is.
+ *
+ * Scale is read off the instance matrix's columns rather than passed in, so
+ * nothing outside the shader has to know or stay in step.
+ */
+const OBJ_SPACE = {
+  [ROCK]: /* glsl */`
+        #ifdef USE_INSTANCING
+          vSurfObj = position * vec3( length( instanceMatrix[0].xyz ),
+                                      length( instanceMatrix[1].xyz ),
+                                      length( instanceMatrix[2].xyz ) );
+        #else
+          vSurfObj = position;
+        #endif`,
+};
+
 export const CARVED = [];
 
 export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } = {}) {
@@ -143,7 +175,7 @@ export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } 
           dot( mvPosition.xyz, viewMatrix[2].xyz ) );
         // And the object-space one, so bark climbs its own trunk and stone
         // keeps its own grain wherever the instance is put.
-        vSurfObj = position;`);
+        ${OBJ_SPACE[kind] ?? "vSurfObj = position;"}`);
 
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
