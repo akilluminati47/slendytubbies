@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 import { heightAt } from "../world/world.js";
-import { makeTorch, torchFor, holdInHand, placeInHand, gripPoseFor }
+import { makeTorch, torchFor, holdInHand, aimInHand, gripPoseFor }
   from "../entities/torch.js";
 
 /**
@@ -91,7 +91,10 @@ export class RemotePlayer {
     // No shadows. The player's own torch is the one shadow-caster in the game
     // and it stays that way; three more would buy three more depth passes to
     // light people who are usually somewhere else.
-    this.torch = new THREE.SpotLight(0xfff0cf, 0, 34, 0.46, 0.55, 1.1);
+    // Same reach as the one you carry yourself. A team-mate whose torch stopped
+    // six metres short of where yours does is a team-mate you cannot read the
+    // ground by, which is most of what lighting each other is for.
+    this.torch = new THREE.SpotLight(0xfff0cf, 0, 40, 0.46, 0.55, 1.1);
     this.torch.castShadow = false;
     // Aimed in world space rather than parented to the body. The body turns to
     // face where it is walking and the beam follows where they are looking;
@@ -110,6 +113,10 @@ export class RemotePlayer {
       if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
     });
     this.held = makeTorch(torchFor(role));
+    // The cone angle belongs to the lamp, not to a constant: the Guardian's
+    // throws wider, and it should do that for everybody watching and not only
+    // for the Guardian.
+    this.torch.angle = this.held.angle;
     if (hand && holdInHand(this.held, hand, this.root)) {
       this.held.beam.visible = false;
       this.held.group.visible = false;
@@ -118,7 +125,7 @@ export class RemotePlayer {
       // to, which is nothing to do with where they are looking.
       const held = this.held;
       this.model.afterPose = () => {
-        if (held.group.visible) placeInHand(held, hand, this.root);
+        if (held.group.visible) aimInHand(held, hand, this.root);
       };
     } else {
       this.held = null;
@@ -288,6 +295,9 @@ export class RemotePlayer {
 
     const ground = heightAt(this.current.x, this.current.z);
     this.root.position.set(this.current.x, ground + this.lift, this.current.z);
+    // So the ground fit knows the difference between standing and mid-hop - see
+    // TubbyModel#standOnGround.
+    this.model.lift = this.lift;
     if (!this.dead) this.root.rotation.y = this.yaw;
 
     // --- and where the head is pointed -------------------------------------

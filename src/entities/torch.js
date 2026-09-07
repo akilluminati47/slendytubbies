@@ -30,14 +30,19 @@ const BASE = new URL("../../assets/game/torch", import.meta.url).href;
 /**
  * How far a carried torch's visible shaft reaches, in metres.
  *
- * The same for both. The lamps are deliberately different sizes - that is how
- * you read the Guardian across a clearing - but a shaft of light scaled off the
- * size of the thing holding it made the black torch look like it had a dud
- * battery, which is a different claim entirely and not one the game means to
- * make. Equal reach; the cone angles still differ, so the searchlight throws
- * the wider beam.
+ * The same for both, and the same as the first-person cone. The lamps are
+ * deliberately different sizes - that is how you read the Guardian across a
+ * clearing - but a shaft of light scaled off the size of the thing holding it
+ * made the black torch look like it had a dud battery, which is a different
+ * claim entirely and not one the game means to make.
+ *
+ * It was under two metres, which is where it landed back when a carried torch
+ * pointed wherever the wrist had rolled to and four metres of cone swinging off
+ * an arm was the thing to avoid. It is aimed properly now - re-levelled after
+ * every pose - so it can be as long as the one down your own arm, which is what
+ * it takes for a team-mate's beam to read as the same object yours is.
  */
-const HAND_BEAM = 1.9;
+const HAND_BEAM = 3.4;
 
 /**
  * How much brighter a carried torch's shaft is than a first-person one.
@@ -283,6 +288,19 @@ function worldSpan(obj) {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/**
+ * Where each hand bone's grip has been worked out, keyed by the bone.
+ *
+ * NOT on bone.userData, which is where this started. Object3D.copy runs
+ * userData through JSON.parse(JSON.stringify(...)), so every model cloned after
+ * a grip had been cached inherited a Vector3 flattened into a plain {x,y,z} -
+ * and the first thing that called .clone() on it threw. It threw inside
+ * RemotePlayer's constructor, which means it took multiplayer with it: nobody
+ * else could spawn. A WeakMap is invisible to cloning and lets the bones go
+ * when their model does.
+ */
+const GRIPS = new WeakMap();
+
 /** How far along the wrist-to-knuckle run to fall back to, when there is no skin. */
 const PALM = 0.42;
 
@@ -319,7 +337,8 @@ const BITE = 0.18;
  * as standing still, and cached on the bone because it cannot change.
  */
 function handGrip(bone, root) {
-  if (bone.userData.grip) return bone.userData.grip;
+  const had = GRIPS.get(bone);
+  if (had) return had;
 
   const point = new THREE.Vector3(), v = new THREE.Vector3();
   const mine = [];
@@ -369,8 +388,9 @@ function handGrip(bone, root) {
   let reach = 0;
   for (const q of mine) reach = Math.max(reach, q.sub(point).dot(dir));
 
-  bone.userData.grip = { point, dir, reach };
-  return bone.userData.grip;
+  const grip = { point, dir, reach };
+  GRIPS.set(bone, grip);
+  return grip;
 }
 
 /** Half an object's world extent along a world direction. */
@@ -601,24 +621,17 @@ export function holdInHand(torch, bone, root) {
 }
 
 /**
- * Aim a held torch and sit it in the palm. Every frame, after the mixer.
+ * Aim a held torch and seat it in the palm.
  *
- * Doing this once at attach was only ever right for the pose the character
- * happened to be in at that instant. A torch is a CHILD of the hand bone, so
- * from the next frame on it inherits whatever the arm is doing - which is how
- * the Guardian came to carry a heavy searchlight cocked over at forty-five
- * degrees, and why its roll changed as she walked. A lamp hangs from its handle
- * whatever the wrist is doing, and a beam points where its owner is looking
- * rather than where their wrist has rolled to.
- *
- * The POSITION still follows the hand - it is measured from the palm, and the
- * palm swings with the arm - so a carried lamp still travels through the walk
- * cycle. It is only the orientation that is taken off the world instead.
+ * Two points meet: one on the hand, one on the torch. Both are re-derived every
+ * frame, which is only stable because the direction between them is taken off
+ * the model rather than off the wrist - see below.
  */
 export function placeInHand(torch, bone, root) {
   if (!bone || torch.group.parent !== bone) return false;
   const forward = aim(torch, bone, root);
   torch.group.updateWorldMatrix(true, true);
+
 
   // Slide the group so the torch you can SEE rests on the palm.
   //
@@ -629,18 +642,22 @@ export function placeInHand(torch, bone, root) {
   // have to meet: somewhere on the hand, and somewhere on the torch.
   const grip = handGrip(bone, root);
   const palmWorld = bone.localToWorld(grip.point.clone());
-  const dirWorld = bone.localToWorld(grip.point.clone().add(grip.dir))
-    .sub(palmWorld).normalize();
 
-  // Which side of the hand the palm is on.
+  // Which side of the hand the palm is on - taken off the MODEL, not the bone.
   //
-  // The thumb gives the across-the-palm axis and nothing more - a thumb sticks
-  // out sideways from a palm, it does not point out of one - so its sign says
-  // nothing about which face is the gripping face, and taken at face value it
-  // put both torches out through the BACK of the mitten. Measured on these
-  // rigs, that axis lies exactly along the model's forward. Arms hang with the
-  // palms facing back, so the palm is whichever way is not forward.
-  if (dirWorld.dot(forward) > 0) dirWorld.negate();
+  // The thumb gives the across-the-palm axis and nothing more: a thumb sticks
+  // out sideways from a palm, it does not point out of one, so its sign says
+  // nothing about which face is the gripping face and at face value it put both
+  // torches out through the back of the mitten. Measured on these rigs, that
+  // axis lies exactly along the model's forward, and arms hang with the palms
+  // facing back - so the palm faces the model's rear.
+  //
+  // Reading it through the BONE each frame is what made a carried torch bob
+  // loose in the hand: the wrist rolls through the walk cycle, so the direction
+  // rolled with it and the seat slid around the mitten. The model's own rear
+  // does not roll, so the offset from the palm is the same every frame and the
+  // prop is welded to the hand instead of floating in it.
+  const dirWorld = forward.clone().negate();
 
   // On the hand: the surface of the mitten, sunk a little so the torch reads as
   // held rather than balanced against it.
@@ -675,6 +692,18 @@ export function placeInHand(torch, bone, root) {
   return true;
 }
 
+/**
+ * Re-aim and re-seat a held torch. Every frame, after the mixer.
+ *
+ * Held once and left, a torch inherits whatever the wrist is doing - which is
+ * how the Guardian came to carry a heavy searchlight cocked over at forty-five
+ * degrees, and why its roll changed as she walked. A lamp hangs from its handle
+ * whatever the wrist is doing.
+ */
+export function aimInHand(torch, bone, root) {
+  return placeInHand(torch, bone, root);
+}
+
 /** Take every torch out of a hand. Safe to call on a hand that has none. */
 export function dropFromHand(bone) {
   if (!bone) return;
@@ -701,6 +730,31 @@ const RAD = Math.PI / 180;
 export function gripPoseFor(kind) {
   const rows = RIGS[kind]?.grip ?? RIGS.handheld.grip;
   return rows.map(([x, y, z]) => ({ x: x * RAD, y: y * RAD, z: z * RAD }));
+}
+
+/**
+ * A light to go with the shaft.
+ *
+ * The cone mesh is a shaft of haze and nothing more - it brightens the air it
+ * passes through and lights not one thing it falls on, which is fine head-on in
+ * first person, where a SpotLight on the camera is doing the actual work, and
+ * obviously wrong from outside: a beam that crosses the ground and leaves no
+ * pool on it is a beam nobody believes.
+ *
+ * Made once and kept, intensity taken to zero when it is off, because adding or
+ * removing a light changes the scene's light count and every material in it
+ * recompiles - which on a torch being flicked on and off is a stutter.
+ *
+ * No shadows. The player's own torch is the one shadow-caster in this game and
+ * it stays that way; each extra one is another depth pass per frame.
+ */
+export function makeTorchLight(kind = "handheld") {
+  const rig = RIGS[kind] ?? RIGS.handheld;
+  const light = new THREE.SpotLight(0xfff0cf, 0, 34, rig.angle, 0.55, 1.1);
+  light.castShadow = false;
+  const aim = new THREE.Object3D();
+  light.target = aim;
+  return { light, aim, angle: rig.angle };
 }
 
 /** Which torch a role carries. The Guardian's is the big one. */

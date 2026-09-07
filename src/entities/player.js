@@ -62,6 +62,25 @@ export class Player {
   }
 
   /**
+   * Take everything this player hung off the camera back off it.
+   *
+   * A round used to end with a page reload, so nothing ever had to be undone.
+   * Restarting in place instead means the constructor's camera.add() runs again
+   * on the same camera - and the old rig was still on it: a torch frozen where
+   * the last round left it, the new one bobbing beside it, and a second
+   * shadow-casting SpotLight in the scene costing a depth pass a frame and
+   * recompiling every material on the way in.
+   */
+  dispose() {
+    this.torchRig.parent?.remove(this.torchRig);
+    this.fill.parent?.remove(this.fill);
+    this.torch.shadow?.map?.dispose();
+    this.torch.dispose?.();
+    this.fill.dispose?.();
+    this.held = null;
+  }
+
+  /**
    * In VR the torch belongs in your hand, not glued to your eyeballs - being
    * able to point it independently of where you are looking is most of what
    * makes a VR horror game feel different.
@@ -258,14 +277,39 @@ export class Player {
         this.torchRig.rotation.y = THREE.MathUtils.clamp(dy * 0.55, -0.22, 0.22);
         this.torchRig.rotation.x =
           THREE.MathUtils.clamp((this.input.pitch - this.swayPitch) * 0.5, -0.16, 0.16);
-        // And a little bounce from the stride, so it moves when you walk.
-        this.torchRig.position.y = Math.sin(this.bob * 0.5) * this.bobAmount * 1.6;
+        // And a little bounce from the stride, so it moves when you walk -
+        // plus a drift that never stops, so it moves when you do not.
+        //
+        // Standing still used to freeze the beam to the pixel, which reads as a
+        // light bolted to the world rather than one somebody is holding up. The
+        // three rates are deliberately unrelated, so the loop never lines up
+        // and starts reading as a rhythm.
+        this.breath = (this.breath ?? 0) + dt;
+        const still = 1 - Math.min(1, this.bobAmount / CFG.player.bobWalk);
+        const drift = still * CFG.player.idleSway;
+        this.torchRig.position.set(
+          Math.sin(this.breath * 0.83) * drift,
+          Math.sin(this.bob * 0.5) * this.bobAmount * 1.6
+            + Math.sin(this.breath * 1.31 + 1.1) * drift * 0.8,
+          0);
+        this.torchRig.rotation.z = Math.sin(this.breath * 0.61) * drift * 3.5;
       }
 
+      // Twice a stride up and down, once a stride side to side: the figure of
+      // eight a head traces when it is walking rather than being winched.
+      //
+      // The sway has to go along the camera's OWN right, not along world X -
+      // the rig carries no yaw outside VR, the camera does, so setting
+      // position.x here would swing you east and west whichever way you were
+      // facing.
       const bobY = Math.sin(this.bob) * this.bobAmount;
+      const bobX = Math.sin(this.bob * 0.5) * this.bobAmount * CFG.player.bobSway;
       const roll = Math.sin(this.bob * 0.5) * CFG.player.bobRoll *
         (this.bobAmount / Math.max(CFG.player.bobSprint, 1e-6));
-      this.cam.position.set(0, CFG.player.height + bobY, 0);
+      this.cam.position.set(
+        bobX * Math.cos(this.input.yaw),
+        CFG.player.height + bobY,
+        -bobX * Math.sin(this.input.yaw));
       this.cam.rotation.set(this.input.pitch, this.input.yaw, roll, "YXZ");
     }
   }

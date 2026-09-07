@@ -1074,6 +1074,17 @@ class RiggedTubby {
      */
     this.groundAt = null;
 
+    /**
+     * How far the body is off its own ground, in metres.
+     *
+     * Set by whoever is moving it. The ground fit reads the root's height as
+     * "where the feet belong", which is true standing and wrong in the air: a
+     * remote player's root carries their jump, so mid-jump the pelvis was being
+     * dropped by the whole height of the hop and the Guardian went into the
+     * terrain up to the waist. Off the ground, the clip owns the legs.
+     */
+    this.lift = 0;
+
     // The jumpscare needs to know where to point the camera.
     this.sockets = mine.sockets;
     this.headBone = null;
@@ -1353,7 +1364,7 @@ class RiggedTubby {
    * this kind of thing snap.
    */
   #standOnGround() {
-    if (!this.legs.length) return;
+    if (!this.legs.length || this.lift > 0.02) return;
     const ground = this.groundAt;
     this.inner.updateMatrixWorld(true);
 

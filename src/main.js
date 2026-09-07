@@ -116,6 +116,9 @@ let worldSeed = SOLO_SEED;
 function buildWorld(seed) {
   worldSeed = seed >>> 0;
   world = new World(scene, worldSeed);
+  // The last round's player, if there was one. Its torch and its lights live on
+  // the camera, which survives a restart - so without this they stack up.
+  player?.dispose();
   player = new Player(camera, input, world, rig);
   wrist = new WristHUD();
   spectator = new Spectator(camera, rig);

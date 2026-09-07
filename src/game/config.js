@@ -53,6 +53,16 @@ export const CFG = {
     bobWalk: 0.016,       // metres of vertical travel while walking
     bobSprint: 0.024,     // and while sprinting
     bobRoll: 0.0022,      // radians of lean - a hint of it, no more
+    // Side to side, as a multiple of the vertical. A head going straight up and
+    // down is a lift, not a walk: the weight shifts onto one foot and then the
+    // other, so the sway happens ONCE per stride where the bounce happens
+    // twice, and the two together trace the figure of eight a real head does.
+    // More lateral than vertical, which is the way round people actually walk.
+    bobSway: 1.5,
+    // How much the torch drifts when you are standing still. A hand does not
+    // hold anything perfectly still, and a beam frozen to the pixel is the
+    // clearest possible statement that nobody is holding it.
+    idleSway: 0.006,
     bobEase: 5.0,         // how fast the amplitude fades in and out
     // Bob cycles per metre travelled, NOT per second. Sprinting is a longer
     // stride, so it must be the LOWER number - fewer, bigger steps over the

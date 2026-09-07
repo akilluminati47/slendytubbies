@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { makeTorch, holdInHand, placeInHand, dropFromHand } from "../entities/torch.js";
+import { makeTorch, holdInHand, aimInHand, dropFromHand } from "../entities/torch.js";
 
 /**
  * A bench for putting a torch in a hand, at ?torch=1.
@@ -205,7 +205,7 @@ export function installTorchBench({ showcase } = {}) {
     holdInHand(torch, bone, model.root);
     torch.beam.visible = true;
     // The same re-level the game does, so the bench is judging what ships.
-    model.afterPose = () => placeInHand(torch, bone, model.root);
+    model.afterPose = () => aimInHand(torch, bone, model.root);
   };
 
   const applyGrip = () => {

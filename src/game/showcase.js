@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { setMist } from "../world/groundFog.js";
 import { sowGrass } from "../world/flora.js";
-import { makeTorch, torchFor, holdInHand, placeInHand, dropFromHand, gripPoseFor }
-  from "../entities/torch.js";
+import { makeTorch, makeTorchLight, torchFor, holdInHand, aimInHand, dropFromHand,
+  gripPoseFor } from "../entities/torch.js";
 import { rng } from "../world/world.js";
 import { makeTubby } from "../entities/tubbyModel.js";
 
@@ -61,12 +61,29 @@ const OFFSET = { guardian: -1.15, laalaa: 1.25, po: -0.85, dipsy: 1.5, tinkywink
 
 const FRONT_SCREENS = new Set(["title", "mode", "lobby"]);
 
+/** As bright as the one you carry yourself - see CFG.player.torchIntensity. */
+const TORCH_CANDELA = 420;
+
+const _lampAt = new THREE.Vector3();
+const _lampDir = new THREE.Vector3();
+const _lampQ = new THREE.Quaternion();
+
 export class Showcase {
   constructor() {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 60);
     this.camera.position.set(0, 1.5, 0);
     this.camera.lookAt(0, 1.05, -8);
+
+    // One torch light for the whole stage, moved to whoever is carrying.
+    //
+    // Made here rather than hung off each torch as it is built: the parade
+    // builds a new torch every few seconds, and a light arriving in the scene
+    // recompiles every material in it.
+    const lamp = makeTorchLight("handheld");
+    this.torchLight = lamp.light;
+    this.torchAim = lamp.aim;
+    this.scene.add(this.torchLight, this.torchAim);
 
     const night = new THREE.Color(0x0a0b0f);
     this.scene.background = night;
@@ -135,6 +152,29 @@ export class Showcase {
   }
 
   /**
+   * Put the stage's torch light on the lens of whoever is carrying one.
+   *
+   * After the model has been posed, because the torch hangs off a hand and the
+   * hand has only just finished moving - reading it before would light where
+   * the arm was a frame ago.
+   */
+  #castTorch() {
+    const torch = this.torch;
+    if (!torch) {
+      this.torchLight.intensity = 0;
+      return;
+    }
+    torch.group.updateWorldMatrix(true, true);
+    torch.glow.getWorldPosition(_lampAt);
+    torch.group.getWorldQuaternion(_lampQ);
+    _lampDir.set(0, 0, -1).applyQuaternion(_lampQ).normalize();
+    this.torchLight.position.copy(_lampAt);
+    this.torchAim.position.copy(_lampAt).addScaledVector(_lampDir, 9);
+    this.torchLight.angle = torch.angle;
+    this.torchLight.intensity = TORCH_CANDELA;
+  }
+
+  /**
    * Stop the parade and hold one character still, for the torch bench.
    *
    * The stage is already lit, grassed and pointed at a lens; standing somebody
@@ -198,6 +238,13 @@ export class Showcase {
    * alongside the model.
    */
   #maybeTorch(kind) {
+    // The Guardian brings the searchlight out the first time and rolls for it
+    // after that. A one-in-ten prop nobody has seen yet is not a rarity, it is
+    // an absence: most players watch the parade once, on their way into their
+    // first game, and would simply never learn the lamp exists.
+    const first = kind === "guardian" && !this.seenGuardian;
+    if (kind === "guardian") this.seenGuardian = true;
+
     let hand = null;
     this.current.root.traverse((o) => {
       if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
@@ -207,7 +254,7 @@ export class Showcase {
     this.torch = null;
     this.current.grip?.(null);
     this.current.afterPose = null;
-    if (!hand || Math.random() >= (TORCH_CHANCE[kind] ?? 0)) return;
+    if (!hand || (!first && Math.random() >= (TORCH_CHANCE[kind] ?? 0))) return;
     const t = makeTorch(torchFor(kind));
     if (holdInHand(t, hand, this.current.root)) {
       this.torch = t;
@@ -216,7 +263,7 @@ export class Showcase {
       // Re-aimed after every pose, so the lamp hangs from its handle instead of
       // rolling over with the arm.
       const model = this.current;
-      model.afterPose = () => placeInHand(t, hand, model.root);
+      model.afterPose = () => aimInHand(t, hand, model.root);
     }
   }
 
@@ -247,6 +294,7 @@ export class Showcase {
     model.root.position.y = 0;          // flat stage; plantFeet does the rest
     model.root.rotation.y = this.turn ?? 0;   // walking towards the camera
     model.update(dt, this.frozen ? (this.clipSpeed ?? 0) : speed);
+    this.#castTorch();
 
     renderer.render(this.scene, this.camera);
     return true;
