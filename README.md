@@ -303,7 +303,15 @@ in exchange for specks nobody could identify.
 
 ### Sky and weather
 
-The dome runs at one in-game minute per real second — an hour a minute, a day in
+The dome travels with the camera. Left at the world origin it is only "just
+inside the far plane" if you never leave the middle of the map — from a hundred
+metres out its far wall is past the 400 m far plane, which sliced a circle clean
+out of the sky and hung a black disc over the treeline, in one direction only,
+growing and shrinking as you walked. Hung on the camera every point of it is the
+same distance away from everywhere, and the sky stops parallaxing against the
+trees as well.
+
+It runs at one in-game minute per real second — an hour a minute, a day in
 24 — always starting between 18:00 and 02:00. Cloud is four octaves of noise on a deck overhead, drifting, with coverage
 grown out of a clear sky by raising a threshold rather than fading a grey sheet
 over it. The projection divides by `d.y + 0.28` rather than `d.y`, which caps it

@@ -36,6 +36,15 @@ const DUSK = 19.1;
 
 const WEATHERS = ["clear", "hazy", "overcast", "rain"];
 
+/**
+ * How far off the sky sits.
+ *
+ * Comfortably inside the camera's 400 m far plane, and it stays there whatever
+ * the player does because the dome travels with the camera - see the note on
+ * onBeforeRender below.
+ */
+const DOME_R = 340;
+
 // Scratch. update() runs every frame and these were three allocations a frame
 // for numbers that are overwritten immediately.
 const _mist = new THREE.Color();
@@ -235,11 +244,39 @@ export class Sky {
     });
 
     this.dome = new THREE.Mesh(geo, this.material);
-    // Just inside the camera's far plane, so the dome is always the furthest
-    // thing drawn and never clipped.
-    this.dome.scale.setScalar(360);
+    this.dome.scale.setScalar(DOME_R);
     this.dome.frustumCulled = false;
     this.dome.renderOrder = -1;
+
+    /**
+     * Keep it centred on whoever is looking.
+     *
+     * It used to sit at the world origin, which is only "just inside the far
+     * plane" if you never leave the middle of the map. The player roams a
+     * hundred metres out, and from there the far wall of the dome is a hundred
+     * metres further away than its near wall - past the camera's 400 m far
+     * plane - so the far plane sliced a circle clean out of the sky and left a
+     * black disc hanging over the treeline. It only ever appeared in one
+     * direction (the way you had come), and it grew and shrank as you walked,
+     * because it was a function of how far from the origin you were stood.
+     *
+     * Hung on the camera instead, every point on it is exactly DOME_R away in
+     * every direction from everywhere, so it cannot be reached by the far plane
+     * at all. It also removes a parallax that should never have been there: a
+     * sky is infinitely far off and should not shift against the trees when you
+     * walk past them.
+     *
+     * Done here rather than in update() so it holds for every camera without
+     * anyone having to remember - the spectator's, and the close-up during a
+     * capture, as well as the player's.
+     */
+    this.dome.onBeforeRender = (renderer, scene_, camera) => {
+      camera.getWorldPosition(this.dome.position);
+      // three reads matrixWorld immediately after this returns, and the scene
+      // graph was walked before it - so the new position has to be pushed
+      // through by hand or it is a frame late.
+      this.dome.updateMatrixWorld();
+    };
     scene.add(this.dome);
     scene.background = null;      // the dome is the sky; a clear colour would
                                   // only ever be drawn behind it
