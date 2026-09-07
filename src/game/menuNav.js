@@ -38,9 +38,29 @@ export class MenuNav {
     return null;
   }
 
+  /** The strip a side-by-side control belongs to, or null if it is on its own. */
+  #strip(el) {
+    if (!el) return null;
+    if (el.classList.contains("tab")) return [...el.parentElement.querySelectorAll(".tab")];
+    if (el.parentElement?.classList.contains("set-choices")) {
+      return [...el.parentElement.querySelectorAll("button")];
+    }
+    return null;
+  }
+
   #rescan(screenEl) {
     this.items = [...screenEl.querySelectorAll(FOCUSABLE)]
-      .filter((el) => el.offsetParent !== null && !el.disabled);
+      .filter((el) => el.offsetParent !== null && !el.disabled)
+      // A row of side-by-side choices is ONE stop, not one stop per choice.
+      // Public and Private sit next to each other and read as a pair, so
+      // stepping between them with up and down was asking the player to walk
+      // vertically along something laid out horizontally. Only the selected
+      // member stays in the list: up and down now step past the whole row, and
+      // left and right move along it - see #horizontal.
+      .filter((el) => {
+        const strip = this.#strip(el);
+        return !strip || strip.length < 2 || el.classList.contains("on");
+      });
     if (this.index >= this.items.length) this.index = 0;
   }
 
@@ -80,10 +100,28 @@ export class MenuNav {
       el.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     }
-    // Tabs, toggles and choice rows sit side by side, so left/right should walk
-    // along them rather than jumping to a different part of the screen.
-    if (el.classList.contains("tab") || el.classList.contains("set-toggle") ||
-        el.parentElement?.classList.contains("set-choices")) {
+    // A strip walks to its NEIGHBOUR. It used to click the focused element,
+    // which on a two-tab row meant pressing right on Public selected Public
+    // again and nothing happened at all.
+    const strip = this.#strip(el);
+    if (strip && strip.length > 1) {
+      const at = strip.indexOf(el);
+      const next = strip[(at + dir + strip.length) % strip.length];
+      next?.click();
+      // Selecting moved `.on` to a different element, so the focus list is
+      // stale - rebuild it and put the cursor back on the row rather than
+      // letting it fall to the top of the screen.
+      const screenEl = this.#activeScreen();
+      if (screenEl) {
+        this.#rescan(screenEl);
+        const moved = this.items.indexOf(next);
+        if (moved >= 0) this.index = moved;
+        this.#paint();
+      }
+      return;
+    }
+    // A lone toggle has no neighbour to walk to; either direction flips it.
+    if (el.classList.contains("set-toggle")) {
       el.click();
       return;
     }
@@ -157,6 +195,7 @@ export class MenuNav {
         const moved = this.items.indexOf(next);
         this.index = moved >= 0 ? moved : 0;
         this.#paint();
+        return;
       }
     }
 

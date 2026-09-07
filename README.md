@@ -27,8 +27,14 @@ freely — pick up a pad mid-game, put it down, carry on with the mouse. No mode
 
 **Menus are fully controller-driven.** Either stick or the d-pad moves the cursor (with
 hold-to-repeat), A selects, B goes back, the bumpers switch tabs, Start pauses and resumes.
-Sliders and the choice rows take left/right directly rather than making you "enter" them
-first, which is the one thing that would make settings worse on a pad than a mouse.
+Sliders take left/right directly rather than making you "enter" them first, which is the one
+thing that would make settings worse on a pad than a mouse.
+
+Anything laid out side by side — the Public/Private tabs, the VR turning row — is **one
+stop, walked with left and right**. Up and down step past the whole row. Asking a player to
+press *down* to get from Public to Private is asking them to walk vertically along something
+that is plainly horizontal, and the arrow that matches what you can see is the one that
+should work.
 
 Button *indices* are identical across all three pad families under the W3C standard
 mapping; only the printed labels differ, and Nintendo transposes A/B and X/Y physically.
