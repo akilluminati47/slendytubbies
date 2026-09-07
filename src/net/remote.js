@@ -54,6 +54,9 @@ export class RemotePlayer {
     this.scene = scene;
 
     this.model = makeTubby(role === "guardian" ? "guardian" : role);
+    // Their feet follow the heightfield too, so a team-mate on a slope stands
+    // on it rather than through it.
+    this.model.groundAt = heightAt;
     this.root = this.model.root;
     this.root.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.castShadow = true; });
     scene.add(this.root);

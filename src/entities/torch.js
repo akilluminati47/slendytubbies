@@ -39,6 +39,21 @@ const BASE = new URL("../../assets/game/torch", import.meta.url).href;
  */
 const HAND_BEAM = 1.9;
 
+/**
+ * How much brighter a carried torch's shaft is than a first-person one.
+ *
+ * The in-hand cone is scaled down from three or four metres to under two, and a
+ * cone half the size covers a quarter of the screen - so at the same brightness
+ * per pixel it reads as a far weaker light, which is why the parade looked dim
+ * next to the view down your own arm. The same punch for both torches, so the
+ * slim black one throws as hard as the Guardian's lamp; they differ in the
+ * width of the cone and in nothing else.
+ */
+const HELD_PUNCH = 3.4;
+
+/** The colour of a lit lens, before any punch is applied. */
+const GLASS_TINT = 0xfff1d2;
+
 const RIGS = {
   handheld: {
     dir: `${BASE}/handheld/scene.gltf`,
@@ -226,7 +241,7 @@ export function makeTorch(kind = "handheld") {
   // the prop rather than a dark disc with light appearing in front of it.
   const glow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTexture(),
-    color: 0xfff1d2, transparent: true, opacity: 0.85,
+    color: GLASS_TINT, transparent: true, opacity: 0.85,
     blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
     toneMapped: false,
   }));
@@ -539,6 +554,13 @@ export function holdInHand(torch, bone, root) {
   // carried torch reads as a carried torch from across the lane.
   torch.beam.visible = true;
   torch.beam.scale.setScalar(1);
+  // Additive blending multiplies the material's colour by the per-vertex one,
+  // and none of this is tone mapped, so a colour above white is simply a
+  // brighter beam - no second material and no recompile.
+  torch.beam.material.color.setScalar(HELD_PUNCH);
+  // Re-set from the hex rather than multiplied, because holdInHand runs again
+  // every time the bench moves a slider and a multiply would compound.
+  torch.glow.material.color.setHex(GLASS_TINT).multiplyScalar(HELD_PUNCH * 0.55);
   torch.glow.material.opacity = 1;
 
   bone.add(torch.group);

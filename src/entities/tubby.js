@@ -16,6 +16,9 @@ export class Tubby {
   constructor(scene, world, kind, spawn) {
     this.world = world;
     this.model = makeTubby(kind);
+    // Its feet follow the heightfield rather than a flat floor: see
+    // #standOnGround in tubbyModel.
+    this.model.groundAt = heightAt;
     this.kind = kind;
     this.root = this.model.root;
     this.root.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) o.castShadow = true; });
