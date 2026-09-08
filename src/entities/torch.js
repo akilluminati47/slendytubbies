@@ -117,6 +117,9 @@ const RIGS = {
     // flashlight has none - you grip it round the barrel - so it gets no flag
     // and is held against the palm by its side instead.
     handle: true,
+    // And a manufacturer's name down its side, which this game is not going to
+    // advertise - see unbrand().
+    debrand: true,
     // Mostly down: a lamp hangs off the handle rather than sitting level with
     // it, and a touch forward so the housing clears the hand.
     nudge: { side: 0, up: -0.048, forward: 0.07 },
@@ -134,6 +137,90 @@ const RIGS = {
 
 let cache = null;
 let glowTex = null;
+
+/** How far the filter looks, and how much brighter than local counts as a mark. */
+const MARK_RADIUS = 4;
+const MARK_LIFT = 15;
+
+/**
+ * Take the maker's name off a model.
+ *
+ * The rip has PIXILITE printed down the side of the lamp in letters you can
+ * read at arm's length, which is somebody else's brand on a prop in somebody
+ * else's game.
+ *
+ * Not done by painting over a rectangle. Finding that rectangle means finding
+ * the lettering in a 256-pixel texture whose UVs are somebody's guess, and a
+ * hand-typed box is wrong the moment the asset is replaced. What the wordmark
+ * IS, though, is small light marks on a darker body - and that is a thing you
+ * can describe: blur the image, and wherever a pixel is markedly brighter than
+ * its own surroundings, use the blur instead of the pixel. Broad shapes survive
+ * because they ARE their surroundings; thin bright strokes have nowhere to hide.
+ *
+ * Small highlights and screw heads soften with it. That is the trade, and at
+ * the size this is held it is not a visible one.
+ */
+function unbrand(texture) {
+  const src = texture?.image;
+  if (!src?.width) return texture;
+  const w = src.width, h = src.height;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0);
+  const img = ctx.getImageData(0, 0, w, h);
+  const px = img.data;
+
+  // Separable box blur, so the neighbourhood costs two passes and not r squared.
+  const blur = new Float32Array(w * h * 3);
+  const tmp = new Float32Array(w * h * 3);
+  const r = MARK_RADIUS;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a = 0, b = 0, g = 0, n = 0;
+      for (let d = -r; d <= r; d++) {
+        const sx = Math.min(w - 1, Math.max(0, x + d)) * 4 + y * w * 4;
+        a += px[sx]; g += px[sx + 1]; b += px[sx + 2]; n++;
+      }
+      const o = (y * w + x) * 3;
+      tmp[o] = a / n; tmp[o + 1] = g / n; tmp[o + 2] = b / n;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let a = 0, b = 0, g = 0, n = 0;
+      for (let d = -r; d <= r; d++) {
+        const sy = Math.min(h - 1, Math.max(0, y + d));
+        const o = (sy * w + x) * 3;
+        a += tmp[o]; g += tmp[o + 1]; b += tmp[o + 2]; n++;
+      }
+      const o = (y * w + x) * 3;
+      blur[o] = a / n; blur[o + 1] = g / n; blur[o + 2] = b / n;
+    }
+  }
+
+  const lum = (rr, gg, bb) => 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+  for (let i = 0, o = 0; i < px.length; i += 4, o += 3) {
+    const lift = lum(px[i], px[i + 1], px[i + 2])
+      - lum(blur[o], blur[o + 1], blur[o + 2]);
+    if (lift <= MARK_LIFT) continue;
+    // Eased in over the threshold, so the filter has no hard edge of its own.
+    const k = Math.min(1, (lift - MARK_LIFT) / 12);
+    px[i] += (blur[o] - px[i]) * k;
+    px[i + 1] += (blur[o + 1] - px[i + 1]) * k;
+    px[i + 2] += (blur[o + 2] - px[i + 2]) * k;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const out = new THREE.CanvasTexture(c);
+  out.colorSpace = texture.colorSpace;
+  out.wrapS = texture.wrapS;
+  out.wrapT = texture.wrapT;
+  out.flipY = texture.flipY;
+  out.anisotropy = texture.anisotropy;
+  out.needsUpdate = true;
+  return out;
+}
 
 /**
  * A soft round glow for the lens.
@@ -174,6 +261,10 @@ export async function loadTorchAssets() {
       root.add(gltf.scene);
       root.traverse((o) => {
         if (!o.isMesh) return;
+        if (rig.debrand && o.material?.map) {
+          o.material = o.material.clone();
+          o.material.map = unbrand(o.material.map);
+        }
         // Held 20 cm from the lens and lit by its own beam. Shadows off: it
         // would be casting into the very light it is the source of.
         o.castShadow = false;
@@ -429,6 +520,9 @@ export function makeTorch(kind = "handheld") {
                   length: rig.length, cone: rig.cone, handBeam: rig.handBeam,
                   // Copied, not shared: the bench mutates these live and must
                   // not edit the table every torch is built from.
+                  // Where it sits when it is hung off a camera instead of a
+                  // hand, so a bench can show and edit that too.
+                  hold: [...rig.hold], tilt: [...rig.tilt],
                   nudge: { side: 0, up: 0, forward: 0, ...(rig.nudge ?? {}) },
                   twist: [...(rig.twist ?? [0, 0, 0])],
                   anchor: null };

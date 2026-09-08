@@ -54,6 +54,40 @@ export const MIST = new Float32Array([-1.1, 0.55, 0.85, 0.045]);
 export const MIST_COLOR = new Float32Array([0.15, 0.17, 0.21]);
 
 /**
+ * How far the banks have drifted, and how far round they have turned.
+ *
+ * A Float32Array for the same reason MIST is - see above - so one write here
+ * moves the fog in every material at once.
+ *
+ *   x, y  where the bank field has slid to
+ *   z     how far it has rotated, which is what makes it swirl rather than
+ *         merely slide: a field that only translates reads as a curtain being
+ *         pulled past, and one that turns as it goes reads as air moving
+ *   w     spare
+ */
+export const MIST_DRIFT = new Float32Array([0, 0, 0, 0]);
+
+/**
+ * Banks of it, standing higher than the layer, in the low ground.
+ *
+ * The layer above is a lid: it fills hollows and hugs rises, and it is the same
+ * depth everywhere it lies. What it never does is stand up - and a wood at
+ * night is not evenly misty, it has PATCHES, waist to head high, that you walk
+ * into and out of and that are somewhere else an hour later.
+ *
+ * Where they are is two conditions multiplied. Low ground, because that is
+ * where cold air collects and it is the reason they are anywhere at all. And a
+ * slowly turning noise field, thresholded hard so it is patches rather than a
+ * wash - most of the map has none, and the ones it has are worth walking round.
+ */
+const BANK_SCALE = 0.013;    // how big a bank is - about eighty metres across
+const BANK_LIFT = 2.3;       // how far above the layer one stands, in metres
+const BANK_LOW = 0.55;       // ground below this much of the map's dip is "low"
+const BANK_EDGE = 0.62;      // how much of the field becomes a bank at all
+const BANK_DRIFT = 0.6;      // metres a second the field slides
+const BANK_TURN = 0.035;     // radians a second it turns as it goes
+
+/**
  * The softest the top of the layer is allowed to be.
  *
  * The ramp used to be a fixed 2.6 m, which quietly capped the whole effect: on
@@ -73,6 +107,13 @@ let installed = false;
 
 /** Turn the mist off, or back on, for whatever is about to be drawn. */
 export function setMist(max) { MIST[2] = max; }
+
+/** Move the banks on. Call once a frame with the frame's own delta. */
+export function driftMist(dt) {
+  MIST_DRIFT[0] += dt * BANK_DRIFT * 0.61;
+  MIST_DRIFT[1] -= dt * BANK_DRIFT * 0.37;
+  MIST_DRIFT[2] += dt * BANK_TURN;
+}
 
 /**
  * Patch the fog chunks and register the uniform.
@@ -94,6 +135,7 @@ export function installGroundFog() {
     if (!lib?.uniforms) continue;
     lib.uniforms.uMist = { value: MIST };
     lib.uniforms.uMistColor = { value: MIST_COLOR };
+    lib.uniforms.uMistDrift = { value: MIST_DRIFT };
   }
 
   const C = THREE.ShaderChunk;
@@ -122,6 +164,7 @@ export function installGroundFog() {
   #endif`;
 
   C.fog_pars_fragment = `#ifdef USE_FOG
+    uniform vec4 uMistDrift;
     uniform vec3 fogColor;
     uniform vec4 uMist;
     uniform vec3 uMistColor;
@@ -175,7 +218,24 @@ export function installGroundFog() {
       // Two lids, whichever is higher: an absolute one that fills the hollows
       // like water, and one that follows the ground so the rises still have
       // something round their ankles.
-      float lid = max( uMist.x + roll, mistGround( vFogWorld.xz ) + uMist.y );
+      float ground = mistGround( vFogWorld.xz );
+      float lid = max( uMist.x + roll, ground + uMist.y );
+
+      // Banks standing in the low ground, turning as they drift.
+      //
+      // Rotating the sample as well as sliding it is what makes them swirl:
+      // slide alone is a curtain being pulled past the camera, and nobody
+      // believes weather that only travels in a straight line.
+      float ca = cos( uMistDrift.z ), sa = sin( uMistDrift.z );
+      vec2 turned = mat2( ca, -sa, sa, ca ) * vFogWorld.xz;
+      float field = mistNoise( turned * ${BANK_SCALE} + uMistDrift.xy )
+        * 0.65 + mistNoise( turned * ${(BANK_SCALE * 2.6).toFixed(5)} - uMistDrift.xy * 1.7 ) * 0.35;
+      // Low ground only, and only the top of the field: most of the map has
+      // none of this, and what it has is worth walking round rather than a
+      // haze laid over everything.
+      float low = 1.0 - smoothstep( uMist.x - ${BANK_LOW.toFixed(2)}, uMist.x + ${BANK_LOW.toFixed(2)}, ground );
+      float bank = low * smoothstep( ${BANK_EDGE.toFixed(2)}, ${(BANK_EDGE + 0.22).toFixed(2)}, field );
+      lid = max( lid, ground + uMist.y + bank * ${BANK_LIFT.toFixed(2)} );
       // Thickening downward from the lid rather than upward from the ground is
       // what makes it collect rather than blanket.
       float sink = clamp( ( lid - vFogWorld.y ) / max( uMist.y, ${SOFT_MIN.toFixed(2)} ), 0.0, 1.0 );

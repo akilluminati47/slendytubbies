@@ -45,6 +45,13 @@ const GRIP_ROWS = ["Fingers 1", "Fingers 2", "Thumb"];
 
 const DEG = 180 / Math.PI;
 
+/** Eye height, matching CFG.player.height, so the view is the game's view. */
+const PLAYER_EYE = 1.40;
+
+/** The lens the game is played through, and the one the parade is watched on. */
+const GAME_FOV = 72;
+const STAGE_FOV = 40;
+
 const CSS = `
 #tbench { position:fixed; top:10px; left:10px; z-index:40; width:296px;
   max-height:calc(100vh - 20px); overflow-y:auto; padding:12px 14px 10px;
@@ -134,6 +141,12 @@ export function installTorchBench({ showcase } = {}) {
     pointer-events:none !important; }`;
   document.head.appendChild(chrome);
 
+  // Anything parented to a camera is only drawn if the camera is itself in the
+  // scene being rendered - which the stage's never was, because nothing had
+  // ever been hung off it. Without this the first-person torch is attached,
+  // positioned, lit, and invisible.
+  showcase.scene.add(showcase.camera);
+
   const el = document.createElement("div");
   el.id = "tbench";
   document.body.appendChild(el);
@@ -142,6 +155,10 @@ export function installTorchBench({ showcase } = {}) {
   const state = {
     who: "laalaa",
     kind: "handheld",
+    // Which way you are looking at it: over the character's shoulder, or down
+    // your own arm. The second is the one the player spends the game in and it
+    // was the one you could not check here.
+    view: "hand",
     clip: "idle",
     playing: false,
     mode: "orbit",
@@ -156,6 +173,15 @@ export function installTorchBench({ showcase } = {}) {
                   ...(saved.handheld?.torch ?? {}) },
       searchlight: { side: 0, up: -0.048, forward: 0.07, rx: 0, ry: 0, rz: 0,
                      ...(saved.searchlight?.torch ?? {}) },
+    },
+    // First person, per torch: where it hangs off the camera, in the camera's
+    // own axes, and how it is tilted there. Seeded from the rig so the bench
+    // opens on what the game actually ships.
+    fps: {
+      handheld: { x: 0.215, y: -0.205, z: -0.30, rx: 2.9, ry: -4.6, rz: 5.7,
+                  ...(saved.handheld?.fps ?? {}) },
+      searchlight: { x: 0.235, y: -0.25, z: -0.255, rx: 2.3, ry: -3.4, rz: 3.4,
+                     ...(saved.searchlight?.fps ?? {}) },
     },
     grip: {
       handheld: saved.handheld?.grip
@@ -188,15 +214,33 @@ export function installTorchBench({ showcase } = {}) {
     bone = findHand(model.root);
     model.play(state.clip, 0);
     model.mixer.timeScale = state.playing ? 1 : 0;
+    // Nobody to look at in first person: you ARE them.
+    model.root.visible = state.view !== "fps";
+    if (torch) torch.group.parent?.remove(torch.group);
     torch = makeTorch(state.kind);
     place();
     applyGrip();
     return true;
   };
 
-  /** Push the current offsets into the torch and hang it back on the bone. */
+  /** Push the current offsets into the torch and hang it where it belongs. */
   const place = () => {
-    if (!torch || !bone) return;
+    if (!torch) return;
+    if (state.view === "fps") {
+      // Off the camera, exactly as Player hangs it: the offsets ARE the rig's
+      // hold and tilt, so what you dial here is what gets baked there.
+      const f = state.fps[state.kind];
+      model.afterPose = null;
+      if (bone) dropFromHand(bone);
+      showcase.camera.add(torch.group);
+      torch.group.scale.setScalar(1);
+      torch.group.position.set(f.x, f.y, f.z);
+      torch.group.rotation.set(f.rx / DEG, f.ry / DEG, f.rz / DEG);
+      torch.beam.visible = true;
+      return;
+    }
+    if (!bone) return;
+    torch.group.parent?.remove(torch.group);
     const t = state.torch[state.kind];
     torch.nudge.side = t.side;
     torch.nudge.up = t.up;
@@ -269,6 +313,9 @@ export function installTorchBench({ showcase } = {}) {
   playRow.appendChild(spinBtn);
   el.appendChild(playRow);
 
+  const paintView = pickRow("View", ["hand", "fps"],
+    () => state.view, (v) => { state.view = v; rebuild(); syncAll(); });
+
   const paintMode = pickRow("Drag does", ["orbit", "move", "turn"],
     () => state.mode, (v) => { state.mode = v; });
 
@@ -289,7 +336,15 @@ export function installTorchBench({ showcase } = {}) {
   const offBox = document.createElement("div");
   el.appendChild(offBox);
   offBox.insertAdjacentHTML("beforeend", `<div class="sub">position (m)</div>`);
-  const put = (key) => (v) => { state.torch[state.kind][key] = v; place(); report(); };
+  /** Whichever set of numbers the current view is about. */
+  const held = () => state.view === "fps" ? state.fps[state.kind] : state.torch[state.kind];
+  const KEYS = { side: "x", up: "y", forward: "z" };
+  const put = (key) => (v) => {
+    const box = held();
+    box[state.view === "fps" ? (KEYS[key] ?? key) : key] = v;
+    place();
+    report();
+  };
   const sx = slider(offBox, "side", { min: -0.3, max: 0.3, step: 0.002, value: 0, onInput: put("side") });
   const sy = slider(offBox, "up", { min: -0.3, max: 0.3, step: 0.002, value: 0, onInput: put("up") });
   const sz = slider(offBox, "fwd", { min: -0.3, max: 0.3, step: 0.002, value: 0, onInput: put("forward") });
@@ -335,18 +390,23 @@ export function installTorchBench({ showcase } = {}) {
     tell me to bake them in. Nothing here ships without ?torch=1.</div>`);
 
   const snapshot = () => ({
-    handheld: { torch: { ...state.torch.handheld }, grip: state.grip.handheld.map((a) => ({ ...a })) },
-    searchlight: { torch: { ...state.torch.searchlight }, grip: state.grip.searchlight.map((a) => ({ ...a })) },
+    handheld: { torch: { ...state.torch.handheld }, fps: { ...state.fps.handheld },
+                grip: state.grip.handheld.map((a) => ({ ...a })) },
+    searchlight: { torch: { ...state.torch.searchlight }, fps: { ...state.fps.searchlight },
+                   grip: state.grip.searchlight.map((a) => ({ ...a })) },
   });
 
   const report = () => {
     const t = state.torch[state.kind];
+    const f = state.fps[state.kind];
     const g = state.grip[state.kind];
     out.textContent =
-      `${state.kind}\n` +
+      `${state.kind} - ${state.view}\n` +
       `nudge { side: ${t.side.toFixed(3)}, up: ${t.up.toFixed(3)}, ` +
       `forward: ${t.forward.toFixed(3)} }\n` +
       `twist  ${t.rx}° ${t.ry}° ${t.rz}°\n` +
+      `hold [${f.x.toFixed(3)}, ${f.y.toFixed(3)}, ${f.z.toFixed(3)}]\n` +
+      `tilt  ${f.rx}° ${f.ry}° ${f.rz}°\n` +
       g.map((a, i) => `${GRIP_ROWS[i]}  ${a.x} ${a.y} ${a.z}`).join("\n");
   };
 
@@ -361,13 +421,16 @@ export function installTorchBench({ showcase } = {}) {
 
   /** Put every control where the state says it is. */
   const syncAll = () => {
-    const t = state.torch[state.kind];
-    sx.set(t.side); sy.set(t.up); sz.set(t.forward);
+    const t = held();
+    const fps = state.view === "fps";
+    sx.set(fps ? t.x : t.side);
+    sy.set(fps ? t.y : t.up);
+    sz.set(fps ? t.z : t.forward);
     rx.set(t.rx); ry.set(t.ry); rz.set(t.rz);
     state.grip[state.kind].forEach((a, i) => {
       gripCtl[i].x.set(a.x); gripCtl[i].y.set(a.y); gripCtl[i].z.set(a.z);
     });
-    paintWho(); paintKind(); paintClip(); paintMode();
+    paintWho(); paintKind(); paintClip(); paintMode(); paintView();
     report();
   };
 
@@ -402,6 +465,25 @@ export function installTorchBench({ showcase } = {}) {
   };
 
   const placeCamera = () => {
+    if (state.view === "fps") {
+      // Standing where a player stands, looking down the lane the cast walks
+      // up, so the torch is lit against something rather than against nothing.
+      const cam = showcase.camera;
+      // The game's lens, not the stage's.
+      //
+      // The stage watches the parade through a 40 degree lens and the game is
+      // played through 72. A prop held 26 cm from your eye and 23 cm off to the
+      // right is inside one of those and comfortably outside the other, so on
+      // the stage's lens the torch was attached, positioned, lit and off the
+      // side of the screen - which looks exactly like it not being there.
+      if (cam.fov !== GAME_FOV) { cam.fov = GAME_FOV; cam.updateProjectionMatrix(); }
+      // Looking down the lane the cast walks up - a camera at yaw zero already
+      // looks along -Z, which is the way the stage is pointed.
+      cam.position.set(0, PLAYER_EYE, 0);
+      cam.rotation.set(-view.pitch * 0.6, 0, 0, "YXZ");
+      return;
+    }
+    if (cam.fov !== STAGE_FOV) { cam.fov = STAGE_FOV; cam.updateProjectionMatrix(); }
     if (!aimAt()) return;
     const cp = Math.cos(view.pitch);
     cam.position.set(

@@ -30,7 +30,14 @@ export class UI {
     this.#wireLobby();
 
     $("resume").onclick = () => this.hooks.onResume();
-    $("restart").onclick = () => this.hooks.onRestart();
+    // Quit, not Restart.
+    //
+    // A round had no exit that was not the browser's back button - pause could
+    // restart it and the end card could restart it, and nothing anywhere went
+    // back to the mode screen. And "Restart" was the wrong word for the button
+    // anyway: from a pause menu it reads as "start this round again", which is
+    // the one thing the player pressing it usually does not want.
+    $("quit").onclick = () => this.hooks.onLeave();
     $("reset-settings").onclick = () => { this.settings.reset(); this.#syncSettings(); };
     $("retry").onclick = () => this.hooks.onRestart();
   }
@@ -294,20 +301,24 @@ export class UI {
     const wait = $("end-wait");
     const leave = $("end-leave");
 
+    // Quit is on the card whichever way the round ended - caught or out - and
+    // in solo as well as in a lobby. It was hidden for a single player, which
+    // left the end of a solo round with exactly one button and no way back.
+    leave.hidden = false;
+    leave.textContent = "Quit";
+
     if (!multi) {
       retry.hidden = false;
       retry.disabled = false;
       retry.textContent = "Try again";
       retry.onclick = () => this.hooks.onRestart();
       wait.hidden = true;
-      leave.hidden = true;
     } else if (multi.host) {
       retry.hidden = false;
       retry.disabled = false;
       retry.textContent = "Play again";
       retry.onclick = () => multi.onAgain();
       wait.hidden = true;
-      leave.hidden = false;
     } else {
       // A guest sees the button, greyed. Hiding it made the card look like it
       // was missing something; showing it dead says who the round is waiting on.
@@ -317,9 +328,9 @@ export class UI {
       retry.onclick = null;
       wait.hidden = false;
       wait.textContent = "Waiting For Lobby Host . . .";
-      leave.hidden = false;
     }
-    $("end-leave").onclick = () => this.hooks.onRestart();
+    // Leave means leave. It restarted the round, which is the opposite.
+    $("end-leave").onclick = () => this.hooks.onLeave();
     this.show("end");
   }
 

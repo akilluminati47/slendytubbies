@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { CFG } from "./game/config.js";
 import { Input } from "./engine/input.js";
 import { World, heightAt } from "./world/world.js";
-import { installGroundFog } from "./world/groundFog.js";
+import { installGroundFog, driftMist } from "./world/groundFog.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
 import { loadTubbyAssets, tickTV } from "./entities/tubbyModel.js";
@@ -290,6 +290,7 @@ const ui = new UI(settings, net, {
 
   onResume: () => resume(),
   onRestart: () => restartRound(),
+  onLeave: () => leaveToMenu(),
   onEnterVR: async () => {
     audio.unlock();
     try {
@@ -574,6 +575,53 @@ function newSeed() {
  * Rebuilding in place keeps the socket open, so the lobby, the names and who is
  * host all survive by virtue of never having gone anywhere.
  */
+/**
+ * Put the round down and go back to the menu.
+ *
+ * There was no way to do this. "Leave lobby" on the end card and "Restart" in
+ * the pause menu both restarted the round in place, so once you were in a game
+ * the only route back to the mode screen was to reload the page - which is also
+ * the only reason it went unnoticed, because reloading is what a round used to
+ * do anyway.
+ *
+ * Everything the round built comes down, in the order it was built: the people
+ * first, since they hold models, then the monster, then the world, then the
+ * player - whose torch and lights live on the camera and would otherwise stack
+ * up exactly as they did across restarts.
+ */
+function leaveToMenu() {
+  running = false;
+  paused = false;
+  scare = null;
+  spectating = false;
+  spectator?.stop();
+  document.body.classList.remove("spectating");
+
+  if (online) net.close?.();
+  online = false;
+  host = false;
+  for (const r of remotes.values()) r.dispose(scene);
+  remotes.clear();
+
+  for (const t of tubbies) t.dispose(scene);
+  tubbies.length = 0;
+  motes?.dispose();
+  motes = null;
+  world?.dispose();
+  world = null;
+  player?.dispose();
+  player = null;
+
+  game.found = 0;
+  game.over = null;
+  game.elapsed = 0;
+  netWorld = null;
+  document.exitPointerLock?.();
+  $("dread").style.opacity = 0;
+  setDrain(0);
+  ui.show("mode");
+}
+
 function restartRound(seed) {
   scare = null;
   spectating = false;
@@ -742,12 +790,19 @@ function frame() {
     return;
   }
 
+  // The theme belongs to the screens the parade is on, and the parade already
+  // knows which those are, so it is asked rather than told.
+  //
+  // Asked EVERY frame, not just on the menu. It used to live inside the branch
+  // below, which is the branch that stops running the moment a round starts -
+  // so nothing ever told it to stop and the menu music played through the whole
+  // game. A thing that turns itself on has to be asked when to turn itself off
+  // from somewhere that is still being reached.
+  audio.music("theme", showcase.wanted(running));
+
   if (!running || paused || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
     // or reading the end card - the real world stays behind the panel.
-    // The theme belongs to the screens the parade is on, and the parade already
-    // knows which those are, so it is asked rather than told.
-    audio.music("theme", showcase.wanted(running));
     if (!showcase.draw(dt, renderer, running)) renderer.render(scene, camera);
     return;
   }
@@ -812,6 +867,9 @@ function frame() {
     // half a stride late.
     strideLeft = Math.min(strideLeft, 0.25);
   }
+
+  // The fog banks move whether or not anybody is looking at them.
+  driftMist(dt);
 
   // The air, lit by whatever the player is carrying.
   motes?.update(dt, camera.getWorldPosition(_eye), world.sky.hour,
