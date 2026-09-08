@@ -29,15 +29,27 @@ const CSS = `
 .tc-root.on { opacity:1; visibility:visible; }
 
 /* The root never swallows input; only the explicit zones and buttons do. */
-.tc-zone { position:absolute; pointer-events:none; }
+/* touch-action is NOT inherited. The root carries it and the spec says an
+   ancestor's 'none' should still suppress panning here, but relying on that has
+   cost other people a working control pad on Safari, and repeating it is free. */
+.tc-zone { position:absolute; pointer-events:none; touch-action:none; }
 .tc-root.on .tc-zone { pointer-events:auto; }
 #tc-move { left:0; bottom:0; }
 #tc-look { inset:0; }
 
-.tc-stick { position:absolute; width:136px; height:136px; margin:-68px 0 0 -68px;
+/* Placed by transform from a FIXED origin, not by left/top.
+   left/top were being set from the touch every time the stick came up, and a
+   single bad assignment - one undefined coordinate, one unit missing - leaves
+   them at 'auto', which puts a 136px circle at the top-left corner of the
+   screen with its negative margins hanging it off two edges. That is a real
+   thing people saw. An origin in the CSS and a transform in the JS cannot fail
+   that way: the worst a bad transform does is leave the stick where it already
+   was, on screen, in the corner it belongs to. */
+.tc-stick { position:absolute; left:0; top:0; width:136px; height:136px;
+  margin:-68px 0 0 -68px; touch-action:none;
   border:1px solid rgba(216,210,196,.3); border-radius:50%; opacity:0;
   transition:opacity .12s, border-color .1s, box-shadow .1s;
-  pointer-events:none; z-index:2; }
+  pointer-events:none; z-index:2; will-change:transform; }
 .tc-stick.on { opacity:1; }
 /* The ring lights when the stick is far enough out to be sprinting, so the
    threshold is something you can see rather than guess at. */
@@ -56,6 +68,7 @@ const CSS = `
 
 .tc-btn { position:absolute; margin-bottom:env(safe-area-inset-bottom);
   margin-right:env(safe-area-inset-right); border-radius:50%; pointer-events:none;
+  touch-action:none;
   border:1px solid rgba(216,210,196,.32); background:rgba(10,10,10,.46);
   color:#d8d2c4; font:600 11px/1.1 ui-sans-serif,system-ui,sans-serif;
   letter-spacing:.1em; text-transform:uppercase; display:grid;
@@ -156,6 +169,52 @@ export class TouchSource {
     this.#watchForTouch();
     this.#wireButtons();
     this.#wireZones();
+    if (location.search.includes("touchdebug")) this.#debugPanel();
+  }
+
+  /**
+   * A readout of what this device actually sends, for ?touchdebug=1.
+   *
+   * A phone is the one target that cannot be inspected from here: the console is
+   * not reachable, emulation reproduces the coordinates correctly, and the whole
+   * question is what the hardware does differently. So the page reports on
+   * itself and somebody photographs it.
+   *
+   * Every pointer AND touch event at the window, in capture so nothing can eat
+   * them first, with what was under the finger and where the stick ended up.
+   */
+  #debugPanel() {
+    const box = document.createElement("div");
+    box.style.cssText = "position:fixed;left:0;top:0;right:0;z-index:99;" +
+      "font:10px/1.35 ui-monospace,monospace;color:#9f6;background:rgba(0,0,0,.82);" +
+      "padding:4px 6px;pointer-events:none;white-space:pre;max-height:44vh;overflow:hidden";
+    document.body.appendChild(box);
+    const lines = [];
+    const NEWLINE = String.fromCharCode(10);
+    const say = (t) => {
+      lines.unshift(t);
+      lines.length = Math.min(lines.length, 16);
+      box.textContent = lines.join(NEWLINE);
+    };
+    say(`vw ${innerWidth}x${innerHeight} dpr ${devicePixelRatio} pts ${navigator.maxTouchPoints}`);
+    const name = (el) => !el ? "-" : (el.id || el.className?.baseVal || el.className || el.tagName);
+    const log = (e) => {
+      const p = e.touches ? e.changedTouches[0] : e;
+      const x = p?.clientX, y = p?.clientY;
+      const hit = Number.isFinite(x) ? name(document.elementFromPoint(x, y)) : "?";
+      const r = this.stickEl.getBoundingClientRect();
+      say(`${e.type} ${e.pointerType ?? "touch"} ` +
+          `${Number.isFinite(x) ? Math.round(x) + "," + Math.round(y) : "NO-COORDS"} ` +
+          `on=${name(e.target)} hit=${hit} ` +
+          `stick=${Math.round(r.left)},${Math.round(r.top)} ${this.stickEl.classList.contains("on") ? "ON" : "off"}`);
+    };
+    for (const t of ["pointerdown", "pointerup", "pointercancel",
+                     "touchstart", "touchend", "touchcancel"]) {
+      addEventListener(t, log, { capture: true, passive: true });
+    }
+    let n = 0;
+    addEventListener("pointermove", (e) => { if (++n % 20 === 0) log(e); },
+                     { capture: true, passive: true });
   }
 
   /**
@@ -222,6 +281,21 @@ export class TouchSource {
     hold("#tc-pause", () => (this.menuQueued = true));
   }
 
+  /**
+   * Put the stick's centre at a point on the screen. One write, or none.
+   *
+   * Returns whether it landed, and the caller only reveals the stick if it did -
+   * because its resting place, before anything has positioned it, is the
+   * top-left corner with two thirds of it off both edges. That is not a
+   * hypothetical: it is 48,-68 on a 375-wide screen, and it is what a stick that
+   * is shown before it is placed looks like.
+   */
+  #placeStick(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    this.stickEl.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+    return true;
+  }
+
   #wireZones() {
     const R = 60;   // pixels of stick travel to full deflection
 
@@ -233,12 +307,20 @@ export class TouchSource {
       // gesture because of that would be far worse than losing the capture.
       try { zone.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
       if (role === "move") {
-        // Floating stick: the origin is wherever the thumb actually landed.
-        this.pointers.set(e.pointerId, { role, ox: e.clientX, oy: e.clientY });
-        this.stickEl.style.left = `${e.clientX}px`;
-        this.stickEl.style.top = `${e.clientY}px`;
-        this.stickEl.classList.add("on");
-        this.el.classList.add("using-stick");
+        // Floating stick: the origin is wherever the thumb actually landed -
+        // unless the event cannot say where that was, in which case it goes to
+        // the middle of its own zone rather than to nowhere.
+        let ox = e.clientX, oy = e.clientY;
+        if (!Number.isFinite(ox) || !Number.isFinite(oy)) {
+          const r = zone.getBoundingClientRect();
+          ox = r.left + r.width * 0.5;
+          oy = r.top + r.height * 0.6;
+        }
+        this.pointers.set(e.pointerId, { role, ox, oy });
+        if (this.#placeStick(ox, oy)) {
+          this.stickEl.classList.add("on");
+          this.el.classList.add("using-stick");
+        }
       } else {
         this.pointers.set(e.pointerId, { role, lx: e.clientX, ly: e.clientY });
       }
