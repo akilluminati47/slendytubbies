@@ -108,10 +108,9 @@ const LANE = {
   // 1.6x to 1.9x - fast, and still short of the ceiling, where the legs blur and
   // the head starts whipping about.
   runSpeed: [3.2, 3.9],
-  // How near the chaser has to get before they run, and how much further it
-  // has to fall behind before they stop.
+  // How near the chaser has to get before they run. There is no matching number
+  // for stopping: see the panic pass, which only goes one way.
   panic: 13.0,
-  calm: 8.0,
   // Panic travels forward up the line as well. Somebody sprinting up behind you
   // is its own reason to move, and without this the front of the queue keeps
   // strolling while the back piles into it at four metres a second - which is
@@ -463,6 +462,10 @@ export class Showcase {
 
   #enter(walker) {
     walker.model.root.visible = true;
+    // Rolled here and nowhere else. The chaser is left out of the panic pass
+    // entirely, so whichever of the two ways it decided to come, it comes that
+    // way for the whole lap - a monster that breaks into a run halfway is a
+    // moment, and one that gives up halfway and strolls is a joke.
     walker.running = false;
     // Half the party takes the second walk cycle, rolled per lap.
     walker.varied = Math.random() < 0.5;
@@ -620,27 +623,36 @@ export class Showcase {
     // this frame is already running when the one ahead of it is asked whether
     // anybody behind it is. That is what lets a panic travel up the queue in
     // one pass instead of one walker a frame.
+    // And it only ever goes one way. Nobody drops back to a walk having started
+    // to run, because there is nothing in front of them to be reassured by - the
+    // thing is still behind them and still coming, and a party strolling again
+    // twenty metres after bolting reads as five people who have forgotten what
+    // they are in. A lap is the unit: they run until they leave the lane, and
+    // #enter puts the next one back on its feet at the far end.
+    //
+    // Which also means the hysteresis is gone. It was only ever there to stop a
+    // body sitting on the threshold flickering between clips, and a switch that
+    // cannot go back cannot flicker.
     const chaser = this.walkers.find((w) => w.kind === "tinkywinky");
     const line = this.walkers.filter((w) => w !== chaser).sort((a, b) => a.z - b.z);
     let behind = null;
     for (const w of line) {
+      if (w.running) { behind = w; continue; }
       const ahead = chaser ? w.z - chaser.z : Infinity;
-      // Two reasons to run, and they get the same hysteresis: the thing itself
-      // is close, or the one behind you is running and closing on your heels.
-      const slack = w.running ? LANE.calm : 0;
-      const scared = (chaser && ahead > 0 && ahead < LANE.panic + slack)
-        || (!!behind?.running && w.z - behind.z < LANE.contagion + slack);
+      // Two reasons to run: the thing itself is close, or the one behind you is
+      // running and closing on your heels.
+      const scared = (chaser && ahead > 0 && ahead < LANE.panic)
+        || (!!behind?.running && w.z - behind.z < LANE.contagion);
       behind = w;
-      if (scared === !!w.running) continue;
-      w.running = scared;
-      const want = scared
-        ? LANE.runSpeed[0] + Math.random() * (LANE.runSpeed[1] - LANE.runSpeed[0])
-        : LANE.speed * (1 + (Math.random() - 0.5) * LANE.pace);
+      if (!scared) continue;
+      w.running = true;
+      const want = LANE.runSpeed[0]
+        + Math.random() * (LANE.runSpeed[1] - LANE.runSpeed[0]);
       // Speed and clip decided together, always. Breaking into a run is the one
       // moment a body is most likely to outrun its own feet.
       const gait = this.#carry(w.model, want);
       w.speed = gait.speed;
-      this.#wear(w, gait.clip, scared ? 0.3 : 0.45);
+      this.#wear(w, gait.clip, 0.3);
     }
 
     // And two of the party change places, out where the fog has them.
