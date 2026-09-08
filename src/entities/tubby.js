@@ -199,15 +199,11 @@ export class Tubby {
       patrol: this.stride, investigate: T.investigateSpeed,
       chase: T.chaseSpeed, flee: T.fleeSpeed,
     }[this.state];
-    // Bolting is pure theatre, so it is held to what the legs can carry.
-    // Chasing is not: 4.6 is a contract with the player's 6.0 sprint - it has to
-    // be losable and not by much - and holding it to the clip would quietly
-    // make the monster uncatchable-by and the game unloseable. So the chase is
-    // the one place a body is allowed to outrun its own feet, knowingly, and
-    // pays about 25% foot slide for it. See CFG.tubby.chaseSpeed.
-    const speed = this.state === "flee"
-      ? Math.min(wanted, this.model.topSpeed?.() ?? Infinity)
-      : wanted;
+    // Held to what the legs can carry. Every speed this thing has now fits
+    // inside that, so the clamp is a guard rather than a correction - it exists
+    // so a config edit cannot quietly reintroduce a body outrunning its feet.
+    // The chase used to be exempt because it did not fit; see CFG.tubby.
+    const speed = Math.min(wanted, this.model.topSpeed?.() ?? Infinity);
     // It whips round when it has just been startled and when bolting; it swings
     // round the rest of the time.
     const turn = fleeing || this.alignLeft > 0 ? T.fleeTurnRate : T.turnRate;

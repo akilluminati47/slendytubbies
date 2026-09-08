@@ -46,23 +46,23 @@ const LANE = {
   // things is a tubby appearing. Starting them far enough back that they are
   // genuinely invisible costs nothing when there are four more in front, and
   // the procession is the thing you see instead of the arrival.
-  spacing: 6.0,
+  spacing: 6.4,
   // Room for the chaser to close in, and MORE of it the faster it rolled. The
   // fast laps are the ones where it should start out of sight behind the group
   // and be visibly gaining by the time it reaches the lens; giving it the same
   // head start whatever its pace threw away the only thing the roll was for.
-  chaserSpacing: [16.0, 34.0],
+  chaserSpacing: [17.0, 36.0],
   // And the beat after it, which is long enough that the Guardian is still
   // beyond the fog when the chaser's face goes past the lens. The procession
   // has to actually END - an empty stage for a moment - before it can read as
   // having begun again, and at thirteen metres the Guardian was already walking
   // out of the dark while the chaser was still in frame.
-  gap: 26.0,
+  gap: 25.0,
   // Nobody walks through anybody. Only the chaser moves at a different speed,
   // so in practice this is the leash that stops it overtaking the group - and
   // a monster that closes on them and then follows them past is a better thing
   // to watch than one that keeps its distance politely.
-  clear: 3.2,
+  clear: 3.4,
   // The chaser does not amble. It comes past at its own pace, rolled each time,
   // so the one appearance in five that is the monster is also the one you
   // cannot set your watch by - and fast enough that the run clip picks it up
@@ -72,12 +72,12 @@ const LANE = {
   // #carry. A prowl that is secretly a run played at half rate is a monster
   // gliding, which is the thing this was supposed to stop.
   // The prowl sits near the top of what the walk clip carries and the party
-  // walks at 0.66, so an ambling lap is one it spends slowly gaining - enough
+  // walks at 0.98, so an ambling lap is one it spends slowly gaining - enough
   // to be inside their panic distance by the time it reaches the lens.
-  chaserProwl: [0.74, 0.90],
+  chaserProwl: [1.10, 1.34],
   // And the run sits above anything the party can run at, so a fast lap closes
   // on them even once they break.
-  chaserRun: [2.6, 3.2],
+  chaserRun: [3.6, 4.4],
   chaserRuns: 0.45,        // how often it picks the run
   // Half-extents of the patch worth sowing. Only what the 40 degree lens can
   // see from z=0 through 19 m of fog is ever drawn, so sowing the whole 60 m
@@ -85,39 +85,44 @@ const LANE = {
   grassArea: { x: 13, z: 15 },
   // What a walk actually is.
   //
-  // Every number in this block is a speed one of the two clips can actually
-  // carry, and they are ALL smaller than they were, because the clips turned
-  // out to be slower than the bake believed: the walk covers 0.39 m/s of ground
-  // per cycle and the run 1.37, and neither will play back outside 0.82x to
-  // 2.45x. So the walk carries 0.32 to 0.96 and the run 1.13 to 3.36, and the
-  // two now very nearly touch. Nothing here may outrun its own feet; see
-  // #carry.
-  speed: 0.66,
+  // Every number in this block is a speed one of the two clips can carry. With
+  // the retarget's lost stride handed back (STRIDE_GAIN) the walk covers 0.59
+  // m/s of ground per cycle and the run 2.06, and neither plays outside 0.82x to
+  // 2.45x - so the walk carries 0.48 to 1.43 and the run 1.69 to 5.04, and the
+  // two overlap. Nothing here may outrun its own feet; see #carry.
+  //
+  // The distances did NOT go up with the speeds. Scaling them together keeps the
+  // arrival rate identical, which sounds right and is not: the fog still ends at
+  // 27 m however fast anybody walks, so a longer lane just means fewer of them
+  // inside it and a screen with one body on it. Held roughly where they were,
+  // the faster cast simply arrives more often - about four in view at a time
+  // rather than three.
+  speed: 0.98,
   // How much of that speed each walker is allowed to differ by, and how far
   // off their own lane they drift, per lap. The stagger, in other words.
   pace: 0.16,
   wander: 0.7,
   // Running, once the thing behind them is close enough to be a reason.
   //
-  // Three and a half to four and a half times the walking pace, which lands the
-  // run clip at 1.7x to 2.1x - fast, and still short of the ceiling, where the
-  // legs blur and the head starts whipping about.
-  runSpeed: [2.3, 2.9],
+  // Three and a half to four times the walking pace, which lands the run clip at
+  // 1.6x to 1.9x - fast, and still short of the ceiling, where the legs blur and
+  // the head starts whipping about.
+  runSpeed: [3.2, 3.9],
   // How near the chaser has to get before they run, and how much further it
   // has to fall behind before they stop.
-  panic: 10.0,
-  calm: 6.0,
+  panic: 13.0,
+  calm: 8.0,
   // Panic travels forward up the line as well. Somebody sprinting up behind you
   // is its own reason to move, and without this the front of the queue keeps
   // strolling while the back piles into it at four metres a second - which is
   // a traffic jam, not a parade.
-  contagion: 9.0,
+  contagion: 12.0,
   // Beyond this the fog has them completely, which is where two of them can
   // change places without anybody seeing it happen.
   hidden: -28.0,
   // Where the front of the queue starts, so the Guardian is already in view
   // when the title appears and nobody has to wait for the show to begin.
-  firstStart: -7.5,
+  firstStart: -8.5,
 };
 
 /** How many carried torches light the ground at once - the nearest few. */
@@ -149,8 +154,22 @@ const FRONT_SCREENS = new Set(["title", "mode", "lobby"]);
  */
 const CURVE = 0.0038;
 
+/**
+ * How far the curve may ever fall, in metres.
+ *
+ * A parabola is only a horizon near its top. The queue now forms up 130 m back -
+ * it has to, because the cast walks faster and is spaced further apart - and
+ * unchecked this drops that end 66 m into the floor, so the far half of the
+ * parade was standing in a pit with no ground under it. Flat past the point the
+ * fog has closed anyway, which is 46 m out against a fog that ends at 27.
+ */
+const MAX_DROP = 8;
+
 /** Where the stage's floor is at a point down the lane. */
-const stageY = (z) => -CURVE * z * z;
+const stageY = (z) => -Math.min(CURVE * z * z, MAX_DROP);
+
+/** How far back the floor has to reach: past where anybody ever forms up. */
+const STAGE_BACK = 160;
 
 const STAGE_MIST = {
   // The map's own strength, not more of it.
@@ -224,9 +243,14 @@ export class Showcase {
     // dread overlay does when something is close - so the ground under the cast
     // is a grey with barely any green left in it rather than the field green
     // the map uses.
-    // Segmented down the lane, because a plane with one quad in it cannot bend.
-    const floor = new THREE.PlaneGeometry(60, 60, 1, 64);
+    // Segmented down the lane, because a plane with one quad in it cannot bend -
+    // and long enough down it to reach where the queue forms up, which is a good
+    // deal further than the sixty metres this used to be. The back of the line
+    // stands 130 m out; it was walking on nothing from 30 m, so its torches lit
+    // empty space.
+    const floor = new THREE.PlaneGeometry(60, STAGE_BACK + 30, 1, 96);
     floor.rotateX(-Math.PI / 2);
+    floor.translate(0, 0, (30 - STAGE_BACK) / 2);
     const fp = floor.attributes.position;
     for (let i = 0; i < fp.count; i++) fp.setY(i, stageY(fp.getZ(i)));
     floor.computeVertexNormals();

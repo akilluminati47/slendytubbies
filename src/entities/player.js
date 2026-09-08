@@ -6,6 +6,7 @@ import { locomotion, handAt } from "./tubbyModel.js";
 
 const _dir = new THREE.Vector3();
 const _hand = new THREE.Vector3();
+const _want = new THREE.Vector3();
 
 export class Player {
   /**
@@ -31,6 +32,8 @@ export class Player {
     // crossing one fires once rather than every frame we are over it.
     this.stumble = 0;
     this.onBranch = -1;
+    // Where the torch actually is, as opposed to where the gait wants it.
+    this.torchAt = new THREE.Vector3();
     this.clicked = false;
     this.noise = 0;        // metres of hearing radius this frame
     this.bob = 0;
@@ -335,8 +338,11 @@ export class Player {
         // three rates are deliberately unrelated, so the loop never lines up
         // and starts reading as a rhythm.
         this.breath = (this.breath ?? 0) + dt;
-        const still = 1 - Math.min(1, this.bobAmount / CFG.player.bobWalk);
-        const drift = still * CFG.player.idleSway;
+        // The idle drift never switches off now. It used to be scaled by how
+        // still you were, so the hand that would not keep steady standing up
+        // became perfectly steady the moment you walked - the two motions took
+        // turns instead of adding up. A hand does both at once.
+        const drift = CFG.player.idleSway;
 
         // The hand's own path, not a sine on the vertical.
         //
@@ -353,12 +359,24 @@ export class Player {
         handAt(gait?.hand, this.bob / (Math.PI * 4), _hand);
         const swing = CFG.player.torchSwing *
           Math.min(1, this.bobAmount / CFG.player.bobWalk);
-        this.torchRig.position.set(
+        _want.set(
           _hand.x * swing + Math.sin(this.breath * 0.83) * drift,
           _hand.y * swing + Math.sin(this.breath * 1.31 + 1.1) * drift * 0.8,
           _hand.z * swing);
+
+        // Followed, not tracked exactly.
+        //
+        // A hand is on the end of an arm and a lamp has weight; neither snaps to
+        // a new position because the hips did. Reproducing the bone's path to
+        // the millimetre put a full cycle of it through the lens every third of
+        // a second at a sprint, which is a shake rather than a walk. An ease
+        // takes the high end off by itself and leaves the low end alone, so a
+        // stroll still swings and a sprint blurs into a sway - and the idle
+        // drift, which is slower than either, passes through untouched.
+        this.torchAt.lerp(_want, 1 - Math.exp(-CFG.player.torchEase * dt));
+        this.torchRig.position.copy(this.torchAt);
         this.torchRig.rotation.z = Math.sin(this.breath * 0.61) * drift * 3.5
-          - _hand.x * swing * CFG.player.torchRoll;
+          - this.torchAt.x * CFG.player.torchRoll;
       }
 
       // Twice a stride up and down, once a stride side to side: the figure of

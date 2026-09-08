@@ -81,16 +81,19 @@ export const CFG = {
     // clearest possible statement that nobody is holding it.
     idleSway: 0.006,
     // How far the held torch travels at the widest point of its swing, in
-    // metres. The hand itself covers 6 cm on the run cycle and 19 on the walk,
-    // out on the end of an arm; this is that path scaled to something sane 40 cm
-    // from a lens, so the shape and the timing are the animation's and only the
-    // size is a decision. At this value the beam moves 65 mm across and 55 up,
-    // against the 51 mm of pure vertical it used to have - so a little more in
-    // total, spread over the three axes a hand actually uses.
-    torchSwing: 0.036,
+    // metres, BEFORE the ease below takes the fast part of it off. The hand
+    // itself covers 6 cm on the run cycle out on the end of an arm; this is that
+    // path scaled to something sane 40 cm from a lens, so the shape and the
+    // timing are the animation's and only the size is a decision.
+    torchSwing: 0.016,
+    // How fast the torch catches up to where the gait puts it, per second. This
+    // is what keeps a sprint from shaking the lens apart: at 6.5 steps a second
+    // the swing arrives faster than this can follow and comes out as a sway,
+    // while a stroll and the idle drift are slow enough to pass through whole.
+    torchEase: 9.0,
     // And a little roll out of the sideways part of it, so the lamp tips rather
     // than sliding flat across the view. Radians per metre of side travel.
-    torchRoll: 3.0,
+    torchRoll: 2.2,
     bobEase: 5.0,         // how fast the amplitude fades in and out
     // Bob cycles per metre travelled, NOT per second. Sprinting is a longer
     // stride, so it must be the LOWER number - fewer, bigger steps over the
@@ -122,25 +125,23 @@ export const CFG = {
     // native, good from 1.78), which is why it is 1.9 and not 1.4 - a tubby
     // jogging across a clearing on patrol is a far better thing to catch sight
     // of than one gliding.
-    strides: [0.45, 0.8, 1.9],
+    strides: [0.58, 1.05, 2.4],
     strideHold: [5, 13],  // seconds on one stride before rolling another
     investigateSpeed: 2.2,
-    // Under the player's sprint of 6, so you can outrun it - and that is a
-    // gameplay contract, not a look, which is why it is the one speed here
-    // allowed to exceed what the run clip carries. The clip travels 1.40 m/s a
-    // cycle and stops at 2.45x playback, so it holds the ground to 3.44; a
-    // chase at 4.6 slides the feet about 25%. Accepted deliberately: the
-    // alternative is a monster that cannot catch anybody.
+    // Under the player's sprint of 6, so you can outrun it. This used to be 34%
+    // beyond anything the run clip could carry and was the one speed knowingly
+    // allowed to outrun its own feet; with the retarget's stride handed back
+    // (STRIDE_GAIN) the run holds the ground to 5.04 and 4.6 sits inside it, at
+    // 2.23x playback. No exception needed any more.
     chaseSpeed: 4.6,
-    // Bolts when someone takes a dish. This is the ceiling of what a body here
-    // can do - the run clip holds the ground to 3.44 m/s - and Tubby.update
+    // Bolts when someone takes a dish. Just under the ceiling of what a body
+    // here can do - the run clip holds the ground to 5.04 m/s - and Tubby.update
     // clamps to whatever that character's own clip measures, so the number can
-    // only ever be met, never faked. It was 11, three times over, which did not
-    // read as speed: it read as a model being dragged with its legs spinning.
-    fleeSpeed: 3.4,
-    // Longer, because it is covering ground at a third of the old rate. It used
-    // to clear 37 m before settling and now clears 19 - still past the 26 m it
-    // can see from where it started, and deep enough into the fog to vanish.
+    // only ever be met, never faked. It was 11, more than twice over, which did
+    // not read as speed: it read as a model dragged with its legs spinning.
+    fleeSpeed: 5.0,
+    // It clears 28 m before settling, against 37 when it was cheating - still
+    // past the 26 m it can see from where it started, and deep into the fog.
     fleeTime: 5.6,        // seconds of running before it settles back to hunting
     turnRate: 3.2,        // rad/s
     fleeTurnRate: 6.5,    // it whips round to face away much faster than it hunts

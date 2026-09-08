@@ -149,6 +149,36 @@ let rigCache = null;
 export const RATE = { min: 0.82, max: 2.45 };
 
 /**
+ * How much further a cycle carries the body than the bake measured, 1 = exactly.
+ *
+ * The measurement is right - a planted foot really does slide back 0.39 m per
+ * walk cycle on these rigs - but the clip it is measuring has a stride far too
+ * short for the character wearing it. The retarget is why: it narrows the hips,
+ * halves the donor's knee lift and squares the feet, and every one of those
+ * takes fore-and-aft travel out of the step. So playing it at exactly the rate
+ * its own feet justify gives a 1.85 m body mincing along at walking-pace-for-a-
+ * toddler, and the parade came out visibly slower than the same characters in
+ * the game.
+ *
+ * This is the retarget's compression handed back. It buys ground per cycle at
+ * the price of some foot slide, which is the honest trade in that direction -
+ * and the direction matters: a foot sliding BACKWARDS under a body going
+ * forwards is what walking looks like when the stride is a little short, while
+ * the opposite, which is what the mis-baked run used to do, is a body being
+ * dragged with its legs paddling. One reads as brisk, the other as broken.
+ *
+ * It also happens to put the game's own chase speed back inside what the run
+ * clip can carry, which it was 34% outside of.
+ */
+export const STRIDE_GAIN = 1.5;
+
+/** What one second of a clip covers, once the retarget's loss is handed back. */
+function strideOf(clip) {
+  const own = clip?.userData?.groundSpeed ?? 0;
+  return own > 0.05 ? own * STRIDE_GAIN : 0;
+}
+
+/**
  * How much of the clip's own head swing to take back out, 0 to 1.
  *
  * The donor animates a big roll of the head into both cycles, and these clips
@@ -1091,8 +1121,8 @@ export function locomotion(speed, kind = null) {
   let best = null;
   for (const name of GAITS) {
     const clip = byState.get(name);
-    const own = clip?.userData?.groundSpeed ?? 0;
-    if (own <= 0.05) continue;
+    const own = strideOf(clip);
+    if (own <= 0) continue;
     const carried = THREE.MathUtils.clamp(speed, own * RATE.min, own * RATE.max);
     const miss = Math.abs(carried - speed);
     if (!best || miss < best.miss) best = { name, clip, own, miss };
@@ -1427,8 +1457,8 @@ class RiggedTubby {
    * skating is.
    */
   carries(name) {
-    const own = this.byState.get(name)?.userData?.groundSpeed ?? 0;
-    return own > 0.05 ? [own * RATE.min, own * RATE.max] : [0, 0];
+    const own = strideOf(this.byState.get(name));
+    return own > 0 ? [own * RATE.min, own * RATE.max] : [0, 0];
   }
 
   /** The fastest this body can travel without its feet lying about it. */
@@ -1471,8 +1501,8 @@ class RiggedTubby {
     if (name !== "walk") return name;
     const alt = this.byState.get("stride");
     if (!alt) return name;
-    const own = this.byState.get("walk")?.userData?.groundSpeed ?? 0;
-    const other = alt.userData?.groundSpeed ?? 0;
+    const own = strideOf(this.byState.get("walk"));
+    const other = strideOf(alt);
     return own > 0 && Math.abs(other - own) / own < 0.06 ? "stride" : name;
   }
 
@@ -1495,8 +1525,8 @@ class RiggedTubby {
     // thing read as low gravity. Every clip now carries the speed it actually
     // travels at, measured off its own planted foot during the bake, so this is
     // a ratio rather than an invention.
-    const own = this.current?.getClip?.().userData?.groundSpeed ?? 0;
-    this.mixer.timeScale = this.currentName === "idle" || own <= 0.05
+    const own = strideOf(this.current?.getClip?.());
+    this.mixer.timeScale = this.currentName === "idle" || own <= 0
       ? 1
       // Floor it well short of slow motion, and cap it well short of a blur.
       // A run clip played at much under the floor stops reading as a run at

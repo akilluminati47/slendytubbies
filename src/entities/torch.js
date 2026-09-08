@@ -326,10 +326,23 @@ const BEAM_NOISE = /* glsl */`
  * whose apex is beside your eye is a wall across the screen and nothing else.
  *
  * Additive and depth-write off, so it brightens what is behind it rather than
- * fogging it and cannot cut a hole in whatever it passes over. Not fogged: the
- * fog would dim it by distance from the camera, and the camera is the thing
- * holding it.
+ * fogging it and cannot cut a hole in whatever it passes over.
+ *
+ * Not fogged the ordinary way - fog is a colour mixed in, and mixing a colour
+ * into an additive pass brightens it rather than hiding it. Instead the whole
+ * cone fades with how far its APEX is from the camera, which is the right
+ * question for a beam: the one in your own hand starts at the lens and never
+ * fades, and one held by somebody far up the lane goes when they do.
+ *
+ * The fade starts where the fog gives up rather than where it begins, because a
+ * beam is a light. You can see somebody's torch through weather that has already
+ * hidden them, and that gap - a cone with nobody visible behind it - is worth
+ * having. What is not worth having is the one this replaces, where a walker
+ * forming up 130 m back shone at full strength through fog that ended at 27.
  */
+/** Its own scratch vector: this one is read during render, not during update. */
+const _beamAt = new THREE.Vector3();
+
 function beamCone(len, angle, punch = 1) {
   const r = Math.tan(angle) * len;
   const geo = new THREE.ConeGeometry(r, len, 24, 6, true);
@@ -348,6 +361,7 @@ function beamCone(len, angle, punch = 1) {
       uLen: { value: len },
       uPunch: { value: punch },
       uNear: { value: 0.55 },
+      uHaze: { value: 1 },
       uColor: { value: new THREE.Color(0xfff0cf) },
     },
     vertexShader: /* glsl */`
@@ -363,7 +377,7 @@ function beamCone(len, angle, punch = 1) {
       }
     `,
     fragmentShader: /* glsl */`
-      uniform float uTime, uLen, uPunch, uNear;
+      uniform float uTime, uLen, uPunch, uNear, uHaze;
       uniform vec3 uColor;
       varying vec3 vLocal;
       varying vec3 vNrm;
@@ -382,7 +396,7 @@ function beamCone(len, angle, punch = 1) {
         // The apex is beside your eye in first person; without this the first
         // half metre of it is a wall across the screen.
         float near = smoothstep(0.0, uNear, length(vRay));
-        float a = 0.085 * uPunch * thick * reach * n * near;
+        float a = 0.085 * uPunch * thick * reach * n * near * uHaze;
         if (a < 0.002) discard;
         gl_FragColor = vec4(uColor * a, a);
       }
@@ -392,8 +406,20 @@ function beamCone(len, angle, punch = 1) {
   const beam = new THREE.Mesh(geo, mat);
   beam.frustumCulled = false;
   beam.renderOrder = 3;
-  // One clock, read at draw time, so nothing has to remember to tick it.
-  beam.onBeforeRender = () => { mat.uniforms.uTime.value = beamTime(); };
+  // One clock, read at draw time, so nothing has to remember to tick it - and
+  // the same moment is the only one that knows which camera is looking, which is
+  // what the distance fade needs.
+  beam.onBeforeRender = (renderer, scene, camera) => {
+    mat.uniforms.uTime.value = beamTime();
+    const fog = scene.fog;
+    if (!fog) { mat.uniforms.uHaze.value = 1; return; }
+    beam.getWorldPosition(_beamAt);
+    const d = _beamAt.distanceTo(camera.position);
+    // From where the fog finishes to three times that, so a beam outlives the
+    // body carrying it by a good margin and then goes.
+    mat.uniforms.uHaze.value =
+      1 - THREE.MathUtils.smoothstep(d, fog.far, fog.far * 3);
+  };
   return beam;
 }
 
