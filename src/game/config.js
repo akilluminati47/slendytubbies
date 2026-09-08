@@ -80,6 +80,17 @@ export const CFG = {
     // hold anything perfectly still, and a beam frozen to the pixel is the
     // clearest possible statement that nobody is holding it.
     idleSway: 0.006,
+    // How far the held torch travels at the widest point of its swing, in
+    // metres. The hand itself covers 6 cm on the run cycle and 19 on the walk,
+    // out on the end of an arm; this is that path scaled to something sane 40 cm
+    // from a lens, so the shape and the timing are the animation's and only the
+    // size is a decision. At this value the beam moves 65 mm across and 55 up,
+    // against the 51 mm of pure vertical it used to have - so a little more in
+    // total, spread over the three axes a hand actually uses.
+    torchSwing: 0.036,
+    // And a little roll out of the sideways part of it, so the lamp tips rather
+    // than sliding flat across the view. Radians per metre of side travel.
+    torchRoll: 3.0,
     bobEase: 5.0,         // how fast the amplitude fades in and out
     // Bob cycles per metre travelled, NOT per second. Sprinting is a longer
     // stride, so it must be the LOWER number - fewer, bigger steps over the

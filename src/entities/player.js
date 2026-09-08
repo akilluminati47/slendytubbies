@@ -2,8 +2,10 @@ import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { heightAt } from "../world/world.js";
 import { makeTorch, torchFor } from "./torch.js";
+import { locomotion, handAt } from "./tubbyModel.js";
 
 const _dir = new THREE.Vector3();
+const _hand = new THREE.Vector3();
 
 export class Player {
   /**
@@ -288,9 +290,16 @@ export class Player {
     } else {
       this.rig.rotation.set(0, 0, 0);
       // No head bob in the air; it reads as a stumble rather than a stride.
+      //
+      // The rate is the animation's, not a number chosen here. One footfall is
+      // 2pi of `bob` - the head drops onto each foot, which is why the vertical
+      // below runs at twice the sway - so the whole rig, the beam and the sound
+      // all come off the same cadence as the legs everybody else can see.
+      const gait = locomotion(speed);
       if (this.grounded) {
-        this.bob += speed * dt *
-          (sprint ? CFG.player.strideSprint : CFG.player.strideWalk);
+        this.bob += gait
+          ? dt * Math.PI * 2 / gait.period
+          : speed * dt * (sprint ? CFG.player.strideSprint : CFG.player.strideWalk);
       }
 
       // Ease the AMPLITUDE rather than snapping it on at full size. Stepping
@@ -328,12 +337,28 @@ export class Player {
         this.breath = (this.breath ?? 0) + dt;
         const still = 1 - Math.min(1, this.bobAmount / CFG.player.bobWalk);
         const drift = still * CFG.player.idleSway;
+
+        // The hand's own path, not a sine on the vertical.
+        //
+        // In the parade and on everybody else's screen this torch is parented
+        // to a hand bone and goes wherever the clip takes it - which is a
+        // flattened oval, mostly fore and aft, with the rise and fall a smaller
+        // part of it and a quarter cycle out of step. What was here instead was
+        // a pure up-and-down bounce, so the same character was holding its light
+        // two different ways depending on who was looking.
+        //
+        // handAt gives the clip's shape and phase, normalised so its largest
+        // excursion is 1; torchSwing says what that 1 is worth in metres up here
+        // where the thing is 40 cm from a lens rather than out on an arm.
+        handAt(gait?.hand, this.bob / (Math.PI * 4), _hand);
+        const swing = CFG.player.torchSwing *
+          Math.min(1, this.bobAmount / CFG.player.bobWalk);
         this.torchRig.position.set(
-          Math.sin(this.breath * 0.83) * drift,
-          Math.sin(this.bob * 0.5) * this.bobAmount * 1.6
-            + Math.sin(this.breath * 1.31 + 1.1) * drift * 0.8,
-          0);
-        this.torchRig.rotation.z = Math.sin(this.breath * 0.61) * drift * 3.5;
+          _hand.x * swing + Math.sin(this.breath * 0.83) * drift,
+          _hand.y * swing + Math.sin(this.breath * 1.31 + 1.1) * drift * 0.8,
+          _hand.z * swing);
+        this.torchRig.rotation.z = Math.sin(this.breath * 0.61) * drift * 3.5
+          - _hand.x * swing * CFG.player.torchRoll;
       }
 
       // Twice a stride up and down, once a stride side to side: the figure of

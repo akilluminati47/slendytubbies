@@ -1059,6 +1059,77 @@ function cloneCharacter(character) {
   return { ...character, scene, meshes: copies, target: copies[0] };
 }
 
+/**
+ * What a body travelling at `speed` would be doing with its legs.
+ *
+ * The local player is the one character in the game with no model - you are a
+ * camera - so the two things that should be following its animation had nothing
+ * to follow and were given invented numbers instead: footsteps every 0.92 to
+ * 1.42 metres, and a head bob of 6.0 radians per metre. The clips step every
+ * 0.39 to 0.52. So your own feet sounded roughly one stride in three, against a
+ * body that every other player in the lobby could see taking all of them.
+ *
+ * This is the missing model. Same clip choice and same playback clamp the real
+ * ones use, so the answer is what a tubby standing where you are would be doing.
+ *
+ * `period` is seconds per FOOTFALL, not per cycle - a cycle is two of them - and
+ * it comes from the CLAMPED playback, so when the body outruns its clip (which
+ * yours does at a full sprint) the steps stretch out exactly as the visible ones
+ * do rather than staying honest while the animation cannot.
+ *
+ * @returns null when the rigged models are not in use, so callers keep a
+ *          fallback rather than dividing by a rig that never loaded.
+ */
+export function locomotion(speed, kind = null) {
+  const chars = rigCache;
+  if (!chars) return null;
+  const character = (kind && chars[kind]) || chars.tinkywinky
+    || chars[Object.keys(chars)[0]];
+  const byState = character?.byState;
+  if (!byState) return null;
+
+  let best = null;
+  for (const name of GAITS) {
+    const clip = byState.get(name);
+    const own = clip?.userData?.groundSpeed ?? 0;
+    if (own <= 0.05) continue;
+    const carried = THREE.MathUtils.clamp(speed, own * RATE.min, own * RATE.max);
+    const miss = Math.abs(carried - speed);
+    if (!best || miss < best.miss) best = { name, clip, own, miss };
+  }
+  if (!best) return null;
+
+  const playback = THREE.MathUtils.clamp(speed / best.own, RATE.min, RATE.max);
+  return {
+    clip: best.name,
+    duration: best.clip.duration,
+    playback,
+    period: best.clip.duration / (2 * playback),
+    hand: best.clip.userData.handTrack ?? null,
+  };
+}
+
+/**
+ * The torch hand's offset at a point in the cycle, in metres of unit swing.
+ *
+ * Linear between samples: the track is 32 points around a cycle that lasts most
+ * of a second, so the corners are far below what a hand moving this slowly can
+ * show, and a smoother interpolation would cost more than it could be seen to
+ * buy.
+ */
+export function handAt(track, phase, out) {
+  if (!track) return out.set(0, 0, 0);
+  const n = track.samples;
+  const t = (phase - Math.floor(phase)) * n;
+  const i = Math.floor(t), f = t - i;
+  const a = (i % n) * 3, b = ((i + 1) % n) * 3;
+  const d = track.data;
+  return out.set(
+    d[a] + (d[b] - d[a]) * f,
+    d[a + 1] + (d[b + 1] - d[a + 1]) * f,
+    d[a + 2] + (d[b + 2] - d[a + 2]) * f);
+}
+
 export function makeTubby(kind) {
   const spec = TUBBIES[kind] ?? TUBBIES.tinkywinky;
   const character = rigCache && rigCache[kind];

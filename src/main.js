@@ -5,7 +5,7 @@ import { World, heightAt } from "./world/world.js";
 import { installGroundFog, driftMist, setMistFlat } from "./world/groundFog.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
-import { loadTubbyAssets, tickTV } from "./entities/tubbyModel.js";
+import { loadTubbyAssets, tickTV, locomotion } from "./entities/tubbyModel.js";
 import { loadTorchAssets } from "./entities/torch.js";
 import { WristHUD } from "./game/wristHud.js";
 import { HINTS } from "./game/hints.js";
@@ -868,25 +868,32 @@ function frame() {
   if (player.stumbled) audio.stumble();
   if (player.clicked) audio.torchClick(torchFor(myRole));
 
-  // Footsteps, paced by distance rather than by time.
+  // Footsteps, paced by the animation.
   //
-  // A timer gives you the same cadence at every speed, which is the one thing a
-  // walk and a sprint definitely do not share. Counting metres instead means
-  // the stride length is the thing that is fixed - as it is on a real pair of
-  // legs - so the feet speed up on their own, and they stop dead the moment you
-  // do without anything having to notice that you stopped.
+  // Not by a stride length picked here. This body is a tubby and every other
+  // player in the lobby can watch it walking; the clip it is playing steps every
+  // 0.39 m at a walk and 0.52 at a run, and this used to fire every 0.92 to
+  // 1.42 - about one stride in three, so your own feet were quieter than your
+  // legs. locomotion() answers with the same clip and the same playback clamp
+  // the visible bodies use, and period is the seconds between two of ITS
+  // footfalls, so the sound cannot drift away from the picture whatever the
+  // speed does.
   const groundSpeed = Math.hypot(player.vel.x, player.vel.z);
+  const gait = locomotion(groundSpeed);
   if (player.grounded && groundSpeed > 0.6) {
-    strideLeft -= groundSpeed * dt;
+    strideLeft -= dt;
     if (strideLeft <= 0) {
       const power = Math.min(1, groundSpeed / CFG.player.sprintSpeed);
-      strideLeft = 0.92 + power * 0.5;
+      // Fallback for the procedural stand-ins, which have no clip to follow:
+      // the old distance rule, expressed as the time it came to.
+      strideLeft += gait ? gait.period
+        : (0.92 + power * 0.5) / Math.max(groundSpeed, 0.6);
       audio.step(power);
     }
   } else {
     // Land with a foot ready to go, so the first step after a jump is not
     // half a stride late.
-    strideLeft = Math.min(strideLeft, 0.25);
+    strideLeft = Math.min(strideLeft, 0.12);
   }
 
   // The fog banks move whether or not anybody is looking at them - and out here

@@ -1507,8 +1507,12 @@ function measureGroundSpeed(character, clip) {
   const steps = 240;
   const dt = clip.duration / steps;
 
-  // Every foot's position relative to the hips, all cycle, in the ground plane.
+  // Every foot's position relative to the hips, all cycle, in the ground plane -
+  // and the hand that carries the torch, which wants all three axes. See
+  // handTrack below for what that is for.
+  const hand = resolve(character.bones, "Hand R");
   const path = feet.map(() => []);
+  const handPath = [];
   for (let i = 0; i <= steps; i++) {
     mixer.setTime((i / steps) * clip.duration * 0.9999);
     character.scene.updateMatrixWorld(true);
@@ -1517,6 +1521,10 @@ function measureGroundSpeed(character, clip) {
       toe.getWorldPosition(v);
       path[n].push(v.x - h.x, v.z - h.z);
     });
+    if (hand) {
+      hand.getWorldPosition(v);
+      handPath.push(v.x - h.x, v.y - h.y, v.z - h.z);
+    }
   }
   mixer.stopAllAction();
   restoreBind(character.bones, character.bind);
@@ -1571,9 +1579,59 @@ function measureGroundSpeed(character, clip) {
     best.sort((a, b) => a - b);
     return -best[best.length >> 1];
   };
-  const travel = Math.max(one(1), one(-1));
+  const plus = one(1), minus = one(-1);
+  const travel = Math.max(plus, minus);
+  // Which way the body goes. The planted foot slides the OTHER way, so the sign
+  // that won above is the sign the foot moved along, and forward is its
+  // opposite - which for a projection onto +u means forward is +u.
+  const fx = plus >= minus ? ux : -ux, fz = plus >= minus ? uz : -uz;
 
   clip.userData.groundSpeed = +Math.max(0, travel).toFixed(3);
+  clip.userData.handTrack = handTrack(handPath, fx, fz);
   if (globalThis.__GS_DEBUG) clip.userData._gs = { path, dt, steps, axis: [ux, uz] };
   return clip.userData.groundSpeed;
+}
+
+/** How many samples of the hand's cycle to keep. */
+const HAND_SAMPLES = 32;
+
+/**
+ * What the torch hand does over one cycle, in the body's own frame.
+ *
+ * The first-person torch has no body to hang off, so its bob was invented: a
+ * sine on the vertical and nothing else. The parade and everybody else's client
+ * get the real thing, because their torch is parented to this bone - so the two
+ * views of the same character were moving their hands differently, and the one
+ * you spend the game looking at was the made-up one.
+ *
+ * This is that motion, reduced to something the first-person rig can be driven
+ * by: the hand's offset from the hips, resolved into (side, up, forward) using
+ * the direction of travel the estimator just worked out, with the mean taken off
+ * so it is a pure oscillation, and scaled so its largest excursion is 1. The
+ * caller picks how many centimetres that 1 is worth; the SHAPE and the phase -
+ * which is the part that reads as a hand rather than a lens - are the clip's.
+ */
+function handTrack(raw, fx, fz) {
+  const n = raw.length / 3;
+  if (n < 4) return null;
+  // Right-handed with world up: right = up x forward.
+  const rx = fz, rz = -fx;
+  const out = new Float32Array(HAND_SAMPLES * 3);
+  let mSide = 0, mUp = 0, mFwd = 0;
+  for (let i = 0; i < HAND_SAMPLES; i++) {
+    const k = Math.round((i / HAND_SAMPLES) * (n - 1)) * 3;
+    const x = raw[k], y = raw[k + 1], z = raw[k + 2];
+    const side = x * rx + z * rz, fwd = x * fx + z * fz;
+    out[i * 3] = side; out[i * 3 + 1] = y; out[i * 3 + 2] = fwd;
+    mSide += side; mUp += y; mFwd += fwd;
+  }
+  mSide /= HAND_SAMPLES; mUp /= HAND_SAMPLES; mFwd /= HAND_SAMPLES;
+  let peak = 0;
+  for (let i = 0; i < HAND_SAMPLES; i++) {
+    out[i * 3] -= mSide; out[i * 3 + 1] -= mUp; out[i * 3 + 2] -= mFwd;
+    peak = Math.max(peak, Math.abs(out[i * 3]),
+                    Math.abs(out[i * 3 + 1]), Math.abs(out[i * 3 + 2]));
+  }
+  if (peak > 1e-6) for (let i = 0; i < out.length; i++) out[i] /= peak;
+  return { samples: HAND_SAMPLES, data: out, peak: +peak.toFixed(4) };
 }
