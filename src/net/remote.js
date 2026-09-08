@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CFG } from "../game/config.js";
-import { makeTubby } from "../entities/tubbyModel.js";
+import { makeTubby, STRIDE_GAIN, RATE } from "../entities/tubbyModel.js";
 import { heightAt } from "../world/world.js";
 import { makeTorch, torchFor, holdInHand, aimInHand, gripPoseFor }
   from "../entities/torch.js";
@@ -83,6 +83,11 @@ export class RemotePlayer {
     this.didClick = false;
     this.didSee = false;
     this.stumbleLeft = 0;
+    // Footfalls, same shape as the monster's: seconds to the next one, and a
+    // one-frame flag when it lands.
+    this.stepLeft = 0;
+    this.stepped = false;
+    this.stepPower = 0;
     // A real velocity, not a magnitude. The AI needs the direction to tell
     // somebody running away from somebody running past - see Tubby.canTake,
     // which is the whole reason a guest could not escape the way a host can.
@@ -284,6 +289,34 @@ export class RemotePlayer {
     if (saw) this.didSee = true;
   }
 
+  /**
+   * Count their footfalls, so main can make a noise about them.
+   *
+   * Off the clip and its clamped playback, the same rule the local player and
+   * the monster use - so all three sets of feet in a lobby are paced by one
+   * rule rather than three, and a team-mate running past you sounds like the
+   * legs you can see rather than a loop somebody chose the speed of.
+   *
+   * Nothing here is networked. Every client already knows where everyone is and
+   * how fast they are going, so a footstep is cheaper to work out than to send.
+   */
+  #tickSteps(dt, clip) {
+    this.stepped = false;
+    if (this.dead || clip === "idle" || this.anim === "jump" || this.speed < 0.5) {
+      this.stepLeft = Math.min(this.stepLeft, 0.08);
+      return;
+    }
+    const c = this.model.byState?.get(clip);
+    const own = (c?.userData?.groundSpeed ?? 0) * STRIDE_GAIN;
+    if (!(own > 0) || !c?.duration) return;
+    const playback = Math.min(Math.max(this.speed / own, RATE.min), RATE.max);
+    this.stepLeft -= dt;
+    if (this.stepLeft > 0) return;
+    this.stepLeft += c.duration / (2 * playback);
+    this.stepped = true;
+    this.stepPower = Math.min(1, this.speed / CFG.player.sprintSpeed);
+  }
+
   /** They just did something loud. Metres of hearing radius, one shot. */
   heard(metres) {
     this.noiseBurst = Math.max(this.noiseBurst, metres);
@@ -361,8 +394,10 @@ export class RemotePlayer {
     while (off < -Math.PI) off += Math.PI * 2;
     this.model.look?.(this.dead ? 0 : off, this.dead ? 0 : this.pitch);
 
-    this.model.play(this.dead ? "idle" : (CLIP[this.anim] ?? "walk"));
+    const clip = this.dead ? "idle" : (CLIP[this.anim] ?? "walk");
+    this.model.play(clip);
     this.model.update(dt, this.speed);
+    this.#tickSteps(dt, clip);
 
     this.#aimTorch(ground);
     this.#materialise(dt);

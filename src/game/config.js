@@ -36,7 +36,14 @@ export const CFG = {
     mouseSens: 0.0021,
     staminaMax: 6.0,      // seconds of sprint
     staminaRegen: 0.55,   // per second, and only while not sprinting
-    batteryMax: 240,      // seconds of torch
+    // Seconds of torch, and the gauge on the HUD reads this straight.
+    //
+    // Halved. Four minutes was longer than most rounds, so the battery was a
+    // number that went down rather than a resource - you could leave the beam on
+    // from the first step to the last and never once decide anything. Two makes
+    // it a thing you spend, and the torch is already the loudest thing you own,
+    // so a player now has two separate reasons to keep switching it off.
+    batteryMax: 120,
     torchIntensity: 420,  // candela - CONSTANT while lit, never scaled
     pickupRadius: 1.3,    // walk this close and the dish is yours
     hintRadius: 5.0,      // and this close before the HUD mentions it

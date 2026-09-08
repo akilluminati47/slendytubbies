@@ -916,6 +916,7 @@ function frame() {
     if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
     if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
     if (r.didSee) { audio.fright(r.current); r.didSee = false; }
+    if (r.stepped) audio.step(r.stepPower, r.current);
   }
     world.updateGlow(game.elapsed, spectator.pos);
     world.tickWeather(dt, camera.getWorldPosition(_eye));
@@ -1048,6 +1049,7 @@ function frame() {
     if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
     if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
     if (r.didSee) { audio.fright(r.current); r.didSee = false; }
+    if (r.stepped) audio.step(r.stepPower, r.current);
   }
 
   world.updateGlow(game.elapsed, player.pos);
@@ -1080,12 +1082,27 @@ function frame() {
   camera.getWorldDirection(_look);
   audio.listenAt(_eye, _look);
 
-  // The monster's feet. Every tubby in the world, from where it is standing -
-  // and this is the only thing in the game that tells you where one is when you
-  // cannot see it.
+  // The monster's feet, and the set in its belly. Every tubby in the world,
+  // from where it is standing - between them the only things in the game that
+  // say where one is when you cannot see it.
+  let nearest = null, nearestD = Infinity;
   for (const t of tubbies) {
     if (t.stepped) audio.monsterStep(t.stepPower, t.pos);
+    const d = Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z);
+    if (d < nearestD) { nearestD = d; nearest = t; }
   }
+  audio.bellyStatic(nearest?.pos ?? null, nearestD);
+
+  // And the nearest dish left, humming for whoever is looking for it. Local
+  // only: it feeds nothing to the AI and goes to nobody.
+  let dish = null, dishD = Infinity;
+  for (const c of world.custards) {
+    if (c.taken) continue;
+    const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
+    if (d < dishD) { dishD = d; dish = c; }
+  }
+  audio.hummingDish(dish?.pos ?? null, dishD);
+
   seeingIt(dt);
 
   audio.update(dt, threat);

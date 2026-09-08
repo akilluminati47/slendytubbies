@@ -26,6 +26,24 @@ const MUSIC_GAIN = 0.42;
  */
 const SPATIAL = { ref: 3, max: 55, rolloff: 1.15 };
 
+/**
+ * The two things that hum continuously, and how far away they start to.
+ *
+ * Both are loops rather than one-shots, so both get a panner they keep and move
+ * rather than one per sound - and both follow the NEAREST of their kind, the
+ * same trick World plays with the custard light. Ten dishes humming at once is
+ * a chord, not a clue.
+ */
+const HUM = {
+  // A dish, for the player who is looking for it. Reaches a little past the
+  // torch so the ear finds one just outside what the eye can.
+  dish: { from: 26, gain: 0.085, hz: 132 },
+  // The set in its belly. Only inside the range the heartbeat lives in, so it
+  // arrives at the same moment the dread does and says which direction it is
+  // coming from, which the heartbeat cannot.
+  belly: { from: 20, gain: 0.16 },
+};
+
 export class Audio {
   constructor() {
     this.ctx = null;
@@ -109,8 +127,126 @@ export class Audio {
 
     this.#buildWind();
     this.#buildHeart();
+    this.#buildHum();
+    this.#buildStatic();
     this.ready = true;
     return true;
+  }
+
+  /**
+   * The dish, humming to itself.
+   *
+   * Heard by the player and nobody else - it feeds no noise into the AI and is
+   * not sent to anyone. It is a cue, not an event: a dish is 30 cm across in
+   * fog that stops at 46 m, and now that its halo has been pulled back to
+   * almost nothing at range this is what is left to find one by.
+   *
+   * Two detuned triangles rather than one, because a single tone at a fixed
+   * pitch is a test signal and two a few cents apart beat slowly against each
+   * other, which is the difference between an alarm and something alive.
+   */
+  #buildHum() {
+    const panner = this.#emitter();
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(panner);
+    for (const detune of [-7, 6]) {
+      const osc = this.ctx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.value = HUM.dish.hz;
+      osc.detune.value = detune;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.5;
+      osc.connect(g).connect(gain);
+      osc.start();
+    }
+    this.nodes.dishHum = gain;
+    this.nodes.dishAt = panner;
+  }
+
+  /**
+   * The set in its belly, from across a clearing.
+   *
+   * Looped noise through a narrow band, which is what a detuned CRT actually
+   * sounds like through a wall: no top end, no bottom, all hiss in the middle.
+   * Panned, so it tells you which way the thing is - the heartbeat tells you it
+   * is close and nothing more, and knowing it is close without knowing where is
+   * a worse kind of useless than not knowing at all.
+   */
+  #buildStatic() {
+    const panner = this.#emitter();
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0;
+    const band = this.ctx.createBiquadFilter();
+    band.type = "bandpass";
+    band.frequency.value = 1750;
+    band.Q.value = 0.55;
+    const cut = this.ctx.createBiquadFilter();
+    cut.type = "lowpass";
+    cut.frequency.value = 3400;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.#grit();
+    src.loop = true;
+    src.connect(band).connect(cut).connect(gain).connect(panner);
+    src.start();
+    this.nodes.staticGain = gain;
+    this.nodes.staticAt = panner;
+  }
+
+  /** A panner that stays put in the graph and gets moved, for the loops. */
+  #emitter() {
+    const p = this.ctx.createPanner();
+    p.panningModel = "HRTF";
+    p.distanceModel = "inverse";
+    p.refDistance = SPATIAL.ref;
+    p.maxDistance = SPATIAL.max;
+    p.rolloffFactor = SPATIAL.rolloff;
+    p.connect(this.nodes.master);
+    return p;
+  }
+
+  /** Move one of the kept panners, in whichever API this browser has. */
+  #moveTo(p, at) {
+    const t = this.ctx.currentTime;
+    if (p.positionX) {
+      p.positionX.setValueAtTime(at.x, t);
+      p.positionY.setValueAtTime(at.y ?? 0, t);
+      p.positionZ.setValueAtTime(at.z, t);
+    } else {
+      p.setPosition(at.x, at.y ?? 0, at.z);
+    }
+  }
+
+  /**
+   * Point the dish hum at the nearest untaken dish, or fade it out.
+   *
+   * @param at   where it is, or null for none left
+   * @param dist how far away, in metres
+   */
+  hummingDish(at, dist) {
+    if (!this.ready) return;
+    const g = this.nodes.dishHum.gain;
+    if (!at) { g.setTargetAtTime(0, this.ctx.currentTime, 0.2); return; }
+    this.#moveTo(this.nodes.dishAt, at);
+    const k = Math.max(0, 1 - dist / HUM.dish.from);
+    g.setTargetAtTime(HUM.dish.gain * k * k, this.ctx.currentTime, 0.15);
+  }
+
+  /**
+   * And the belly, at whichever tubby is closest.
+   *
+   * Squared falloff on top of the panner's own, so it is genuinely absent until
+   * the thing is near rather than a hiss that is always faintly there. It keeps
+   * playing through the jumpscare on purpose: the scream goes over the top of it
+   * and the static is what is left underneath.
+   */
+  bellyStatic(at, dist) {
+    if (!this.ready) return;
+    const g = this.nodes.staticGain.gain;
+    if (!at) { g.setTargetAtTime(0, this.ctx.currentTime, 0.3); return; }
+    this.#moveTo(this.nodes.staticAt, at);
+    const k = Math.max(0, 1 - dist / HUM.belly.from);
+    g.setTargetAtTime(HUM.belly.gain * k * k, this.ctx.currentTime, 0.12);
   }
 
   /**
