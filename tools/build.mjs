@@ -24,6 +24,12 @@ const INCLUDE = [
   "assets/game/face_tinkywinky.png",
   "assets/game/jumpscare.mp3",
   "assets/game/scream.mp3",
+  // The menu theme. It plays on the screens the parade is on, so it is as much
+  // a part of the front of house as the font is.
+  "assets/game/theme.mp3",
+  // The favicon and the card a link unfurls into. Not loaded by the game, but
+  // named in index.html's head, so the CDN has to have them.
+  "assets/game/brand",
   // No heartbeat recording. The one under the chase is synthesised and tracks
   // the threat continuously - a fixed loop laid over it only fought it.
   "assets/game/fonts",
