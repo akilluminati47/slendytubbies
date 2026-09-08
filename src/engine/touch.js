@@ -76,19 +76,18 @@ const CSS = `
 #tc-jump   { right:24px; bottom:264px; width:92px; height:92px; }
 .tc-btn svg { width:38px; height:38px; stroke:currentColor; stroke-width:1.7;
   fill:none; stroke-linecap:round; stroke-linejoin:round; }
-/* The torch is several strokes and reads heavy; a single-stroke arrow next to it
-   looks faint. Thicken the arrow so the pair carries equal weight. */
-#tc-jump svg { stroke-width:2.7; width:40px; height:40px; }
+/* One line weight across all three, taken from the torch.
+   The arrow used to be thickened to 2.7 to "carry equal weight" beside it, and
+   pause was the text "II" - a typeface's weight rather than the icon set's. The
+   result was three buttons that looked like three different icon sets. */
 .tc-btn.held svg { stroke:#fff; }
 #tc-torch.lit { border-color:rgba(255,240,207,.7); color:#fff0cf;
   box-shadow:0 0 20px rgba(255,240,207,.25); }
-/* Weights, per icon rather than one for all three.
-   The jump arrow is a big open shape and reads heavy at the shared weight -
-   thinning it lets the button be a button rather than a sign. Pause is two
-   short bars with nothing else in the frame, so at the same weight it looks
-   faint; it wants to be the solid one. */
-#tc-jump svg  { stroke-width:1.25; }
-#tc-pause svg { stroke-width:3.4; stroke-linecap:round; }
+/* One weight for all three, taken from the torch.
+   Pause used to be the text "II", which is a typeface's weight rather than the
+   icon set's, and no amount of font-weight was going to match a 1.7 stroke. It
+   is drawn now, so it simply inherits the same line as the other two. */
+#tc-pause svg { stroke-linecap:round; }
 
 /* A phone on its side has barely enough height for three of these stacked, so
    they shrink and close up rather than running off the top of the screen. */
