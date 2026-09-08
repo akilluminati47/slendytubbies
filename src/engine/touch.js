@@ -28,14 +28,10 @@ const CSS = `
   opacity:0; visibility:hidden; transition:opacity .18s; }
 .tc-root.on { opacity:1; visibility:visible; }
 
-/* The root never swallows input; only the explicit zones and buttons do. */
-/* touch-action is NOT inherited. The root carries it and the spec says an
-   ancestor's 'none' should still suppress panning here, but relying on that has
-   cost other people a working control pad on Safari, and repeating it is free. */
-.tc-zone { position:absolute; pointer-events:none; touch-action:none; }
-.tc-root.on .tc-zone { pointer-events:auto; }
-#tc-move { left:0; bottom:0; }
-#tc-look { inset:0; }
+/* The root IS the input surface, and only while a round is being played. There
+   are no zone elements any more: what a finger is doing is decided from where it
+   landed, not from which of two stacked divs happened to be on top. */
+.tc-root.on { pointer-events:auto; }
 
 /* Placed by transform from a FIXED origin, not by left/top.
    left/top were being set from the touch every time the stick came up, and a
@@ -119,7 +115,7 @@ export class TouchSource {
     this.enabled = false;
     /** Is a round actually being played - see setInGame and #activate. */
     this.inGame = false;
-    this.pointers = new Map();       // pointerId -> { role, ... }
+    this.touches = new Map();        // Touch.identifier -> { role, ... }
     this.moveVec = { x: 0, y: 0 };
     this.lookDelta = { x: 0, y: 0 };
     this.torchQueued = false;
@@ -133,8 +129,6 @@ export class TouchSource {
     this.el = document.createElement("div");
     this.el.className = "tc-root";
     this.el.innerHTML = `
-      <div class="tc-zone" id="tc-look"></div>
-      <div class="tc-zone" id="tc-move"></div>
       <div class="tc-home"></div>
       <div class="tc-stick" id="tc-stick"><div class="tc-nub" id="tc-nub"></div></div>
       <button class="tc-btn" id="tc-jump" aria-label="Jump">
@@ -161,14 +155,9 @@ export class TouchSource {
 
     this.stickEl = this.el.querySelector("#tc-stick");
     this.nubEl = this.el.querySelector("#tc-nub");
-    this.moveZone = this.el.querySelector("#tc-move");
-    this.lookZone = this.el.querySelector("#tc-look");
 
-    this.#sizeZones();
-    addEventListener("resize", () => this.#sizeZones());
     this.#watchForTouch();
-    this.#wireButtons();
-    this.#wireZones();
+    this.#wireSurface();
     if (location.search.includes("touchdebug")) this.#debugPanel();
   }
 
@@ -218,7 +207,8 @@ export class TouchSource {
         NEWLINE +
         `move ${this.moveVec.x.toFixed(2)},${this.moveVec.y.toFixed(2)} ` +
         `look ${this.lookDelta.x.toFixed(2)},${this.lookDelta.y.toFixed(2)} ` +
-        `ptrs ${this.pointers.size} q:${this.jumpQueued ? "J" : "-"}${this.torchQueued ? "T" : "-"}${this.menuQueued ? "M" : "-"}`;
+        `touches ${this.touches.size} q:${this.jumpQueued ? "J" : "-"}${this.torchQueued ? "T" : "-"}${this.menuQueued ? "M" : "-"} ` +
+        `zone ${Math.round(this.#stickBox().w)}x${Math.round(this.#stickBox().h)}`;
       paint();
     }, 1000);
     const name = (el) => !el ? "-" : (el.id || el.className?.baseVal || el.className || el.tagName);
@@ -246,13 +236,15 @@ export class TouchSource {
   }
 
   /**
-   * The move zone is a slab at the lower left; look is everything else. Sizing
-   * it in JS rather than CSS keeps the numbers next to the tuning that uses them.
+   * The stick's half is a slab at the lower left; look is everything else.
    */
-  #sizeZones() {
+  /**
+   * Where the stick's half of the screen is, for the hint ring and the readout.
+   * The live test is in #wireSurface; this is the same box, drawn.
+   */
+  #stickBox() {
     const z = CFG.touch.stickZone;
-    this.moveZone.style.width = `${z.width * 100}%`;
-    this.moveZone.style.height = `${z.height * 100}%`;
+    return { w: innerWidth * z.width, h: innerHeight * z.height };
   }
 
   /**
@@ -288,35 +280,36 @@ export class TouchSource {
     dispatchEvent(new CustomEvent("touchui", { detail: { on: true } }));
   }
 
-  #wireButtons() {
-    const hold = (id, onDown, onUp) => {
-      const el = this.el.querySelector(id);
-      el.addEventListener("pointerdown", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        el.setPointerCapture(e.pointerId);
-        el.classList.add("held");
-        onDown(el);
-      });
-      const release = () => { el.classList.remove("held"); onUp?.(el); };
-      el.addEventListener("pointerup", release);
-      el.addEventListener("pointercancel", release);
-      return el;
-    };
-
-    hold("#tc-jump", () => (this.jumpQueued = true));
-    hold("#tc-torch", () => (this.torchQueued = true));
-    hold("#tc-pause", () => (this.menuQueued = true));
-  }
-
+  /**
+   * One surface, and geometry decides what a finger is doing.
+   *
+   * This replaces two overlapping zone elements whose stacking order decided who
+   * got a touch, three separate pointer-capture calls, and a set of buttons that
+   * relied on being hit-tested above a full-screen sibling. On a desk all of
+   * that worked. On an actual phone the pad came up, the stick appeared where
+   * the thumb landed, the game polled it sixty times a second, and nothing
+   * moved - because pointermove never arrived after setPointerCapture, which is
+   * a mobile Safari failure old enough to have outlived several fixes.
+   *
+   * So: touch events rather than pointer events, tracked by Touch.identifier,
+   * and every touch lands on the same element. Nothing depends on z-order,
+   * pointer-events, hit-testing, or capture. What a finger is doing is decided
+   * from where it went down and nothing else:
+   *
+   *   inside a button   that button
+   *   lower-left box    the stick
+   *   anywhere else     the camera
+   *
+   * Which is also the layout every mobile game of this shape uses, and the one
+   * that was asked for: left thumb walks, right thumb looks, buttons under the
+   * right hand.
+   */
   /**
    * Put the stick's centre at a point on the screen. One write, or none.
    *
    * Returns whether it landed, and the caller only reveals the stick if it did -
-   * because its resting place, before anything has positioned it, is the
-   * top-left corner with two thirds of it off both edges. That is not a
-   * hypothetical: it is 48,-68 on a 375-wide screen, and it is what a stick that
-   * is shown before it is placed looks like.
+   * its resting place, before anything has positioned it, is the top-left corner
+   * with two thirds of it off both edges.
    */
   #placeStick(x, y) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
@@ -324,64 +317,83 @@ export class TouchSource {
     return true;
   }
 
-  #wireZones() {
+  #wireSurface() {
+    const buttons = [
+      ["#tc-jump", () => (this.jumpQueued = true)],
+      ["#tc-torch", () => (this.torchQueued = true)],
+      ["#tc-pause", () => (this.menuQueued = true)],
+    ].map(([id, fire]) => ({ el: this.el.querySelector(id), fire }));
+
+    // Fingers are wider than they aim. A button answers to a touch a little
+    // outside itself, which costs nothing here because the zones are decided by
+    // geometry and a near-miss would otherwise have started a camera drag.
+    const SLOP = 10;
+    const inButton = (x, y) => {
+      for (const b of buttons) {
+        const r = b.el.getBoundingClientRect();
+        if (x >= r.left - SLOP && x <= r.right + SLOP &&
+            y >= r.top - SLOP && y <= r.bottom + SLOP) return b;
+      }
+      return null;
+    };
+
+    const inStick = (x, y) => {
+      const z = CFG.touch.stickZone;
+      return x <= innerWidth * z.width && y >= innerHeight * (1 - z.height);
+    };
+
     const R = 60;   // pixels of stick travel to full deflection
 
-    const start = (e, role) => {
-      e.preventDefault();
-      const zone = role === "move" ? this.moveZone : this.lookZone;
-      // Capture keeps a finger that slides out of its zone still driving that
-      // zone. It can throw if the pointer is already gone, and losing the whole
-      // gesture because of that would be far worse than losing the capture.
-      try { zone.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
-      if (role === "move") {
-        // Floating stick: the origin is wherever the thumb actually landed -
-        // unless the event cannot say where that was, in which case it goes to
-        // the middle of its own zone rather than to nowhere.
-        let ox = e.clientX, oy = e.clientY;
-        if (!Number.isFinite(ox) || !Number.isFinite(oy)) {
-          const r = zone.getBoundingClientRect();
-          ox = r.left + r.width * 0.5;
-          oy = r.top + r.height * 0.6;
-        }
-        this.pointers.set(e.pointerId, { role, ox, oy });
-        if (this.#placeStick(ox, oy)) {
+    const down = (t) => {
+      const b = inButton(t.clientX, t.clientY);
+      if (b) {
+        this.touches.set(t.identifier, { role: "btn", b });
+        b.el.classList.add("held");
+        b.fire();
+        return;
+      }
+      if (inStick(t.clientX, t.clientY)) {
+        // Only one thumb drives the stick. A second finger in the box while the
+        // first is already steering is somebody resting a hand, not a command.
+        for (const p of this.touches.values()) if (p.role === "move") return;
+        this.touches.set(t.identifier, { role: "move", ox: t.clientX, oy: t.clientY });
+        if (this.#placeStick(t.clientX, t.clientY)) {
           this.stickEl.classList.add("on");
           this.el.classList.add("using-stick");
         }
-      } else {
-        this.pointers.set(e.pointerId, { role, lx: e.clientX, ly: e.clientY });
+        return;
       }
+      this.touches.set(t.identifier, { role: "look", lx: t.clientX, ly: t.clientY });
     };
 
-    this.moveZone.addEventListener("pointerdown", (e) => start(e, "move"), { passive: false });
-    this.lookZone.addEventListener("pointerdown", (e) => start(e, "look"), { passive: false });
-
-    const move = (e) => {
-      const p = this.pointers.get(e.pointerId);
+    const moved = (t) => {
+      const p = this.touches.get(t.identifier);
       if (!p) return;
-      e.preventDefault();
       if (p.role === "move") {
-        const dx = Math.max(-R, Math.min(R, e.clientX - p.ox));
-        const dy = Math.max(-R, Math.min(R, e.clientY - p.oy));
+        const dx = Math.max(-R, Math.min(R, t.clientX - p.ox));
+        const dy = Math.max(-R, Math.min(R, t.clientY - p.oy));
         this.nubEl.style.transform = `translate(${dx}px, ${dy}px)`;
         this.moveVec = { x: dx / R, y: dy / R };
         this.stickEl.classList.toggle("sprint",
           Math.hypot(dx, dy) / R >= CFG.touch.sprintAt);
-      } else {
+      } else if (p.role === "look") {
         // Accumulate; poll() drains it. Touch deltas are already frame-rate
         // independent, so they must NOT be multiplied by dt again.
-        this.lookDelta.x += (e.clientX - p.lx) * CFG.touch.lookSens;
-        this.lookDelta.y += (e.clientY - p.ly) * CFG.touch.lookSens;
-        p.lx = e.clientX;
-        p.ly = e.clientY;
+        this.lookDelta.x += (t.clientX - p.lx) * CFG.touch.lookSens;
+        this.lookDelta.y += (t.clientY - p.ly) * CFG.touch.lookSens;
+        p.lx = t.clientX;
+        p.ly = t.clientY;
       }
+      // A finger that started on a button stays on it however far it slides.
+      // Sliding off and lifting is how somebody cancels, and that is handled on
+      // the way up rather than here.
     };
 
-    const end = (e) => {
-      const p = this.pointers.get(e.pointerId);
+    const up = (t) => {
+      const p = this.touches.get(t.identifier);
       if (!p) return;
-      this.pointers.delete(e.pointerId);
+      this.touches.delete(t.identifier);
+      if (p.role === "btn") { p.b.el.classList.remove("held"); return; }
       if (p.role !== "move") return;
       this.moveVec = { x: 0, y: 0 };
       this.nubEl.style.transform = "";
@@ -389,11 +401,21 @@ export class TouchSource {
       this.el.classList.remove("using-stick");
     };
 
-    for (const zone of [this.moveZone, this.lookZone]) {
-      zone.addEventListener("pointermove", move, { passive: false });
-      zone.addEventListener("pointerup", end);
-      zone.addEventListener("pointercancel", end);
-    }
+    const each = (e, fn) => {
+      // Non-passive and always prevented: this surface covers the screen while
+      // a round is running, and every default it could have - scrolling,
+      // pinching, the pull-to-refresh, the double-tap zoom, the long-press
+      // menu - is something that ruins a game.
+      e.preventDefault();
+      for (const t of e.changedTouches) fn(t);
+    };
+
+    const on = (name, fn) =>
+      this.el.addEventListener(name, (e) => each(e, fn), { passive: false });
+    on("touchstart", down);
+    on("touchmove", moved);
+    on("touchend", up);
+    on("touchcancel", up);
 
     // Kill the browser gestures that ruin a fullscreen game.
     this.el.addEventListener("contextmenu", (e) => e.preventDefault());
