@@ -28,11 +28,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - uses: actions/checkout@v7
 
       # Says what is missing, rather than letting wrangler fail on an empty
       # token with an authentication error that reads like a Cloudflare outage.
@@ -52,8 +48,14 @@ jobs:
             exit 1
           fi
 
+      # v4 and not v3: v3 runs on Node 20, which the runners now force onto 24
+      # and will stop accepting. Same three inputs either way.
+      #
+      # No setup-node step ahead of it - the action brings its own wrangler and
+      # runs on the runner's Node, so pinning one here only added a second thing
+      # to keep current.
       - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
