@@ -1,0 +1,57 @@
+# Deploy the lobby Worker whenever it changes.
+#
+# The Pages site already redeploys itself on every push - Cloudflare's Git
+# integration owns that - but a Worker is a separate product and that connection
+# does not cover it. So the lobby server sat several commits behind the game it
+# serves, which is the worst possible split: the client speaks a protocol the
+# server has never heard of, and nothing anywhere reports an error.
+#
+# Only runs when something under worker/ actually changed, so the ordinary
+# graphics-and-gameplay commits do not queue a deploy that would upload an
+# identical script.
+name: worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/worker.yml"
+  # And by hand, for when a deploy needs forcing without a code change.
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Nothing here reads the repo's contents beyond checking it out, and nothing
+    # writes back to it.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Says what is missing, rather than letting wrangler fail on an empty
+      # token with an authentication error that reads like a Cloudflare outage.
+      - name: Check credentials
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=
+          [ -n "$TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$ACCOUNT" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing - add them under"                  "Settings > Secrets and variables > Actions. The token needs the"                  "'Edit Cloudflare Workers' template."
+            exit 1
+          fi
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker

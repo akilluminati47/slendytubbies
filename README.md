@@ -185,8 +185,20 @@ then point the game at it from the browser console and reload:
 localStorage.setItem("slendytubbies.server", "http://127.0.0.1:8787")
 ```
 
-`npm run deploy` builds `dist/` and publishes it. All gameplay tuning — speeds, hearing
-radii, sight range, counts — lives in [`src/game/config.js`](src/game/config.js).
+All gameplay tuning — speeds, hearing radii, sight range, counts — lives in
+[`src/game/config.js`](src/game/config.js).
+
+**Deploying.** The site and the lobby server are two separate things and neither one
+deploys the other:
+
+| | what | on |
+|---|---|---|
+| the game | Cloudflare Pages | every push, via Cloudflare's own Git integration |
+| the lobby server | Cloudflare Worker | every push that touches [`worker/`](worker/), via [`.github/workflows/worker.yml`](.github/workflows/worker.yml) |
+
+The Worker half needs two repository secrets — `CLOUDFLARE_API_TOKEN` (the *Edit Cloudflare
+Workers* template) and `CLOUDFLARE_ACCOUNT_ID`. Without them the workflow stops on its first
+step and says so. `cd worker && npx wrangler deploy` still works by hand.
 
 </details>
 
