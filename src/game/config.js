@@ -157,9 +157,9 @@ export const CFG = {
     lookAngle: 62,
     loseInterest: 6.0,    // seconds without a fix before giving up
     // --- being startled ---------------------------------------------------
-    // Loud enough to make it stop dead and look. A jump is 34 m of noise and a
-    // dish is 26, so this catches the jump and nothing else - being startled by
-    // every pickup would make the beat wallpaper.
+    // Loud enough to make it stop dead and look. A landing is 34 m of noise and
+    // a dish is 26, so this catches somebody coming down off a jump and nothing
+    // else - being startled by every pickup would make the beat wallpaper.
     alertNoise: 30,
     // It does not stop. It swings its head round onto you and keeps coming,
     // which is worse: a thing that pauses gives you a moment, and a thing that
@@ -214,12 +214,23 @@ export const CFG = {
     walk: 1.0,
     sprint: 2.4,
     pickup: 26,           // one-shot metres of noise when a tank is taken
-    // The loudest signal in the game, louder than taking a dish, and it fires
-    // on the launch rather than the landing so the cost lands before the
-    // benefit does. Jumping buys stamina back (player.jumpStamina) - this is
-    // what it costs: everything within this radius knows exactly where you are.
-    jump: 34,
-    land: 14,             // one-shot metres of noise on landing a jump
+    // The push-off, which is the quiet half. A foot leaving the ground is a
+    // scuff; two hundred pounds of tubby arriving on it is not, and these two
+    // used to be the other way round.
+    jump: 14,
+    // The landing, and the loudest signal in the game - louder than taking a
+    // dish. Jumping buys stamina back (player.jumpStamina) and this is what it
+    // costs: everything inside this radius knows exactly where you came down.
+    //
+    // The bill arrives after the benefit rather than before it, which is the one
+    // thing lost in the swap and worth losing. You get the stamina at the top of
+    // the hop and pay for it on the way down, so a chain of them is a chain of
+    // debts landing behind you - and it puts the loud moment where the sound
+    // already was, since the landing thump was always the bigger of the two.
+    land: 34,
+    // Catching a foot. Not the landing's number any more: that is now the
+    // loudest thing in the game and a stumble is a scuffle, not an arrival.
+    stumble: 14,
     torchBonus: 4,        // metres added to tubby sight range when your torch is on
   },
 };

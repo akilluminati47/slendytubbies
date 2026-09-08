@@ -267,12 +267,17 @@ export class Audio {
    * makes no other vocal sound in the game, so one here would be a voice
    * arriving from nowhere. Pitched above a walking step and shorter, so a jump
    * and its landing read as two ends of one movement.
+   *
+   * The quieter end of it. A foot pushing off is a scuff; the arrival is the
+   * event. The three loud things you can do are now in the same order to the ear
+   * as they are to the monster - 0.13 here, 0.21 for a sprinting step, 0.32 for
+   * the landing, against hearing radii of 14, 21.6 and 34 m.
    */
   jumpStep() {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.#thump(t, 142, 0.09, 0.19, this.nodes.master);
-    this.#scuff(t, { peak: 0.10, dur: 0.11, hz: 2100 });
+    this.#thump(t, 142, 0.09, 0.13, this.nodes.master);
+    this.#scuff(t, { peak: 0.07, dur: 0.11, hz: 2100 });
   }
 
   /**
@@ -291,11 +296,12 @@ export class Audio {
     this.#thump(t + 0.11, 88, 0.13, 0.16, this.nodes.master);
   }
 
+  /** The loudest one-shot in the game, and the bill for the hop. */
   land() {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.#thump(t, 120, 0.14, 0.25, this.nodes.master);
-    this.#scuff(t, { peak: 0.13, dur: 0.14, hz: 1300 });
+    this.#thump(t, 118, 0.16, 0.32, this.nodes.master);
+    this.#scuff(t, { peak: 0.17, dur: 0.15, hz: 1300 });
   }
 
   /**

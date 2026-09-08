@@ -230,11 +230,17 @@ export class RemotePlayer {
     if (typeof yaw === "number") this.viewYaw = yaw;
     if (typeof pitch === "number") this.pitch = pitch;
     if (anim) {
-      // The launch, not the whole flight. Held as a burst rather than read off
-      // the state so it decays on the same curve the local player's does -
-      // otherwise a guest is loud for exactly as long as they are airborne and
-      // the host is loud for a second and a half afterwards.
+      // The two ends of the hop, not the flight between them. Held as bursts
+      // rather than read off the state so they decay on the same curve the local
+      // player's do - otherwise a guest is loud for exactly as long as they are
+      // airborne and the host is loud for a second and a half afterwards.
+      //
+      // Leaving the state is the landing, and it is the loud one. All a remote
+      // sends is which of four things it is doing, so that transition is the
+      // only landing there is to hear - and it lands a frame or two late, which
+      // at this range is nothing.
       if (anim === "jump" && this.anim !== "jump") this.heard(CFG.noise.jump);
+      if (anim !== "jump" && this.anim === "jump") this.heard(CFG.noise.land);
       this.anim = anim;
     }
     if (lit !== undefined) this.torchOn = !!lit;

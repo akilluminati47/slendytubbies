@@ -52,10 +52,10 @@ flowchart LR
 |---|--:|
 | standing still | 1.4 |
 | walking | 9 |
-| landing a jump | 14 |
+| pushing off a jump | 14 |
 | sprinting | 21.6 |
 | taking a dish | 26 |
-| **jumping** | **34** |
+| **landing a jump** | **34** |
 
 > [!IMPORTANT]
 > **Your torch is the loudest thing you own.** It shows a beam from **48 m away** — nearly
@@ -77,6 +77,11 @@ moment than watching one glide.
 **Jumping gives you stamina back** — about a tenth of the bar per hop. You can bunny-hop
 across the whole map and never run out of sprint. Everything on the map will know exactly
 where you are the entire time. That is the trade.
+
+The push-off is quiet. It is **coming down** that carries, and it is the loudest thing in
+the game — louder than sprinting, louder than taking a dish. So you get the stamina at the
+top of the hop and pay for it on the way down, a few metres further on, and a chain of hops
+leaves a trail of thuds behind where you actually are.
 
 **Walk over a dish to pick it up.** No button, no holding anything down. It is loud, and
 every tubby hunting you turns and *bolts* — far faster than you can run, out into the open,

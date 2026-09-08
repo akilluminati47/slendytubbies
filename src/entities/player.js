@@ -165,14 +165,14 @@ export class Player {
   /**
    * Go over: no launch, a crouch, a shake, and a bite out of the bar.
    *
-   * The noise is the landing's rather than the jump's. You did not leave the
-   * ground, so announcing yourself as though you had would be a lie - but
-   * catching a foot and stumbling is not silent either.
+   * Its own noise, and a small one. You did not leave the ground, so announcing
+   * yourself as though you had come down off a jump would be a lie - but
+   * catching a foot is not silent either.
    */
   #trip() {
     this.stumble = CFG.player.stumbleTime;
     this.stamina = Math.max(0, this.stamina - CFG.player.stumbleCost);
-    this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.land);
+    this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.stumble);
     this.stumbled = true;
   }
 
@@ -214,8 +214,12 @@ export class Player {
       // A hop is a breath and a shout at the same time. It hands back a tenth
       // of the sprint bar, which is what makes it a way to keep running rather
       // than a way to clear a rock - and it is the loudest thing in the game,
-      // so keeping it up means never being unheard again. The noise goes out on
-      // the launch, not the landing: the cost should land before the benefit.
+      // so keeping it up means never being unheard again.
+      //
+      // The push-off is the quiet half of it though. What everything hears is
+      // you coming down again, a moment later and a few metres along, which is
+      // both the truer sound and the more useful one to be hunted by: a chain of
+      // hops leaves a trail of thuds behind where you now are.
       this.stamina = Math.min(CFG.player.staminaMax,
                               this.stamina + CFG.player.jumpStamina);
       this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.jump);
@@ -228,7 +232,8 @@ export class Player {
       this.vy -= CFG.player.gravity * dt;
       this.lift += this.vy * dt;
       if (this.lift <= 0) {
-        // Landing is loud - a jump is a fast way to move and it should cost you.
+        // And here is the bill: the loudest one-shot in the game. Gated on how
+        // fast you were falling, so stepping off a kerb does not ring it.
         if (this.vy < -3) this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.land);
         this.lift = 0;
         this.vy = 0;
