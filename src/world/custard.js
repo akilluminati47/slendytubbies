@@ -82,10 +82,18 @@ function haloTexture() {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
   const ctx = c.getContext("2d");
+  // Tight, and nearly gone by a third of the way out.
+  //
+  // The old curve still had 16% alpha at 0.6 of the radius, which is what made
+  // this read as a disc rather than a point - and a disc is a thing with an
+  // EDGE, so where the quad met the ground the depth test cut a straight line
+  // across it. A falloff that is already at nothing by the time it reaches the
+  // terrain has no edge to cut.
   const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0.0, "rgba(255,190,255,0.95)");
-  g.addColorStop(0.25, "rgba(206,86,224,0.55)");
-  g.addColorStop(0.6, "rgba(150,40,180,0.16)");
+  g.addColorStop(0.0, "rgba(255,205,255,0.90)");
+  g.addColorStop(0.12, "rgba(226,120,238,0.42)");
+  g.addColorStop(0.30, "rgba(170,55,196,0.08)");
+  g.addColorStop(0.55, "rgba(140,30,170,0.012)");
   g.addColorStop(1.0, "rgba(120,20,150,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 64, 64);
@@ -93,6 +101,17 @@ function haloTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+/**
+ * How big the bright core is, and how hard it burns at its brightest.
+ *
+ * Both small on purpose. What should be selling a dish is the light World hangs
+ * over the nearest one, which rakes across the ground and picks the terrain's
+ * shape out of the dark; a sprite cannot do that and looks like a sticker when
+ * it tries.
+ */
+export const HALO_SIZE = 0.72;
+export const HALO_PEAK = 0.34;
 
 /** One pickup. The glow comes from World, not from here. */
 export function makeCustard() {
@@ -121,14 +140,22 @@ export function makeCustard() {
   // the nearest dish instead; see World#updateGlow.
   // Additive and depth-tested but not depth-writing, so it reads as light
   // sitting on the dish rather than a card standing in front of it.
+  //
+  // Small, faint, and lifted clear of the ground. This used to be a 2.4 m disc
+  // at 95% sitting almost on the terrain, which is three separate problems at
+  // once: it was the brightest thing about a dish, it was plainly a flat card
+  // turning to face you, and the depth test sliced its bottom half off against
+  // the ground in a hard straight line. The light that swells and rakes across
+  // the terrain does the work now; this is only the core of it, the bit that is
+  // too bright to have a shape.
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: s.halo, color: 0xffffff, transparent: true, fog: false,
-    blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false, opacity: HALO_PEAK,
   }));
-  // Big enough that the dishes across the map still read. A sprite keeps its
-  // world size, so this is what decides whether the far ones are findable.
-  halo.scale.setScalar(2.4);
-  halo.position.y = H * 0.15;
+  halo.scale.setScalar(HALO_SIZE);
+  // Clear of the terrain rather than nearly on it: at this size, sitting up by
+  // the rim of the dish means the quad has nothing to intersect.
+  halo.position.y = H * 0.62;
   halo.renderOrder = 2;
   g.add(halo);
 

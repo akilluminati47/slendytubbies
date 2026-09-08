@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { Sky } from "./sky.js";
-import { makeCustard } from "./custard.js";
+import { makeCustard, HALO_SIZE, HALO_PEAK } from "./custard.js";
 import { Rain } from "./rain.js";
 import { plantWorld } from "./flora.js";
 import { carve, GROUND } from "./surface.js";
@@ -286,7 +286,11 @@ export class World {
       return;
     }
     this.custardGlow.position.set(best.pos.x, heightAt(best.pos.x, best.pos.z) + 0.19, best.pos.z);
-    this.custardGlow.intensity = 10 + Math.sin(t * 2 + best.pos.x) * 3;
+    // The one the whole effect now rests on, so it gets a little more room to
+    // breathe: the swell is what makes it read as something burning rather than
+    // a lamp somebody left on, and it is the only part of this that puts light
+    // on the ground and shows you what shape the ground is.
+    this.custardGlow.intensity = 12 + Math.sin(t * 2 + best.pos.x) * 4.5;
   }
 
   /**
@@ -305,18 +309,31 @@ export class World {
    */
   #dim(c, dist) {
     if (c.taken) return;
-    // Full strength inside the torch's reach, easing to a floor by the far
-    // side of the map.
-    const k = THREE.MathUtils.clamp((dist - 16) / 74, 0, 1);
-    const fall = 1 - k * k * 0.82;          // 1.0 near, 0.18 at the far end
+    // Full strength only where you could reach out and take it, and most of the
+    // way to nothing by the edge of the torch.
+    //
+    // This used to hold 18% of full brightness right across the map, which is
+    // what made ten dishes read as ten lamps hanging in the dark - and being
+    // able to see every objective from anywhere is not a lighting problem, it is
+    // the map solved. The curve is steep now and the floor is a tenth of what it
+    // was: a dish across the clearing is a hint, not a marker.
+    const k = THREE.MathUtils.clamp((dist - 6) / 30, 0, 1);
+    const fall = 1 - k * k * 0.98;          // 1.0 near, 0.02 past 36 m
     if (c.halo) {
-      c.halo.material.opacity = 0.95 * fall;
+      c.halo.material.opacity = HALO_PEAK * fall;
       // Shrunk as well as dimmed. A halo that keeps its world size while losing
       // its brightness turns into a large soft smudge; pulling both back keeps
       // it reading as a point of light.
-      c.halo.scale.setScalar(2.4 * (0.55 + fall * 0.45));
+      c.halo.scale.setScalar(HALO_SIZE * (0.6 + fall * 0.4));
     }
-    if (c.goop) c.goop.material.emissiveIntensity = 1.15 * fall;
+    // The custard itself is on a far gentler curve than its halo, and the two
+    // are separate on purpose. The sprite is the cheat - a flat card pretending
+    // to be light - and it is the thing that should be gone by mid-range. The
+    // goop is the actual surface of an actual object glowing, which is the part
+    // worth keeping: a dish across a clearing stays a dim violet smudge you
+    // might walk towards, rather than either a beacon or nothing at all.
+    const gk = THREE.MathUtils.clamp((dist - 10) / 70, 0, 1);
+    if (c.goop) c.goop.material.emissiveIntensity = 1.15 * (1 - gk * gk * 0.7);
   }
 
   /**
