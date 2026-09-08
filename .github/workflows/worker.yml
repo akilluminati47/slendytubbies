@@ -39,13 +39,16 @@ jobs:
       - name: Check credentials
         env:
           TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Either tab. An account id is an identifier, not a credential - it is
+          # in every wrangler log and every dashboard URL - so Variables is a
+          # perfectly reasonable place to put it and this should not care.
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           missing=
           [ -n "$TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
           [ -n "$ACCOUNT" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
           if [ -n "$missing" ]; then
-            echo "::error::Missing repository secret(s):$missing - add them under"                  "Settings > Secrets and variables > Actions. The token needs the"                  "'Edit Cloudflare Workers' template."
+            echo "::error::Missing:$missing - add under the repository's"                  "Settings > Secrets and variables > Actions (GitHub's page, NOT"                  "the Worker's own 'Runtime variables and secrets', which is read"                  "by the Worker at runtime and is invisible here). The token goes"                  "in Secrets and wants the 'Edit Cloudflare Workers' template."
             exit 1
           fi
 
@@ -53,5 +56,5 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: worker

@@ -196,9 +196,17 @@ deploys the other:
 | the game | Cloudflare Pages | every push, via Cloudflare's own Git integration |
 | the lobby server | Cloudflare Worker | every push that touches [`worker/`](worker/), via [`.github/workflows/worker.yml`](.github/workflows/worker.yml) |
 
-The Worker half needs two repository secrets — `CLOUDFLARE_API_TOKEN` (the *Edit Cloudflare
-Workers* template) and `CLOUDFLARE_ACCOUNT_ID`. Without them the workflow stops on its first
-step and says so. `cd worker && npx wrangler deploy` still works by hand.
+The Worker half needs two values under the repository's **Settings → Secrets and variables
+→ Actions** — not the Worker's own *Runtime variables and secrets*, which is a different
+page that the Worker reads at runtime and Actions cannot see:
+
+| | where | what |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | **Secrets** tab | a token from the *Edit Cloudflare Workers* template, at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) |
+| `CLOUDFLARE_ACCOUNT_ID` | either tab | shown by `npx wrangler whoami`, and in every dashboard URL |
+
+Without them the workflow stops on its first step and names the one that is missing.
+`cd worker && npx wrangler deploy` still works by hand.
 
 </details>
 
