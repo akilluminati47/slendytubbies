@@ -20,12 +20,13 @@ import { makeTorch, holdInHand, aimInHand, dropFromHand } from "../entities/torc
  * still does the work of finding the palm and these only say where along the
  * prop the hand sits.
  *
- * The HAND, bone by bone. The rig has two finger segments and a thumb and the
- * code to curl them has been there all along, switched off behind GRIP_ENABLED
- * because no bend axis had been found that reads as a closing hand rather than
- * as a mitten sheared into a blade. That is not a thing to guess a second time;
- * it is a thing to turn by hand and watch. Whatever comes out of here is what
- * gets baked in.
+ * The HAND, bone by bone. The rig has two finger segments and a thumb, and for
+ * a long time the curl was switched off because no single bend axis read as a
+ * closing hand rather than as a mitten sheared into a blade. It never was one
+ * axis: the pose that works differs per bone AND per torch, which is not a
+ * thing to guess - it is a thing to turn by hand and watch. What came out of
+ * here is baked into gripPoseFor() in torch.js, and this is where it is
+ * changed.
  *
  * Behind a query flag, so it is a tool and not a feature - nobody arrives at
  * this game and finds developer controls on their screen.
