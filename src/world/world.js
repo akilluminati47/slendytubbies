@@ -346,12 +346,17 @@ export class World {
    * the first: two forests, two skies, and two of every light.
    */
   dispose() {
+    // Chunked scatter shares one geometry and one material across every cell,
+    // so the same pair arrives here a hundred times. Disposing twice is not
+    // harmful but it is not free either, and a set says what is going on.
+    const gone = new Set();
+    const once = (x) => { if (!x || gone.has(x)) return false; gone.add(x); return true; };
     const drop = (o) => {
       if (!o) return;
       this.scene.remove(o);
-      o.geometry?.dispose?.();
-      if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-      else o.material?.dispose?.();
+      if (once(o.geometry)) o.geometry.dispose();
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) if (once(m)) m.dispose();
     };
     for (const m of this.flora?.meshes ?? []) drop(m);
     drop(this.ground);
@@ -415,6 +420,27 @@ export class World {
       if (dx * dx + dz * dz < r * r) return i / 3;
     }
     return -1;
+  }
+
+  /**
+   * Hide the scatter that is further away than the fog can see.
+   *
+   * The frustum culls what is behind and beside you; this culls what is in
+   * front and too far. Both are needed: the camera's far plane is 400 m because
+   * the sky is out there, so without this a cell two hundred metres down the
+   * view direction is still "visible" and still drawn, into fog that ended at
+   * thirty-four.
+   *
+   * A distance test per cell, about a hundred and twenty of them, which is a
+   * few microseconds against the hundreds of thousands of triangles it saves.
+   */
+  cullFlora(eye) {
+    const far = this.scene.fog?.far ?? 60;
+    for (const c of this.flora?.chunks ?? []) {
+      const dx = eye.x - c.cx, dz = eye.z - c.cz;
+      const reach = far + c.r;
+      c.mesh.visible = dx * dx + dz * dz < reach * reach;
+    }
   }
 
   /** Push a circle of radius r out of every obstacle and the map bounds. */

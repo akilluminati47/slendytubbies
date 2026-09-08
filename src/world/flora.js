@@ -293,6 +293,61 @@ function needleColor(rand) {
  * @param sat    multiplier on how much colour the blades keep, for callers that
  *               want the drained look rather than a living field
  */
+/**
+ * How wide a chunk of scatter is, in metres.
+ *
+ * Small enough that most of what is in one is inside the fog together, large
+ * enough that there are not so many that walking the scene graph costs more
+ * than the drawing saved. At 20 m over a 220 m map that is 121 cells, of which
+ * about five are ever in front of you.
+ */
+const CHUNK = 20;
+
+/**
+ * Scatter as one InstancedMesh PER CELL rather than one for the whole map.
+ *
+ * A single instanced mesh is one draw call, which is why everything here was
+ * built that way - but one draw call is not the same as cheap. Its bounding
+ * sphere covers the entire map, so the frustum can never reject it, and every
+ * instance in it is transformed and shaded every frame whether it is behind you
+ * or two hundred metres into fog that ends at thirty-four. The grass alone was
+ * 44,298 instances and 531,576 triangles, which is 81% of everything drawn, to
+ * show the two percent of the map you can actually see.
+ *
+ * Split into cells, each mesh gets a bounding sphere twenty metres across, and
+ * three throws away the ones outside the view for free. Nothing about what
+ * reaches the screen changes - the same tufts stand in the same places - only
+ * the ones that were never going to be visible stop being sent.
+ *
+ * The cost is draw calls, and it is small: five or six instead of one, against
+ * a budget where the whole frame is thirty-seven.
+ */
+function sowChunked(scene, items, name, build, write, cell = CHUNK) {
+  const cells = new Map();
+  for (const it of items) {
+    const key = Math.floor(it.x / cell) + "," + Math.floor(it.z / cell);
+    let bin = cells.get(key);
+    if (!bin) cells.set(key, bin = []);
+    bin.push(it);
+  }
+  const meshes = [], chunks = [];
+  for (const bin of cells.values()) {
+    const mesh = build(bin.length);
+    bin.forEach((it, i) => write(mesh, i, it));
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.name = name;
+    // Off the instances, not the geometry: this is the sphere the frustum test
+    // uses, and the whole point is that it is now small.
+    mesh.computeBoundingSphere();
+    scene.add(mesh);
+    meshes.push(mesh);
+    const b = mesh.boundingSphere;
+    chunks.push({ mesh, cx: b.center.x, cz: b.center.z, r: b.radius });
+  }
+  return { meshes, chunks };
+}
+
 export function sowGrass(scene, { rand, heightAt, count, half, at = { x: 0, z: 0 },
                                   clear = null, sat = 1, name = "flora:grass" }) {
   const m = new THREE.Matrix4(), q = new THREE.Quaternion();
@@ -313,26 +368,34 @@ export function sowGrass(scene, { rand, heightAt, count, half, at = { x: 0, z: 0
                  wet: THREE.MathUtils.clamp(0.5 - heightAt(x, z) * 0.1, 0, 1),
                  j: rand() });
   }
-  const grass = new THREE.InstancedMesh(grassGeometry(rand), new THREE.MeshStandardMaterial({
+  // One geometry and one material for every cell, so splitting the scatter up
+  // costs no extra uploads and no extra shader programs - only the per-cell
+  // instance buffers, which hold the same instances they always did.
+  const geo = grassGeometry(rand);
+  const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff, roughness: 1, metalness: 0, flatShading: true,
-  }), tufts.length);
-  tufts.forEach((g, i) => {
-    q.setFromAxisAngle(up, g.rot);
-    grass.setMatrixAt(i, m.compose(
-      v.set(g.x, heightAt(g.x, g.z) - 0.02, g.z), q, sc.set(g.k, g.k * (0.8 + g.j * 0.5), g.k)));
-    grass.setColorAt(i, _c.setHSL(
-      0.16 + g.wet * 0.09 + (g.j - 0.5) * 0.03,
-      (0.22 + g.wet * 0.24) * sat,
-      0.075 + g.j * 0.055));
   });
-  grass.name = name;
-  // No shadows. Putting this many tufts through the torch's depth pass is the
-  // single most expensive thing this file could ask for, and it would buy a
-  // pattern of specks nobody would ever identify as grass.
-  grass.castShadow = false;
-  grass.receiveShadow = true;
-  scene.add(grass);
-  return grass;
+  const out = sowChunked(scene, tufts, name,
+    (n) => {
+      const mesh = new THREE.InstancedMesh(geo, mat, n);
+      // No shadows. Putting this many tufts through the torch's depth pass is
+      // the single most expensive thing this file could ask for, and it would
+      // buy a pattern of specks nobody would ever identify as grass.
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      return mesh;
+    },
+    (mesh, i, g) => {
+      q.setFromAxisAngle(up, g.rot);
+      mesh.setMatrixAt(i, m.compose(
+        v.set(g.x, heightAt(g.x, g.z) - 0.02, g.z), q,
+        sc.set(g.k, g.k * (0.8 + g.j * 0.5), g.k)));
+      mesh.setColorAt(i, _c.setHSL(
+        0.16 + g.wet * 0.09 + (g.j - 0.5) * 0.03,
+        (0.22 + g.wet * 0.24) * sat,
+        0.075 + g.j * 0.055));
+    });
+  return { ...out, count: tufts.length };
 }
 
 /**
@@ -404,6 +467,18 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   // its grain and its patchiness far more than through raised ridges, which at
   // any strength worth seeing turned the trunks corrugated.
   const barkMat = carve(white(), BARK, { bump: 0.05, mottle: 0.5, tint: 0x14100b });
+  // NOT chunked, unlike the grass, and the measurement is why.
+  //
+  // Cell size trades triangles submitted against draw calls made, and which way
+  // that trade falls depends entirely on how many things are in the scatter.
+  // Grass is 44,298 instances and fine cells throw away enormous numbers of them
+  // for a handful of calls. Trees are 420 and they cast shadows, so their cull
+  // has to reach far past the fog - a 23 m spruce with the sun low lays a shadow
+  // forty metres in front of itself, across ground you are standing on. At that
+  // reach, sampling 400 eye positions across the map, not one tree cell was ever
+  // culled: thirty extra meshes and thirty extra draw calls to hide nothing.
+  //
+  // One mesh each, as before.
   const trunks = new THREE.InstancedMesh(trunkGeometry(rand), barkMat, trees.length);
   const crowns = new THREE.InstancedMesh(crownGeometry(), white(), trees.length);
   trees.forEach((t, i) => {
@@ -533,7 +608,8 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     clear,
   });
   built.grass = grass.count;
-  built.meshes.push(grass);
+  built.meshes.push(...grass.meshes);
+  built.chunks = grass.chunks;
 
   return built;
 }

@@ -1064,6 +1064,9 @@ function frame() {
     if (r.stepped) audio.step(r.stepPower, r.current);
   }
 
+  // Drop the scatter that is beyond the fog before anything is drawn. The
+  // frustum handles behind and beside; this handles in front and too far.
+  world.cullFlora(player.pos);
   world.updateGlow(game.elapsed, player.pos);
   world.tickWeather(dt, camera.getWorldPosition(_eye));
 
