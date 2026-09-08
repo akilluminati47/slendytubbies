@@ -78,6 +78,7 @@ await loadTorchAssets();
 // Metres until the next footfall - see the frame loop.
 let strideLeft = 0;
 let tripPending = false;
+let sawPending = false;
 /** The dust and the bugs in the air. Rebuilt with the world. */
 let motes = null;
 const showcase = new Showcase();
@@ -108,6 +109,11 @@ const remotes = new Map();
 // feet. Reused: this is read every frame and a fresh vector each time bought
 // nothing.
 const _eye = new THREE.Vector3();
+const _look = new THREE.Vector3();
+
+/** How near, and how far off centre, still counts as having seen the thing. */
+const SEE_IT_RANGE = 34;
+const SEE_IT_DOT = 0.55;      // about 57 degrees off the middle of the screen
 const game = { found: 0, total: 0, over: null, elapsed: 0, gasped: false };
 
 /**
@@ -398,7 +404,10 @@ net.addEventListener("took", (e) => {
   if (e.detail.by !== net.id) {
     game.found++;
     $("found").textContent = game.found;
-    audio.pickup();
+    // From the dish, not from inside your own head. Ten of these go in a round,
+    // and which direction the last one came from is most of how a party works
+    // out where everybody has already been.
+    audio.pickup(c.pos);
     const who = net.peers.get(e.detail.by);
     ui.tally(game.total - game.found);
     if (who) ui.flash(`${who.name} found custard: ${game.found}/${game.total}`);
@@ -419,6 +428,9 @@ net.addEventListener("dead", (e) => {
   // second, and by a great deal more than that if this tab has been throttled -
   // which put the mark five metres from the body on the first live test.
   if (r.seen) world?.stain(r.target.x, r.target.z, 1.15);
+  // And heard from there. Somebody screaming off to your right is a different
+  // piece of information from somebody screaming: it says which way not to go.
+  audio.playSample("scream", 0.9, r.target);
   r.setDead(true);
   ui.flash(`${r.name} was caught`);
   // If we were watching them, move on rather than staring at a body.
@@ -471,6 +483,39 @@ document.addEventListener("pointerlockchange", () => {
   }
 });
 
+/**
+ * The first time you lay eyes on it, you make a noise.
+ *
+ * Once a round and once a player, because it marks a moment - the second time
+ * it would be a noise the monster comes with, and by the fifth it would be
+ * comedy the game cannot afford. Everyone else hears it from where you are
+ * standing, which is usually how a party finds out somebody has seen it.
+ *
+ * "Seen" is deliberately generous: in the frame, roughly ahead, and near enough
+ * to make out. It is not the AI's sight test in reverse - that one decides
+ * whether you get caught and has to be strict. This one only decides whether
+ * you squeaked, so it can afford to believe you.
+ */
+let sawIt = false;
+function seeingIt(dt) {
+  if (sawIt || !running || paused || !player?.alive) return;
+  camera.getWorldDirection(_look);
+  for (const t of tubbies) {
+    const dx = t.pos.x - player.pos.x, dz = t.pos.z - player.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > SEE_IT_RANGE || d < 0.001) continue;
+    // Ahead of us, in the flat plane - pitch has nothing to do with whether you
+    // noticed a thing the height of a door.
+    const ahead = (dx * _look.x + dz * _look.z) / d;
+    if (ahead < SEE_IT_DOT) continue;
+    sawIt = true;
+    sawPending = true;
+    audio.fright();
+    break;
+  }
+  void dt;
+}
+
 function refreshHints() {
   const scheme = input.scheme;
   let html = HINTS[scheme] ?? HINTS.keyboard;
@@ -490,7 +535,7 @@ addEventListener("xr", (e) => {
     if (CFG.xr.torchOnController) player?.attachTorchTo(input.xr.grips[1]);
     wrist?.attach(input.xr.grips[0]);
     audio.unlock();
-    if (player) { running = true; paused = false; ui.show("game"); }
+    if (player) { running = true; paused = false; resetSightings(); ui.show("game"); }
   } else if (d.presenting === false) {
     player?.detachTorch();
     wrist?.detach();
@@ -638,10 +683,24 @@ function leaveToMenu() {
  * fires visibilitychange and may never fire blur, and a desktop window losing
  * focus to another window fires blur while staying perfectly visible.
  */
-addEventListener("blur", () => pause());
+addEventListener("blur", () => {
+  // Not on a phone. Mobile browsers blur the window for things that are not
+  // somebody leaving - the address bar taking focus, the keyboard opening, a
+  // gesture starting - and a round that pauses itself while you are playing it
+  // is worse than one that keeps running while you take a call. The touch class
+  // is only set once a real touch has happened, so a desktop with a
+  // touchscreen still pauses on alt-tab until it is actually used by hand.
+  if (document.body.classList.contains("touch")) return;
+  pause();
+});
+// This one is for everybody. It is the signal a phone actually sends when the
+// app goes away, and the only one that means it.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) pause();
 });
+
+/** A fresh round is a fresh first sight of it. */
+function resetSightings() { sawIt = false; sawPending = false; }
 
 function restartRound(seed) {
   scare = null;
@@ -847,7 +906,17 @@ function frame() {
       }
       else { const w = netWorld?.tubby?.[i]; t.netApply(w?.p, w?.f, w?.s, dt, w?.v); }
     }
-    for (const r of remotes.values()) r.update(dt, camera);
+    for (const r of remotes.values()) {
+    r.update(dt, camera);
+    // What they did, turned into sound from where they are. remote.js raises
+    // the flags and does not know what a speaker is; this is the only place
+    // that knows where the listener is standing.
+    if (r.didJump) { audio.jumpStep(r.current); r.didJump = false; }
+    if (r.didLand) { audio.land(r.current); r.didLand = false; }
+    if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
+    if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
+    if (r.didSee) { audio.fright(r.current); r.didSee = false; }
+  }
     world.updateGlow(game.elapsed, spectator.pos);
     world.tickWeather(dt, camera.getWorldPosition(_eye));
     if (online) {
@@ -969,7 +1038,17 @@ function frame() {
     threat = Math.max(threat, t.threat(player));
   }
 
-  for (const r of remotes.values()) r.update(dt, camera);
+  for (const r of remotes.values()) {
+    r.update(dt, camera);
+    // What they did, turned into sound from where they are. remote.js raises
+    // the flags and does not know what a speaker is; this is the only place
+    // that knows where the listener is standing.
+    if (r.didJump) { audio.jumpStep(r.current); r.didJump = false; }
+    if (r.didLand) { audio.land(r.current); r.didLand = false; }
+    if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
+    if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
+    if (r.didSee) { audio.fright(r.current); r.didSee = false; }
+  }
 
   world.updateGlow(game.elapsed, player.pos);
   world.tickWeather(dt, camera.getWorldPosition(_eye));
@@ -986,11 +1065,28 @@ function frame() {
         anim: player.motion,
         torch: player.torchOn,
         trip: tripPending || undefined,
+        saw: sawPending || undefined,
       });
       tripPending = false;
+      sawPending = false;
       if (host) net.sendWorld(tubbies.map((t) => t.netState()), custardMask());
     }
   }
+
+  // Where the ears are. Every panned sound is placed relative to this, and it
+  // comes off the CAMERA rather than the player: spectating, you are not where
+  // your body is, and the sound should follow the eyes.
+  camera.getWorldPosition(_eye);
+  camera.getWorldDirection(_look);
+  audio.listenAt(_eye, _look);
+
+  // The monster's feet. Every tubby in the world, from where it is standing -
+  // and this is the only thing in the game that tells you where one is when you
+  // cannot see it.
+  for (const t of tubbies) {
+    if (t.stepped) audio.monsterStep(t.stepPower, t.pos);
+  }
+  seeingIt(dt);
 
   audio.update(dt, threat);
   // Always call through, including at zero - rumble() stops the motors itself

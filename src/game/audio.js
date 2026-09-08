@@ -11,6 +11,21 @@
 /** How loud the theme sits under everything else. */
 const MUSIC_GAIN = 0.42;
 
+/**
+ * How a sound with a place in the world falls off with distance.
+ *
+ * Inverse rather than linear, because linear is a straight fade to nothing at a
+ * fixed radius and everything inside it is nearly as loud as everything else -
+ * which tells you a thing is near without telling you HOW near, and the whole
+ * point of putting the monster's feet in the world is that you can tell.
+ *
+ * ref is the distance at which a sound plays at full strength, so it is roughly
+ * "how big is this thing": a footfall is a point and gets 3 m, and past that it
+ * halves every time the distance doubles. max is where it stops getting quieter,
+ * kept a little beyond the fog so nothing audible is also invisible.
+ */
+const SPATIAL = { ref: 3, max: 55, rolloff: 1.15 };
+
 export class Audio {
   constructor() {
     this.ctx = null;
@@ -64,7 +79,7 @@ export class Audio {
    * Play a preloaded file. Returns its length in seconds, or 0 if it is not
    * available, so a caller timing something against it has a number either way.
    */
-  async playSample(name, gain = 1) {
+  async playSample(name, gain = 1, at = null) {
     if (!this.ready) return 0;
     const buf = await this.#decode(name);
     if (!buf) return 0;
@@ -96,6 +111,73 @@ export class Audio {
     this.#buildHeart();
     this.ready = true;
     return true;
+  }
+
+  /**
+   * Where the ears are, and which way they face.
+   *
+   * Called every frame from the camera. Without it every panner in the graph
+   * places its sound relative to an origin nobody is standing at, which is worse
+   * than no panning at all: sounds would swap sides as you walked past a fixed
+   * point in the world rather than as you turned your head.
+   *
+   * The positionX/orientationX properties are the current API and the
+   * setPosition/setOrientation pair is the deprecated one, but Safari only grew
+   * the first relatively recently and this is a game people open on phones, so
+   * it uses whichever it finds.
+   */
+  listenAt(pos, forward) {
+    if (!this.ready) return;
+    const L = this.ctx.listener;
+    const t = this.ctx.currentTime;
+    if (L.positionX) {
+      L.positionX.setValueAtTime(pos.x, t);
+      L.positionY.setValueAtTime(pos.y, t);
+      L.positionZ.setValueAtTime(pos.z, t);
+      L.forwardX.setValueAtTime(forward.x, t);
+      L.forwardY.setValueAtTime(forward.y, t);
+      L.forwardZ.setValueAtTime(forward.z, t);
+      L.upX.setValueAtTime(0, t);
+      L.upY.setValueAtTime(1, t);
+      L.upZ.setValueAtTime(0, t);
+    } else {
+      L.setPosition(pos.x, pos.y, pos.z);
+      L.setOrientation(forward.x, forward.y, forward.z, 0, 1, 0);
+    }
+  }
+
+  /**
+   * Where a sound comes from, or the master bus if it comes from you.
+   *
+   * Everything the player does themselves stays unpanned on purpose. Your own
+   * feet are not somewhere over to your left; they are you, and pushing them
+   * through a panner at head position produces a subtle wrongness that is very
+   * hard to name and impossible to stop hearing once named.
+   *
+   * The node is thrown away after the sound is done. These are one-shots and a
+   * panner left connected is a live node in the graph forever, which for a
+   * monster walking around for ten minutes is thousands of them.
+   */
+  #place(at, life = 1.5) {
+    if (!at) return this.nodes.master;
+    const p = this.ctx.createPanner();
+    p.panningModel = "HRTF";
+    p.distanceModel = "inverse";
+    p.refDistance = SPATIAL.ref;
+    p.maxDistance = SPATIAL.max;
+    p.rolloffFactor = SPATIAL.rolloff;
+    const t = this.ctx.currentTime;
+    if (p.positionX) {
+      p.positionX.setValueAtTime(at.x, t);
+      p.positionY.setValueAtTime(at.y ?? 0, t);
+      p.positionZ.setValueAtTime(at.z, t);
+    } else {
+      p.setPosition(at.x, at.y ?? 0, at.z);
+    }
+    p.connect(this.nodes.master);
+    setTimeout(() => { try { p.disconnect(); } catch { /* already gone */ } },
+               (life + 0.4) * 1000);
+    return p;
   }
 
   setVolume(v) {
@@ -186,9 +268,10 @@ export class Audio {
   }
 
   /** Bright two-note rise when a dish is taken. */
-  pickup() {
+  pickup(at = null) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
+    const to = this.#place(at, 0.6);
     for (const [i, f] of [880, 1320].entries()) {
       const osc = this.ctx.createOscillator();
       const g = this.ctx.createGain();
@@ -197,7 +280,7 @@ export class Audio {
       g.gain.setValueAtTime(0.0001, t + i * 0.09);
       g.gain.exponentialRampToValueAtTime(0.22, t + i * 0.09 + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.09 + 0.32);
-      osc.connect(g).connect(this.nodes.master);
+      osc.connect(g).connect(to);
       osc.start(t + i * 0.09);
       osc.stop(t + i * 0.09 + 0.35);
     }
@@ -224,7 +307,7 @@ export class Audio {
   }
 
   /** A burst of filtered noise: the scuff on top of a footfall, or a switch. */
-  #scuff(when, { peak = 0.1, dur = 0.09, hz = 1600, q = 0.7 } = {}) {
+  #scuff(when, { peak = 0.1, dur = 0.09, hz = 1600, q = 0.7, target = null } = {}) {
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
     src.buffer = this.#grit();
@@ -237,7 +320,7 @@ export class Audio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(peak, when);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-    src.connect(f).connect(g).connect(this.nodes.master);
+    src.connect(f).connect(g).connect(target ?? this.nodes.master);
     src.start(when, Math.random() * 0.2);
     src.stop(when + dur + 0.02);
   }
@@ -252,12 +335,14 @@ export class Audio {
    *
    * @param power 0 at a crawl, 1 at a full sprint.
    */
-  step(power = 0.5) {
+  step(power = 0.5, at = null) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const p = Math.max(0, Math.min(1, power));
-    this.#thump(t, 96 + p * 26, 0.07 + p * 0.05, 0.045 + p * 0.165, this.nodes.master);
-    this.#scuff(t, { peak: 0.03 + p * 0.09, dur: 0.05 + p * 0.06, hz: 1500 + p * 900 });
+    const to = this.#place(at, 0.4);
+    this.#thump(t, 96 + p * 26, 0.07 + p * 0.05, 0.045 + p * 0.165, to);
+    this.#scuff(t, { peak: 0.03 + p * 0.09, dur: 0.05 + p * 0.06,
+                     hz: 1500 + p * 900, target: to });
   }
 
   /**
@@ -273,11 +358,12 @@ export class Audio {
    * as they are to the monster - 0.13 here, 0.21 for a sprinting step, 0.32 for
    * the landing, against hearing radii of 14, 21.6 and 34 m.
    */
-  jumpStep() {
+  jumpStep(at = null) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.#thump(t, 142, 0.09, 0.13, this.nodes.master);
-    this.#scuff(t, { peak: 0.07, dur: 0.11, hz: 2100 });
+    const to = this.#place(at, 0.5);
+    this.#thump(t, 142, 0.09, 0.13, to);
+    this.#scuff(t, { peak: 0.07, dur: 0.11, hz: 2100, target: to });
   }
 
   /**
@@ -292,20 +378,82 @@ export class Audio {
    * everything hunting you too: 40 m of hearing radius against 34. It is the
    * loudest thing in the game and the only one you did not press a key for.
    */
-  stumble() {
+  stumble(at = null) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.#scuff(t, { peak: 0.22, dur: 0.20, hz: 820, q: 0.5 });
-    this.#scuff(t + 0.075, { peak: 0.15, dur: 0.13, hz: 1500 });
-    this.#thump(t + 0.11, 84, 0.17, 0.40, this.nodes.master);
+    const to = this.#place(at, 0.8);
+    this.#scuff(t, { peak: 0.22, dur: 0.20, hz: 820, q: 0.5, target: to });
+    this.#scuff(t + 0.075, { peak: 0.15, dur: 0.13, hz: 1500, target: to });
+    this.#thump(t + 0.11, 84, 0.17, 0.40, to);
   }
 
   /** The loudest one-shot in the game, and the bill for the hop. */
-  land() {
+  land(at = null) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    this.#thump(t, 118, 0.16, 0.32, this.nodes.master);
-    this.#scuff(t, { peak: 0.17, dur: 0.15, hz: 1300 });
+    const to = this.#place(at, 0.6);
+    this.#thump(t, 118, 0.16, 0.32, to);
+    this.#scuff(t, { peak: 0.17, dur: 0.15, hz: 1300, target: to });
+  }
+
+  /**
+   * The monster's feet, from wherever it is standing.
+   *
+   * Heavier and duller than yours - lower, longer, with the scuff pushed down
+   * where dead grass is rather than up where gravel is - and a quarter louder
+   * than the same speed would be under you, because being able to count its
+   * pace through the trees is the entire reason it makes a sound at all. The
+   * distance falloff does the rest; nothing has to tell you it is close.
+   *
+   * @param power 0 at a prowl, 1 at a full chase.
+   */
+  monsterStep(power = 0.5, at = null) {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    const p = Math.max(0, Math.min(1, power));
+    const to = this.#place(at, 0.5);
+    this.#thump(t, 74 + p * 20, 0.10 + p * 0.06, (0.055 + p * 0.205) * 1.25, to);
+    this.#scuff(t, { peak: (0.035 + p * 0.10) * 1.25, dur: 0.07 + p * 0.07,
+                     hz: 900 + p * 500, q: 0.5, target: to });
+  }
+
+  /**
+   * The noise a person makes on seeing that thing for the first time.
+   *
+   * Not a scream and not a word - a body doing something it did not ask to do.
+   * A short breathy parp with the pitch falling out of it, which is funny for
+   * about as long as it takes to remember what caused it. That is the joke the
+   * whole game is built on.
+   *
+   * Once per player per round, so it marks the moment rather than becoming a
+   * noise the monster is accompanied by. Other people hear yours from where you
+   * are standing, which is usually the first they know you have seen it.
+   */
+  fright(at = null) {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    const to = this.#place(at, 0.7);
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    const f = this.ctx.createBiquadFilter();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(196, t);
+    osc.frequency.exponentialRampToValueAtTime(88, t + 0.34);
+    // A wobble on top so it flutters rather than sliding cleanly, which is the
+    // difference between a raspberry and a sad kazoo.
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    lfo.frequency.value = 24;
+    lfoGain.gain.value = 22;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    f.type = "lowpass";
+    f.frequency.value = 900;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    osc.connect(f).connect(g).connect(to);
+    osc.start(t); lfo.start(t);
+    osc.stop(t + 0.4); lfo.stop(t + 0.4);
   }
 
   /**
@@ -318,16 +466,17 @@ export class Audio {
    * information the size of the thing already gives you, arriving through the
    * other ear.
    */
-  torchClick(kind = "handheld") {
+  torchClick(kind = "handheld", at = null) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
+    const to = this.#place(at, 0.4);
     if (kind === "searchlight") {
-      this.#scuff(t, { peak: 0.30, dur: 0.035, hz: 900, q: 1.4 });
-      this.#thump(t, 190, 0.05, 0.13, this.nodes.master);
-      this.#scuff(t + 0.05, { peak: 0.17, dur: 0.03, hz: 620, q: 1.6 });
+      this.#scuff(t, { peak: 0.30, dur: 0.035, hz: 900, q: 1.4, target: to });
+      this.#thump(t, 190, 0.05, 0.13, to);
+      this.#scuff(t + 0.05, { peak: 0.17, dur: 0.03, hz: 620, q: 1.6, target: to });
     } else {
-      this.#scuff(t, { peak: 0.22, dur: 0.02, hz: 3200, q: 1.1 });
-      this.#scuff(t + 0.02, { peak: 0.10, dur: 0.02, hz: 2300, q: 1.3 });
+      this.#scuff(t, { peak: 0.22, dur: 0.02, hz: 3200, q: 1.1, target: to });
+      this.#scuff(t + 0.02, { peak: 0.10, dur: 0.02, hz: 2300, q: 1.3, target: to });
     }
   }
 

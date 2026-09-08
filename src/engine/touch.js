@@ -191,21 +191,49 @@ export class TouchSource {
     document.body.appendChild(box);
     const lines = [];
     const NEWLINE = String.fromCharCode(10);
+    let head = "";
+    const paint = () => { box.textContent = head + NEWLINE + lines.join(NEWLINE); };
     const say = (t) => {
       lines.unshift(t);
-      lines.length = Math.min(lines.length, 16);
-      box.textContent = lines.join(NEWLINE);
+      lines.length = Math.min(lines.length, 12);
+      paint();
     };
-    say(`vw ${innerWidth}x${innerHeight} dpr ${devicePixelRatio} pts ${navigator.maxTouchPoints}`);
+
+    // The top two lines are live rather than a log, and they are the ones that
+    // matter: they separate "no touch is reaching the pad" from "the pad has the
+    // touch and nothing is reading it". Those two look identical from the
+    // outside and have nothing in common as bugs.
+    let last = this.polls ?? 0;
+    setInterval(() => {
+      const now = this.polls ?? 0;
+      const hz = now - last;
+      last = now;
+      const d = globalThis.__dbg;
+      const root = this.el.classList.contains("on") ? "ON" : "off";
+      head =
+        `vw ${innerWidth}x${innerHeight} dpr ${devicePixelRatio} pts ${navigator.maxTouchPoints}` +
+        NEWLINE +
+        `poll ${hz}/s  root=${root} inGame=${this.inGame ? 1 : 0} en=${this.enabled ? 1 : 0}  ` +
+        `run=${d?.running ? 1 : 0} paused=${d?.paused ? 1 : 0}` +
+        NEWLINE +
+        `move ${this.moveVec.x.toFixed(2)},${this.moveVec.y.toFixed(2)} ` +
+        `look ${this.lookDelta.x.toFixed(2)},${this.lookDelta.y.toFixed(2)} ` +
+        `ptrs ${this.pointers.size} q:${this.jumpQueued ? "J" : "-"}${this.torchQueued ? "T" : "-"}${this.menuQueued ? "M" : "-"}`;
+      paint();
+    }, 1000);
     const name = (el) => !el ? "-" : (el.id || el.className?.baseVal || el.className || el.tagName);
     const log = (e) => {
       const p = e.touches ? e.changedTouches[0] : e;
       const x = p?.clientX, y = p?.clientY;
-      const hit = Number.isFinite(x) ? name(document.elementFromPoint(x, y)) : "?";
+      // Everything stacked under the finger, topmost first - which is the one
+      // question a dead control pad turns on and the one nothing else answers.
+      const stack = Number.isFinite(x)
+        ? document.elementsFromPoint(x, y).slice(0, 3).map(name).join(">")
+        : "?";
       const r = this.stickEl.getBoundingClientRect();
       say(`${e.type} ${e.pointerType ?? "touch"} ` +
           `${Number.isFinite(x) ? Math.round(x) + "," + Math.round(y) : "NO-COORDS"} ` +
-          `on=${name(e.target)} hit=${hit} ` +
+          `tgt=${name(e.target)} over=${stack} ` +
           `stick=${Math.round(r.left)},${Math.round(r.top)} ${this.stickEl.classList.contains("on") ? "ON" : "off"}`);
     };
     for (const t of ["pointerdown", "pointerup", "pointercancel",
@@ -373,6 +401,7 @@ export class TouchSource {
   }
 
   poll() {
+    this.polls = (this.polls ?? 0) + 1;
     const intent = blankIntent();
     if (!this.enabled) return intent;
 

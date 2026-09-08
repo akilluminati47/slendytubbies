@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CFG } from "../game/config.js";
 import { heightAt } from "../world/world.js";
-import { makeTubby } from "./tubbyModel.js";
+import { makeTubby, STRIDE_GAIN, RATE } from "./tubbyModel.js";
 
 const T = CFG.tubby;
 
@@ -41,6 +41,12 @@ export class Tubby {
     this.#rollStride();
     this.growl = 0;
     this.speedNow = 0;
+    // Footfalls, drained by main for the sound. Seconds until the next one, and
+    // a one-frame flag when it lands - the same shape the player uses, so the
+    // monster's feet and yours are paced by the same rule rather than two.
+    this.stepLeft = 0;
+    this.stepped = false;
+    this.stepPower = 0;
   }
 
   /**
@@ -257,6 +263,7 @@ export class Tubby {
     // the runAbove constant this replaces, and cannot drift away from the clips
     // the way a hand-written number can.
     const clip = this.speedNow <= 0.15 ? "idle" : this.model.gaitFor(this.speedNow).clip;
+    this.#tickSteps(dt, clip);
     // It keeps its uneven kick while it walks - on the thing hunting you a limp
     // is character - but not while it runs, where unsquared feet stop reading
     // as a limp and start flaring out sideways on every stride.
@@ -480,6 +487,31 @@ export class Tubby {
   }
 
   /** 0..1 - how close this tubby is to reaching you. Drives the red screen. */
+  /**
+   * Count its footfalls, so something can make a noise about them.
+   *
+   * Paced by the clip and its clamped playback, exactly as the player's are:
+   * one footfall every duration/(2 * playback) seconds. That is what makes the
+   * sound land on the foot rather than near it, and it is the whole point -
+   * a monster whose steps you can count is a monster whose pace you can judge
+   * through fog you cannot see it through.
+   */
+  #tickSteps(dt, clip) {
+    this.stepped = false;
+    if (clip === "idle") { this.stepLeft = Math.min(this.stepLeft, 0.08); return; }
+    const c = this.model.byState?.get(clip);
+    const own = (c?.userData?.groundSpeed ?? 0) * STRIDE_GAIN;
+    if (!(own > 0) || !c?.duration) return;
+    const playback = Math.min(Math.max(this.speedNow / own, RATE.min), RATE.max);
+    this.stepLeft -= dt;
+    if (this.stepLeft > 0) return;
+    this.stepLeft += c.duration / (2 * playback);
+    this.stepped = true;
+    // 0 at a prowl, 1 at a full chase, so the sound grows with the pace rather
+    // than only arriving more often.
+    this.stepPower = Math.min(1, this.speedNow / T.chaseSpeed);
+  }
+
   threat(player) {
     if (this.state !== "chase") return 0;   // "flee" reads as zero, so red clears
     const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);

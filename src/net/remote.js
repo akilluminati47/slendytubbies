@@ -27,6 +27,10 @@ import { makeTorch, torchFor, holdInHand, aimInHand, gripPoseFor }
  * pointing a remote at its own view yaw stood everyone backwards - walking
  * forwards while facing the way they had come.
  */
+/** How long somebody else's stumble is visible for, and how far it tips them. */
+const STUMBLE_SHOW = 0.55;
+const STUMBLE_PITCH = 0.38;
+
 const MODEL_FLIP = Math.PI;
 
 /** Where the wire's one word lands on the model's clip table. */
@@ -70,6 +74,15 @@ export class RemotePlayer {
     this.lift = 0;            // metres above their own ground, so jumps show
     this.anim = "idle";
     this.speed = 0;
+    // One-frame flags for main to turn into sound, and the seconds left of a
+    // visible stagger. remote.js has no audio of its own on purpose: what a
+    // body did belongs here, what it sounds like belongs where the listener is.
+    this.didJump = false;
+    this.didLand = false;
+    this.didTrip = false;
+    this.didClick = false;
+    this.didSee = false;
+    this.stumbleLeft = 0;
     // A real velocity, not a magnitude. The AI needs the direction to tell
     // somebody running away from somebody running past - see Tubby.canTake,
     // which is the whole reason a guest could not escape the way a host can.
@@ -214,7 +227,7 @@ export class RemotePlayer {
     this.label.material.opacity = this.dead ? 0.35 : v;
   }
 
-  apply({ pos, yaw, pitch, anim, lit, trip }) {
+  apply({ pos, yaw, pitch, anim, lit, trip, saw }) {
     if (pos) {
       this.target.set(pos[0], 0, pos[2]);
       // The middle slot is height above their ground, not world Y - see
@@ -239,17 +252,36 @@ export class RemotePlayer {
       // sends is which of four things it is doing, so that transition is the
       // only landing there is to hear - and it lands a frame or two late, which
       // at this range is nothing.
-      if (anim === "jump" && this.anim !== "jump") this.heard(CFG.noise.jump);
-      if (anim !== "jump" && this.anim === "jump") this.heard(CFG.noise.land);
+      if (anim === "jump" && this.anim !== "jump") {
+        this.heard(CFG.noise.jump);
+        this.didJump = true;
+      }
+      if (anim !== "jump" && this.anim === "jump") {
+        this.heard(CFG.noise.land);
+        this.didLand = true;
+      }
       this.anim = anim;
     }
-    if (lit !== undefined) this.torchOn = !!lit;
+    // A torch going on or off is a switch somebody threw, and at night it is
+    // often the only thing that tells you a team-mate is still out there.
+    if (lit !== undefined) {
+      if (!!lit !== this.torchOn) this.didClick = true;
+      this.torchOn = !!lit;
+    }
     // Somebody else went over. A stumble is not one of the four things `anim`
     // can say, and it lasts a single frame against a packet every fifteenth of
     // one, so it travels as its own flag latched at the sender - otherwise a
     // guest could trip in front of the monster and make no sound at all, and
     // the loudest event in the game would be the host's alone.
-    if (trip) this.heard(CFG.noise.stumble);
+    if (trip) {
+      this.heard(CFG.noise.stumble);
+      this.didTrip = true;
+      this.stumbleLeft = STUMBLE_SHOW;
+    }
+    // Somebody's first sight of the thing. Carries no noise for the monster -
+    // it is a squeak, not a shout - but the people they are playing with should
+    // absolutely hear it, and hear which direction it came from.
+    if (saw) this.didSee = true;
   }
 
   /** They just did something loud. Metres of hearing radius, one shot. */
@@ -307,6 +339,17 @@ export class RemotePlayer {
 
     const ground = heightAt(this.current.x, this.current.z);
     this.root.position.set(this.current.x, ground + this.lift, this.current.z);
+    // Going over, from the outside: a pitch forward that decays. Not a dip in
+    // height, which would push the feet through the ground the leg solver has
+    // just stood them on - this rotates the whole body about its base, which is
+    // what catching a foot actually does to somebody.
+    if (this.stumbleLeft > 0) {
+      this.stumbleLeft = Math.max(0, this.stumbleLeft - dt);
+      const p = 1 - this.stumbleLeft / STUMBLE_SHOW;
+      this.root.rotation.x = -Math.sin(Math.PI * Math.pow(p, 0.45)) * STUMBLE_PITCH;
+    } else if (this.root.rotation.x) {
+      this.root.rotation.x = 0;
+    }
     // So the ground fit knows the difference between standing and mid-hop - see
     // TubbyModel#standOnGround.
     this.model.lift = this.lift;

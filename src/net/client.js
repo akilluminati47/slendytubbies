@@ -219,7 +219,7 @@ export class NetClient extends EventTarget {
    * carries the jump instead, and the receiver adds it to its own ground.
    */
   sendState({ pos, lift = 0, yaw, pitch = 0, anim = "idle", torch = false,
-              trip = false }) {
+              trip = false, saw = false }) {
     this.#send({
       t: "state",
       pos: [+pos.x.toFixed(2), +lift.toFixed(2), +pos.z.toFixed(2)],
@@ -236,6 +236,10 @@ export class NetClient extends EventTarget {
       // host's monsters. Omitted rather than sent as 0, because it is true on
       // perhaps one packet in a thousand.
       ...(trip ? { trip: 1 } : {}),
+      // The other one-shot: the noise somebody makes on first seeing it. Same
+      // reasoning as trip - not a state, not one of the four things anim can
+      // hold, and true on about one packet in a whole round.
+      ...(saw ? { saw: 1 } : {}),
     });
   }
 
