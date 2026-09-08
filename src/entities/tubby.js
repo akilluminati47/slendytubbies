@@ -132,9 +132,13 @@ export class Tubby {
     const seen = alive && (this.#sees(player) || lit);
     const heard = alive && this.#hears(player);
 
-    // What makes it snap round onto you: a jump, or a torch found from further
-    // off than it could ever have spotted you by shape. Both are the player
-    // announcing themselves rather than being caught out.
+    // What makes it snap round onto you: going over, or a torch found from
+    // further off than it could ever have spotted you by shape.
+    //
+    // Nothing else reaches alertNoise. A landing is heard and walked towards; a
+    // trip is turned onto, which is a different and much worse thing to have
+    // caused. It is the only sound in the game you did not decide to make, so it
+    // is the only one that gets this.
     this.alignLeft = Math.max(0, this.alignLeft - dt);
     const startled = alive &&
       ((heard && player.noise >= T.alertNoise) ||
@@ -185,16 +189,9 @@ export class Tubby {
     }
 
     // What this state wants to travel at, and then what its legs will actually
-    // carry. The clips are the hard limit: the run travels 2.12 m/s per cycle
-    // and will not play past 2.45x, so 5.2 m/s is the fastest this body can
-    // move while its feet still hold the ground. Asking for more does not make
-    // it faster-looking, it makes it a body flying along with its legs cycling
-    // underneath - and flee, at 11, asked for more than twice the limit.
-    //
-    // Clamped here rather than trusted to config, because it is measured off
-    // the clips this particular character was baked with - Tinky Winky's run is
-    // a shade longer than everyone else's - and because a config edit should
-    // not be able to reintroduce the skate silently.
+    // carry. Measured off the clips this particular character was baked with -
+    // Tinky Winky's run is a shade longer than everyone else's - rather than
+    // trusted to config.
     const wanted = {
       patrol: this.stride, investigate: T.investigateSpeed,
       chase: T.chaseSpeed, flee: T.fleeSpeed,

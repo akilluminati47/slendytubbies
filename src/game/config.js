@@ -157,11 +157,15 @@ export const CFG = {
     lookAngle: 62,
     loseInterest: 6.0,    // seconds without a fix before giving up
     // --- being startled ---------------------------------------------------
-    // Loud enough to make it stop dead and look. A landing is 34 m of noise, a
-    // trip is 40 and a dish is 26, so this catches somebody coming down off a
-    // jump or going over a branch, and nothing else - being startled by every
-    // pickup would make the beat wallpaper.
-    alertNoise: 30,
+    // Loud enough to make it snap its head round. Set ABOVE a landing on
+    // purpose, so exactly one thing in the game does this: going over.
+    //
+    // A landing is 34 m of noise and a dish is 26 - both plenty to be heard and
+    // walked towards, neither enough to be turned onto. A trip is 40. So the
+    // penalty for the one accident you did not choose is the one reaction you
+    // cannot do anything about, and every other loud thing stays a thing you
+    // can be loud with and live.
+    alertNoise: 37,
     // It does not stop. It swings its head round onto you and keeps coming,
     // which is worse: a thing that pauses gives you a moment, and a thing that
     // simply corrects its course while walking gives you none.

@@ -64,8 +64,10 @@ flowchart LR
 > facing you, and a tree in the way will hide it. The one thing that helps you find dishes
 > is the one thing that announces where you are.
 
-When it hears something loud, it does not stop and stare. It **turns onto you mid-stride**
-and keeps walking, so the very next step is already coming your way.
+Most loud things get it *walking your way*. Two things get it **turning onto you
+mid-stride** — going over, and a torch it found from further off than it could have seen
+you by shape. It does not stop and stare for either; it corrects its course and keeps
+walking, so the very next step is already coming at you.
 
 It does not patrol at one speed either. It picks a prowl, an amble or a brisk jog and keeps
 it for a few seconds. Catching sight of one *jogging* across a clearing is a much worse
@@ -90,8 +92,9 @@ actually are.
 > trips you one time in ten, so the deadwood on the floor is worth reading rather than
 > running through. Walking over one is always safe.
 >
-> Going over is **the loudest thing in the game**, louder than landing a jump. It is also
-> the only one you did not choose.
+> Going over is **the loudest thing in the game**, louder than landing a jump — and the
+> only sound that makes anything hunting you turn *onto* you rather than merely come
+> looking. It is also the only one you did not choose.
 
 **Walk over a dish to pick it up.** No button, no holding anything down. It is loud, and
 every tubby hunting you turns and *bolts* — far faster than you can run, out into the open,

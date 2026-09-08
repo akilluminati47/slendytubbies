@@ -77,6 +77,7 @@ await loadTorchAssets();
 // before anything else so the title screen is never empty.
 // Metres until the next footfall - see the frame loop.
 let strideLeft = 0;
+let tripPending = false;
 /** The dust and the bugs in the air. Rebuilt with the world. */
 let motes = null;
 const showcase = new Showcase();
@@ -866,6 +867,9 @@ function frame() {
   if (!wasGrounded && player.grounded) audio.land();
   if (player.jumped) audio.jumpStep();
   if (player.stumbled) audio.stumble();
+  // Latched until the next packet goes out. A trip is one frame long and state
+  // is sent fifteen times a second, so reading it live would drop most of them.
+  if (player.stumbled) tripPending = true;
   if (player.clicked) audio.torchClick(torchFor(myRole));
 
   // Footsteps, paced by the animation.
@@ -981,7 +985,9 @@ function frame() {
         pitch: input.pitch,
         anim: player.motion,
         torch: player.torchOn,
+        trip: tripPending || undefined,
       });
+      tripPending = false;
       if (host) net.sendWorld(tubbies.map((t) => t.netState()), custardMask());
     }
   }

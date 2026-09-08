@@ -180,8 +180,13 @@ export class Lobby {
         if (typeof msg.pitch === "number") me.pitch = msg.pitch;
         if (typeof msg.anim === "string") me.anim = msg.anim.slice(0, 16);
         if (typeof msg.lit === "number") me.lit = msg.lit ? 1 : 0;
+        // `trip` is an event, not state, so it is passed through rather than
+        // kept on `me`. Anything stored here is the player's standing condition
+        // and gets sent again to whoever joins next; a stumble that happened
+        // once must not go out twice.
         this.#broadcast({ t: "state", id: me.id, pos: me.pos, yaw: me.yaw,
-                          pitch: me.pitch, anim: me.anim, lit: me.lit }, me.id);
+                          pitch: me.pitch, anim: me.anim, lit: me.lit,
+                          ...(msg.trip ? { trip: 1 } : {}) }, me.id);
         break;
 
       case "world":

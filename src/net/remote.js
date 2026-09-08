@@ -214,7 +214,7 @@ export class RemotePlayer {
     this.label.material.opacity = this.dead ? 0.35 : v;
   }
 
-  apply({ pos, yaw, pitch, anim, lit }) {
+  apply({ pos, yaw, pitch, anim, lit, trip }) {
     if (pos) {
       this.target.set(pos[0], 0, pos[2]);
       // The middle slot is height above their ground, not world Y - see
@@ -244,6 +244,12 @@ export class RemotePlayer {
       this.anim = anim;
     }
     if (lit !== undefined) this.torchOn = !!lit;
+    // Somebody else went over. A stumble is not one of the four things `anim`
+    // can say, and it lasts a single frame against a packet every fifteenth of
+    // one, so it travels as its own flag latched at the sender - otherwise a
+    // guest could trip in front of the monster and make no sound at all, and
+    // the loudest event in the game would be the host's alone.
+    if (trip) this.heard(CFG.noise.stumble);
   }
 
   /** They just did something loud. Metres of hearing radius, one shot. */
