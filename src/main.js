@@ -13,6 +13,7 @@ import { Settings } from "./game/settings.js";
 import { Audio } from "./game/audio.js";
 import { UI } from "./game/ui.js";
 import { Showcase } from "./game/showcase.js";
+import { startLoader, stopLoader } from "./game/loader.js";
 import { installMenuSfx } from "./game/menuSfx.js";
 import { installTorchBench, TORCH_BENCH } from "./game/torchBench.js";
 import { Motes } from "./world/motes.js";
@@ -69,6 +70,11 @@ settings.apply(renderer, audio);
 audio.preload("theme", "./assets/game/theme.mp3");
 audio.preload("jumpscare", "./assets/game/jumpscare.mp3");
 audio.preload("scream", "./assets/game/scream.mp3");
+
+// Before the awaits, not after. Everything below this line is the dead gap the
+// arrow exists to cover, and a loading animation that starts once loading has
+// finished is a decoration.
+startLoader();
 
 const hasBakedAssets = Boolean(await loadTubbyAssets());
 await loadTorchAssets();
@@ -883,7 +889,13 @@ function frame() {
   if (!running || paused || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
     // or reading the end card - the real world stays behind the panel.
-    if (!showcase.draw(dt, renderer, running)) renderer.render(scene, camera);
+    // The arrow goes when the parade arrives, and not a moment before: the point
+    // is that the screen is never empty, so the two have to overlap rather than
+    // hand over. draw() reports whether it actually put the cast on screen, so
+    // the first true is the frame the splash stops being a black rectangle.
+    const paraded = showcase.draw(dt, renderer, running);
+    if (paraded) stopLoader();
+    else renderer.render(scene, camera);
     return;
   }
   game.elapsed += dt;
