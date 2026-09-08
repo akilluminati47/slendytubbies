@@ -178,8 +178,22 @@
       rgba(46,8,10,1) 100%); }
 
   /* --------------------------------------------------------------- screens */
+  /* Flex with margin:auto on the card, not grid with place-content:center.
+     A centred grid child that is taller than its container overflows off BOTH
+     ends and the top half becomes unreachable - which is exactly what the
+     settings list did on a phone held upright, and what every menu did on one
+     held sideways. margin:auto centres the same way and still lets the
+     overflow be scrolled to.
+
+     Padding takes the larger of a sane margin and the device's own safe area,
+     so nothing sits under a notch or a home indicator. */
   .screen { position:fixed; inset:0; background:#050505; z-index:10;
-    display:grid; place-content:center; text-align:center; gap:26px; padding:40px; }
+    display:flex; text-align:center; overflow:hidden;
+    padding:
+      max(clamp(18px,4.4vw,40px), env(safe-area-inset-top))
+      max(clamp(18px,4.4vw,40px), env(safe-area-inset-right))
+      max(clamp(18px,4.4vw,40px), env(safe-area-inset-bottom))
+      max(clamp(18px,4.4vw,40px), env(safe-area-inset-left)); }
 
   /* Front of house. These three sit over the cast walking past, so they give up
      their solid backdrop; the words move onto a panel of their own instead. */
@@ -206,15 +220,36 @@
   :focus, :focus-visible { outline:none; }
   .field input:focus { border-color:#6d7f63; background:rgba(12,14,11,.9); }
 
-  .card { position:relative; z-index:1; display:grid; gap:26px;
-    justify-items:center; text-align:center;
-    padding:clamp(26px,4.2vw,46px) clamp(24px,4.6vw,54px);
+  .card { position:relative; z-index:1; display:grid; gap:clamp(14px,3.4vw,26px);
+    /* One column that can be NARROWER than its contents.
+       A grid column defaults to auto, which is max-content, so a long line
+       widens the column past the card and takes the items with it - and
+       max-width:100% on an item does not help, because that percentage
+       resolves against the column, which is the thing that grew. minmax(0,1fr)
+       caps the column at the card's content box, and everything wraps inside
+       it instead of hanging off the right edge. */
+    grid-template-columns:minmax(0,1fr);
+    justify-items:center; text-align:center; margin:auto;
+    padding:clamp(18px,4.2vw,46px) clamp(18px,4.6vw,54px);
     max-width:min(580px,92vw);
+    /* Never taller than what is left of the screen, and scrollable when its
+       content wants more. dvh rather than vh: on a phone vh is the height the
+       viewport would be with the browser's chrome hidden, which it usually is
+       not, so a vh-sized panel runs off the bottom under the address bar. */
+    max-height:100%; overflow-y:auto; overscroll-behavior:contain;
+    scrollbar-width:thin;
     border:1px solid rgba(226,220,204,.10); border-radius:20px;
     background:rgba(10,10,13,.44);
     -webkit-backdrop-filter:blur(20px) saturate(118%);
     backdrop-filter:blur(20px) saturate(118%);
     box-shadow:0 30px 80px -34px #000, inset 0 1px 0 rgba(255,255,255,.05); }
+  /* Children cannot be wider than the panel holding them.
+     justify-items:center sizes a grid item to its max-content width, so a line
+     of prose gets exactly as wide as it would like to be and hangs off the side
+     of the card rather than wrapping inside it - which is what the control
+     hints did on a phone, losing a word off the right edge. */
+  .card > * { max-width:100%; min-width:0; }
+
   /* Blur is the nicety, legibility is not: without backdrop-filter the panel
      simply becomes opaque. */
   @supports not (backdrop-filter:blur(1px)) {
@@ -277,8 +312,10 @@
   /* And a little more of its own body, to make up the legibility the lighter
      scrim gives away. */
   #end .card { background:rgba(10,10,13,.58); }
-  #pause { align-content:start; justify-content:center;
-    padding-top:8vh; overflow-y:auto; }
+  /* No padding-top of its own. That 8vh was written when .screen was a grid
+     that centred with place-content; it now fights margin:auto and leaves the
+     panel with sixty-five points above it and twenty-eight below, which reads
+     as a mistake because it is one. */
   #pause .card { max-width:min(560px,94vw); gap:18px; }
   #end .card { min-width:min(360px,88vw); }
 
@@ -328,11 +365,17 @@
   /* The settings list reads as one inset panel rather than a stack of loose
      rows: a slightly darker surface inside the glass, hairlines between the
      rows and none around the outside. */
-  #settings { width:min(470px,88vw); display:grid; gap:0; margin:6px 0 20px;
+  #settings { width:100%; max-width:470px; display:grid; gap:0; margin:4px 0 12px;
     border:1px solid rgba(226,220,204,.09); border-radius:14px;
     background:rgba(0,0,0,.24); overflow:hidden; }
-  .set-row { display:grid; grid-template-columns:1fr auto; align-items:center;
-    gap:14px; padding:13px 16px; border-bottom:1px solid rgba(226,220,204,.07);
+  /* Three columns, because a slider row has three things in it.
+     With two, the readout had nowhere to go on the first line and wrapped onto
+     a second one underneath the label - which is why every slider row was a
+     hundred pixels tall and the settings list did not fit on a phone. A toggle
+     or a choice row has two children and simply leaves the third column empty,
+     which costs nothing because it is auto-sized. */
+  .set-row { display:grid; grid-template-columns:1fr auto auto; align-items:center;
+    gap:14px; padding:11px 16px; border-bottom:1px solid rgba(226,220,204,.07);
     transition:background .16s ease; }
   .set-row:last-child { border-bottom:none; }
   .set-row:hover { background:rgba(226,220,204,.035); }
@@ -373,7 +416,7 @@
   #lobby h2 { margin-bottom:20px; }
   #lobby .card { gap:0; max-width:none; width:min(478px,94vw);
     padding:clamp(22px,3.4vw,32px) clamp(18px,3vw,26px); }
-  #lobby .card > * { justify-self:center; width:min(430px,88vw); }
+  #lobby .card > * { justify-self:center; width:100%; max-width:430px; }
 
   /* A real tab-and-panel pair, not two buttons floating above some fields.
      The selected tab shares the panel's fill and drops its own bottom border so
@@ -484,6 +527,85 @@
     top:clamp(16px,4vh,42px); text-align:center; display:none; }
   @media (max-width:620px) {
     #spectate-banner { top:84px; }
+  }
+
+  /* A phone held upright.
+
+     There is not enough width for a label, a 170-pixel track and a readout on
+     one line - the label ends up seventeen pixels wide and wraps to four lines.
+     So the row breaks the way a phone's own settings do: what it is and what it
+     says on the top line, the track full width underneath. */
+  @media (max-width:560px) {
+    /* Buttons share the width evenly instead of wrapping one onto a line of
+       its own, which looks like something went wrong rather than like a
+       layout. */
+    .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(88px,1fr));
+      gap:10px; width:100%; }
+    .row .btn { width:100%; padding:13px 6px; }
+    .set-row { grid-template-columns:1fr auto; gap:2px 10px; padding:7px 13px; }
+    .set-row input[type=range] { grid-column:1 / -1; grid-row:2; width:100%; }
+    .set-value { grid-column:2; grid-row:1; width:auto; min-width:46px; padding:2px 4px; }
+    .set-label { font-size:11px; }
+    #pause .card { gap:10px; }
+    #settings { margin:2px 0 8px; }
+    #hints { font-size:11px; line-height:1.55; }
+  }
+
+  /* A phone on its side.
+
+     Barely three hundred points of height, most of it spent on padding and
+     line-height at the sizes a desktop wants. Everything tightens and the type
+     starts sizing off the SHORT edge, so a title cannot take a third of the
+     screen on its own. */
+  @media (max-height:560px) and (orientation:landscape) {
+    .card { gap:10px; padding:14px clamp(16px,3vw,28px); border-radius:14px; }
+    h1 { font-size:clamp(22px,7vh,34px); line-height:1.15; }
+    h2 { font-size:clamp(18px,5.5vh,26px); }
+    .sub { font-size:11px; line-height:1.55; }
+    .btn { padding:9px 18px; font-size:13px; }
+    /* Two across instead of stacked: width is the thing there is plenty of. */
+    #mode .card .stack, #pause .row { display:flex; flex-wrap:wrap;
+      gap:8px; justify-content:center; }
+    #lobby .card > * { width:100%; max-width:430px; }
+    /* Two columns. There is no height to spare and plenty of width, and a
+       settings list that scrolls sideways-on is a settings list most people
+       never reach the bottom of. */
+    #pause .card { max-width:min(780px,96vw); }
+    #settings { grid-template-columns:1fr 1fr; max-width:none; margin:2px 0 8px; }
+    .set-row { padding:6px 12px; gap:10px; }
+    .set-row:nth-child(odd) { border-right:1px solid rgba(226,220,204,.07); }
+    .set-row:nth-last-child(-n+2) { border-bottom:none; }
+    .set-row input[type=range] { width:110px; }
+    .set-value { width:44px; }
+    .set-label { font-size:11px; }
+    /* Small enough that four of them stay on one line - wrapped, the VR row
+       was twice the height of every other row on its own. */
+    .set-choices button, .set-toggle { padding:4px 8px; font-size:10px; }
+    .set-choices { flex-wrap:nowrap; }
+    #pause .card { gap:8px; padding:12px 18px; }
+    #pause h2 { font-size:17px; }
+    #hints { font-size:10px; line-height:1.5; }
+  }
+
+  /* A short phone held upright - an older or smaller handset.
+     There is no arrangement that fits six settings rows, a title, the hints and
+     three buttons into six hundred points, so this only buys back what it can
+     and lets the rest scroll. What matters is that the scroll is REACHABLE,
+     which it is now that the panel is capped rather than centred off the top. */
+  @media (max-height:640px) and (orientation:portrait) {
+    #pause .card { gap:8px; padding:12px 14px; }
+    #pause h2 { font-size:17px; }
+    #hints { display:none; }
+    .set-row { padding:6px 11px; }
+    .set-label { font-size:10.5px; }
+  }
+
+  /* Very short indeed - a small phone in landscape with the browser bar up. */
+  @media (max-height:400px) {
+    .card { gap:7px; padding:10px 16px; }
+    h1 { font-size:clamp(19px,8vh,26px); }
+    .sub { font-size:10px; line-height:1.4; }
+    .btn { padding:7px 14px; font-size:12px; }
   }
   body.spectating #spectate-banner { display:block; }
   #spectate-banner h2 { font-family:var(--hand); font-size:clamp(24px,5vw,38px);
@@ -670,7 +792,7 @@
     <p class="sub" id="end-detail"></p>
     <div class="row">
       <button class="btn" id="retry">Try again</button>
-      <button class="btn ghost" id="end-leave">Quit</button>
+      <button class="btn" id="end-leave">Quit</button>
     </div>
     <!-- Under the button it belongs to, so it reads as the reason that button
          is dead rather than as a heading. -->

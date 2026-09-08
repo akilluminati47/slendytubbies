@@ -54,7 +54,8 @@ const CSS = `
   border-radius:50%; pointer-events:none; transition:opacity .2s; }
 .tc-root.using-stick .tc-home { opacity:0; }
 
-.tc-btn { position:absolute; border-radius:50%; pointer-events:none;
+.tc-btn { position:absolute; margin-bottom:env(safe-area-inset-bottom);
+  margin-right:env(safe-area-inset-right); border-radius:50%; pointer-events:none;
   border:1px solid rgba(216,210,196,.32); background:rgba(10,10,10,.46);
   color:#d8d2c4; font:600 11px/1.1 ui-sans-serif,system-ui,sans-serif;
   letter-spacing:.1em; text-transform:uppercase; display:grid;
@@ -66,8 +67,13 @@ const CSS = `
 /* Equal and stacked: with sprint moved onto the stick these are the only two
    actions left, and two identical circles under one thumb beat two different
    shapes in two different places. */
-#tc-jump   { right:24px; bottom:158px; width:92px; height:92px; }
-#tc-torch  { right:24px; bottom:52px;  width:92px; height:92px; }
+/* One column up the right-hand side, all the same size, pause in the corner.
+   It used to sit small in the TOP right, which is the one part of the screen a
+   thumb holding a phone cannot reach, and it was two-thirds the size of the
+   buttons either side of it. Bottom right is where the hand already is. */
+#tc-pause  { right:24px; bottom:52px;  width:92px; height:92px; }
+#tc-torch  { right:24px; bottom:158px; width:92px; height:92px; }
+#tc-jump   { right:24px; bottom:264px; width:92px; height:92px; }
 .tc-btn svg { width:38px; height:38px; stroke:currentColor; stroke-width:1.7;
   fill:none; stroke-linecap:round; stroke-linejoin:round; }
 /* The torch is several strokes and reads heavy; a single-stroke arrow next to it
@@ -76,12 +82,31 @@ const CSS = `
 .tc-btn.held svg { stroke:#fff; }
 #tc-torch.lit { border-color:rgba(255,240,207,.7); color:#fff0cf;
   box-shadow:0 0 20px rgba(255,240,207,.25); }
-#tc-pause  { right:18px; top:18px; width:52px; height:52px; font-size:15px; bottom:auto; }
+/* Weights, per icon rather than one for all three.
+   The jump arrow is a big open shape and reads heavy at the shared weight -
+   thinning it lets the button be a button rather than a sign. Pause is two
+   short bars with nothing else in the frame, so at the same weight it looks
+   faint; it wants to be the solid one. */
+#tc-jump svg  { stroke-width:1.25; }
+#tc-pause svg { stroke-width:3.4; stroke-linecap:round; }
+
+/* A phone on its side has barely enough height for three of these stacked, so
+   they shrink and close up rather than running off the top of the screen. */
+@media (max-height:560px) and (orientation:landscape) {
+  #tc-pause  { right:18px; bottom:16px;  width:70px; height:70px; }
+  #tc-torch  { right:18px; bottom:98px;  width:70px; height:70px; }
+  #tc-jump   { right:18px; bottom:180px; width:70px; height:70px; }
+  .tc-btn svg { width:30px; height:30px; }
+  .tc-home { left:84px; bottom:84px; width:104px; height:104px; }
+  .tc-stick { width:112px; height:112px; margin:-56px 0 0 -56px; }
+}
 `;
 
 export class TouchSource {
   constructor(root = document.body) {
     this.enabled = false;
+    /** Is a round actually being played - see setInGame and #activate. */
+    this.inGame = false;
     this.pointers = new Map();       // pointerId -> { role, ... }
     this.moveVec = { x: 0, y: 0 };
     this.lookDelta = { x: 0, y: 0 };
@@ -117,7 +142,9 @@ export class TouchSource {
           <path d="M14.8 5.7 16.3 3.4"/>
         </svg>
       </button>
-      <button class="tc-btn" id="tc-pause">II</button>`;
+      <button class="tc-btn" id="tc-pause" aria-label="Pause">
+        <svg viewBox="0 0 24 24"><path d="M9.5 5.5v13"/><path d="M14.5 5.5v13"/></svg>
+      </button>`;
     root.appendChild(this.el);
 
     this.stickEl = this.el.querySelector("#tc-stick");
@@ -161,7 +188,16 @@ export class TouchSource {
   #activate() {
     if (this.enabled) return;
     this.enabled = true;
-    this.el.classList.add("on");
+    // Enabled is not the same as SHOWN.
+    //
+    // The first touch tells us this is a phone, and that is worth knowing
+    // straight away - it is what picks the touch control hints and moves the
+    // HUD in from the notch. But the pad itself belongs to a round: put up on
+    // the first touch, it sits over the title screen with a jump button on top
+    // of the buttons somebody is trying to press. So it shows only when both
+    // are true, and if the round started before the first touch it catches up
+    // here rather than waiting for the next one.
+    this.el.classList.toggle("on", this.inGame);
     document.body.classList.add("touch");
     dispatchEvent(new CustomEvent("touchui", { detail: { on: true } }));
   }
@@ -285,6 +321,7 @@ export class TouchSource {
 
   /** Hide the pad while a menu is up; it would sit over the buttons. */
   setInGame(on) {
+    this.inGame = on;
     if (!this.enabled) return;
     this.el.classList.toggle("on", on);
   }

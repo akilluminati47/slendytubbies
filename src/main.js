@@ -617,10 +617,30 @@ function leaveToMenu() {
   game.elapsed = 0;
   netWorld = null;
   document.exitPointerLock?.();
+  // The thumb pad belongs to a round. Left up, it sits over the menu it just
+  // returned to, with a jump button on top of the buttons you need.
+  input.touch.setInGame(false);
   $("dread").style.opacity = 0;
   setDrain(0);
   ui.show("mode");
 }
+
+/**
+ * Losing focus pauses the round.
+ *
+ * Alt-tabbing, taking a call, or switching apps used to leave the game running
+ * with a monster walking towards a player who is not there - and coming back to
+ * the end card is a poor way to find out. pause() already refuses when there is
+ * nothing to pause, so both of these can fire freely.
+ *
+ * Both events, because they are not the same one: a phone backgrounding the tab
+ * fires visibilitychange and may never fire blur, and a desktop window losing
+ * focus to another window fires blur while staying perfectly visible.
+ */
+addEventListener("blur", () => pause());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pause();
+});
 
 function restartRound(seed) {
   scare = null;
