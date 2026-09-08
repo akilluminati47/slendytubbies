@@ -48,6 +48,23 @@ export const CFG = {
     // real way to keep running, paid for in noise (CFG.noise.jump) rather than
     // in time.
     jumpStamina: 0.6,
+    // --- going over ---------------------------------------------------------
+    // Now and then the hop does not happen. A crouch, a shake, no launch, and
+    // a bite out of the bar instead of a tenth of it back - so the one thing
+    // that makes bunny-hopping free occasionally costs instead, and the rhythm
+    // of it can break without you having done anything wrong.
+    //
+    // Rare on purpose. A jump that failed one time in ten would be a control
+    // that does not work; one in thirty is a thing that happens to you.
+    stumbleChance: 1 / 30,
+    // Sprinting over a fallen branch is far likelier, because that is a reason
+    // rather than clumsiness - and it makes the deadwood on the floor something
+    // to read rather than scenery. Walking over one is always fine.
+    branchTripChance: 0.10,
+    // Seconds of sprint lost, and the gauge reads 0-100 over staminaMax, so
+    // this is the five points the bar visibly drops by.
+    stumbleCost: 0.3,
+    stumbleTime: 0.5,     // how long the crouch and the shake take to recover
     // Head bob. Deliberately subtle: it should register as weight underfoot,
     // never as something you notice or have to look past.
     bobWalk: 0.016,       // metres of vertical travel while walking
@@ -96,14 +113,24 @@ export const CFG = {
     // of than one gliding.
     strides: [0.45, 0.8, 1.9],
     strideHold: [5, 13],  // seconds on one stride before rolling another
-    // Above this, play the run rather than the walk. Between the walk's 1.05
-    // ceiling and the run's 1.78 floor there is a band neither clip covers
-    // cleanly; this sits in the middle of it.
-    runAbove: 1.4,
     investigateSpeed: 2.2,
-    chaseSpeed: 4.6,      // under player sprint of 6 - you can outrun it
-    fleeSpeed: 11.0,      // bolts when someone takes a dish - far faster than you
-    fleeTime: 3.4,        // seconds of running before it settles back to hunting
+    // Under the player's sprint of 6, so you can outrun it - and that is a
+    // gameplay contract, not a look, which is why it is the one speed here
+    // allowed to exceed what the run clip carries. The clip travels 1.40 m/s a
+    // cycle and stops at 2.45x playback, so it holds the ground to 3.44; a
+    // chase at 4.6 slides the feet about 25%. Accepted deliberately: the
+    // alternative is a monster that cannot catch anybody.
+    chaseSpeed: 4.6,
+    // Bolts when someone takes a dish. This is the ceiling of what a body here
+    // can do - the run clip holds the ground to 3.44 m/s - and Tubby.update
+    // clamps to whatever that character's own clip measures, so the number can
+    // only ever be met, never faked. It was 11, three times over, which did not
+    // read as speed: it read as a model being dragged with its legs spinning.
+    fleeSpeed: 3.4,
+    // Longer, because it is covering ground at a third of the old rate. It used
+    // to clear 37 m before settling and now clears 19 - still past the 26 m it
+    // can see from where it started, and deep enough into the fog to vanish.
+    fleeTime: 5.6,        // seconds of running before it settles back to hunting
     turnRate: 3.2,        // rad/s
     fleeTurnRate: 6.5,    // it whips round to face away much faster than it hunts
     sightRange: 26,

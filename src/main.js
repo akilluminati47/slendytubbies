@@ -865,6 +865,7 @@ function frame() {
   player.update(dt);
   if (!wasGrounded && player.grounded) audio.land();
   if (player.jumped) audio.jumpStep();
+  if (player.stumbled) audio.stumble();
   if (player.clicked) audio.torchClick(torchFor(myRole));
 
   // Footsteps, paced by distance rather than by time.

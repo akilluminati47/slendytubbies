@@ -19,7 +19,8 @@ export class Tubby {
     // Its feet follow the heightfield rather than a flat floor: see
     // #standOnGround in tubbyModel.
     this.model.groundAt = heightAt;
-    // It keeps its uneven kick. On the thing hunting you a limp is character.
+    // Set per clip in update(): a limp while it walks, square feet while it
+    // runs. See there.
     this.model.squareFeet = 0;
     this.kind = kind;
     this.root = this.model.root;
@@ -183,10 +184,30 @@ export class Tubby {
         break;
     }
 
-    const speed = {
+    // What this state wants to travel at, and then what its legs will actually
+    // carry. The clips are the hard limit: the run travels 2.12 m/s per cycle
+    // and will not play past 2.45x, so 5.2 m/s is the fastest this body can
+    // move while its feet still hold the ground. Asking for more does not make
+    // it faster-looking, it makes it a body flying along with its legs cycling
+    // underneath - and flee, at 11, asked for more than twice the limit.
+    //
+    // Clamped here rather than trusted to config, because it is measured off
+    // the clips this particular character was baked with - Tinky Winky's run is
+    // a shade longer than everyone else's - and because a config edit should
+    // not be able to reintroduce the skate silently.
+    const wanted = {
       patrol: this.stride, investigate: T.investigateSpeed,
       chase: T.chaseSpeed, flee: T.fleeSpeed,
     }[this.state];
+    // Bolting is pure theatre, so it is held to what the legs can carry.
+    // Chasing is not: 4.6 is a contract with the player's 6.0 sprint - it has to
+    // be losable and not by much - and holding it to the clip would quietly
+    // make the monster uncatchable-by and the game unloseable. So the chase is
+    // the one place a body is allowed to outrun its own feet, knowingly, and
+    // pays about 25% foot slide for it. See CFG.tubby.chaseSpeed.
+    const speed = this.state === "flee"
+      ? Math.min(wanted, this.model.topSpeed?.() ?? Infinity)
+      : wanted;
     // It whips round when it has just been startled and when bolting; it swings
     // round the rest of the time.
     const turn = fleeing || this.alignLeft > 0 ? T.fleeTurnRate : T.turnRate;
@@ -234,16 +255,20 @@ export class Tubby {
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
     // The clip is chosen by how fast it is actually travelling, not by which
-    // state it is in.
+    // state it is in - a chase that has been pinned flat against a trunk is
+    // standing still, whatever the state machine believes.
     //
-    // A clip only carries speed/own inside the 0.82x-2.45x playback clamp, so
-    // the walk (0.429 m/s native) tops out at 1.05 - and investigate has always
-    // run at 2.2 on the walk clip, which is a five-fold skate nobody had put a
-    // number to. Anything above runAbove now takes the run instead, which fixes
-    // that and lets the brisk patrol stride be a jog rather than a glide.
-    this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
-      : this.speedNow > T.runAbove ? "chase"
-      : this.speedNow > 0.15 ? "walk" : "idle");
+    // Which clip that is comes from the model rather than from a threshold kept
+    // here. gaitFor knows what each band covers because the bake measured it;
+    // the crossover it picks lands within a couple of centimetres a second of
+    // the runAbove constant this replaces, and cannot drift away from the clips
+    // the way a hand-written number can.
+    const clip = this.speedNow <= 0.15 ? "idle" : this.model.gaitFor(this.speedNow).clip;
+    // It keeps its uneven kick while it walks - on the thing hunting you a limp
+    // is character - but not while it runs, where unsquared feet stop reading
+    // as a limp and start flaring out sideways on every stride.
+    this.model.squareFeet = clip === "walk" ? 0 : 1;
+    this.model.play(clip);
     this.model.update(dt, this.speedNow);
 
     return this.takes(player) ? "kill" : null;
@@ -403,10 +428,12 @@ export class Tubby {
     this.root.position.set(this.pos.x, heightAt(this.pos.x, this.pos.z), this.pos.z);
     this.root.rotation.y = this.facing;
     // Same rule the host runs: the clip follows the speed, not the state.
-    this.model.play(this.state === "chase" || this.state === "flee" ? "chase"
-      : this.speedNow > T.runAbove ? "chase"
-      : this.speedNow <= 0.15 ? "idle" : "walk");
-    this.model.update(dt, this.state === "chase" ? T.chaseSpeed : this.speedNow);
+    const shown = Math.min(this.state === "chase" ? T.chaseSpeed : this.speedNow,
+                           this.model.topSpeed?.() ?? Infinity);
+    const clip = shown <= 0.15 ? "idle" : this.model.gaitFor(shown).clip;
+    this.model.squareFeet = clip === "walk" ? 0 : 1;
+    this.model.play(clip);
+    this.model.update(dt, shown);
   }
 
   /** Take it out of the scene, for a round that is ending without a reload. */

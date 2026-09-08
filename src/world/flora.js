@@ -491,6 +491,15 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
       age: rand(),
     });
   }
+  // Where they ended up, in one flat array of [x, z, reach] triples.
+  //
+  // The instanced meshes keep their own matrices and nothing can read a
+  // position back out of them cheaply, so the only record of where a stick
+  // lies would otherwise be discarded the moment it is drawn - and something
+  // does want to know: sprinting over one is a chance to go down. Reach is the
+  // stick's half-length plus a little, in metres, so the test is against the
+  // wood rather than against a point in the middle of it.
+  const spots = [];
   let limbCount = 0;
   BRANCH_KINDS.forEach((kind, ki) => {
     const list = limbBuckets[ki];
@@ -505,6 +514,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
       // Deadwood: greyer than the tree it fell off, and greyer the longer it
       // has been lying there.
       mesh.setColorAt(i, _c.setHSL(0.08, 0.12 - b.age * 0.08, 0.07 + b.age * 0.05));
+      spots.push(b.x, b.z, b.len * 0.5 + 0.22);
     });
     mesh.name = "flora:deadwood:" + kind;
     mesh.castShadow = true;
@@ -514,6 +524,7 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
     limbCount += list.length;
   });
   built.branches = limbCount;
+  built.branchSpots = new Float32Array(spots);
 
   // --- grass -------------------------------------------------------------
   const grass = sowGrass(scene, {

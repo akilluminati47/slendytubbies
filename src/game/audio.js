@@ -275,6 +275,22 @@ export class Audio {
     this.#scuff(t, { peak: 0.10, dur: 0.11, hz: 2100 });
   }
 
+  /**
+   * Catching a foot.
+   *
+   * Two scuffs and a soft thump, in that order: the drag comes before the
+   * weight lands on it. Deliberately not the landing sound - a landing is one
+   * clean event and this is a mess, so the parts are the same and the timing
+   * is not, which is how you tell them apart without being told.
+   */
+  stumble() {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    this.#scuff(t, { peak: 0.13, dur: 0.16, hz: 900, q: 0.5 });
+    this.#scuff(t + 0.075, { peak: 0.08, dur: 0.11, hz: 1500 });
+    this.#thump(t + 0.11, 88, 0.13, 0.16, this.nodes.master);
+  }
+
   land() {
     if (!this.ready) return;
     const t = this.ctx.currentTime;

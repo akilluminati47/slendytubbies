@@ -24,6 +24,11 @@ export class Player {
     this.battery = CFG.player.batteryMax;
     this.torchOn = true;
     this.jumped = false;    // one-frame flags, read by main's audio
+    this.stumbled = false;
+    // Seconds left of a trip, and which branch we are standing on so that
+    // crossing one fires once rather than every frame we are over it.
+    this.stumble = 0;
+    this.onBranch = -1;
     this.clicked = false;
     this.noise = 0;        // metres of hearing radius this frame
     this.bob = 0;
@@ -146,13 +151,31 @@ export class Player {
   }
 
   get sprinting() {
-    return this.input.intent.sprint && this.stamina > 0.05 && this.vel.lengthSq() > 0.5;
+    // Not while going over. Recovering your feet is the cost of the trip, and
+    // being able to sprint straight through one would make it scenery.
+    return this.input.intent.sprint && this.stumble <= 0
+      && this.stamina > 0.05 && this.vel.lengthSq() > 0.5;
+  }
+
+  /**
+   * Go over: no launch, a crouch, a shake, and a bite out of the bar.
+   *
+   * The noise is the landing's rather than the jump's. You did not leave the
+   * ground, so announcing yourself as though you had would be a lie - but
+   * catching a foot and stumbling is not silent either.
+   */
+  #trip() {
+    this.stumble = CFG.player.stumbleTime;
+    this.stamina = Math.max(0, this.stamina - CFG.player.stumbleCost);
+    this.noiseBurst = Math.max(this.noiseBurst, CFG.noise.land);
+    this.stumbled = true;
   }
 
   update(dt) {
     if (!this.alive) return;
     const intent = this.input.intent;
     this.jumped = false;
+    this.stumbled = false;
 
     const wasLit = this.torchOn;
     if (intent.torch && this.battery > 0) this.torchOn = !this.torchOn;
@@ -172,7 +195,14 @@ export class Player {
     // Coyote time: still jumpable for a moment after walking off a lip. Without
     // it, uneven terrain eats inputs and the jump feels broken rather than strict.
     this.sinceGrounded = this.grounded ? 0 : this.sinceGrounded + dt;
-    if (intent.jump && (this.grounded || this.sinceGrounded < CFG.player.coyoteTime)) {
+    this.stumble = Math.max(0, this.stumble - dt);
+    const canJump = intent.jump && this.stumble <= 0
+      && (this.grounded || this.sinceGrounded < CFG.player.coyoteTime);
+    if (canJump && Math.random() < CFG.player.stumbleChance) {
+      // The hop that did not happen. It consumes the input rather than
+      // deferring it, so this is a missed jump and not one that fires late.
+      this.#trip();
+    } else if (canJump) {
       this.vy = CFG.player.jumpSpeed;
       this.grounded = false;
       this.sinceGrounded = CFG.player.coyoteTime;   // no double jump
@@ -222,6 +252,17 @@ export class Player {
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     this.world.resolve(this.pos, CFG.player.radius);
+
+    // --- what is underfoot ----------------------------------------------
+    // Asked after the collision pass, against where we ended up rather than
+    // where we aimed. Crossing onto a stick fires once: standing on one and
+    // turning round on the spot is not tripping over it twice.
+    const was = this.onBranch;
+    this.onBranch = this.grounded ? this.world.branchUnder(this.pos.x, this.pos.z) : -1;
+    if (this.onBranch >= 0 && this.onBranch !== was && sprint && this.stumble <= 0
+        && Math.random() < CFG.player.branchTripChance) {
+      this.#trip();
+    }
 
     const speed = Math.hypot(this.vel.x, this.vel.z);
     if (sprint) this.stamina = Math.max(0, this.stamina - dt);
@@ -304,11 +345,28 @@ export class Player {
       // facing.
       const bobY = Math.sin(this.bob) * this.bobAmount;
       const bobX = Math.sin(this.bob * 0.5) * this.bobAmount * CFG.player.bobSway;
-      const roll = Math.sin(this.bob * 0.5) * CFG.player.bobRoll *
+      let roll = Math.sin(this.bob * 0.5) * CFG.player.bobRoll *
         (this.bobAmount / Math.max(CFG.player.bobSprint, 1e-6));
+
+      // Going over: drop, wobble, come back up.
+      //
+      // The dip is raised to a power under one so it arrives almost at once and
+      // recovers slowly, which is the shape of catching your own weight - a
+      // symmetrical bounce would read as a deliberate crouch. The shake is a
+      // fast wobble that dies with it, and it is a ROLL rather than a shove:
+      // moving the camera sideways during a trip makes it look as though
+      // something hit you.
+      let dip = 0;
+      if (this.stumble > 0) {
+        const p = 1 - this.stumble / CFG.player.stumbleTime;
+        const fade = 1 - p;
+        dip = Math.sin(Math.PI * Math.pow(p, 0.42)) * 0.15;
+        roll += Math.sin(p * 41) * 0.035 * fade * fade;
+      }
+
       this.cam.position.set(
         bobX * Math.cos(this.input.yaw),
-        CFG.player.height + bobY,
+        CFG.player.height + bobY - dip,
         -bobX * Math.sin(this.input.yaw));
       this.cam.rotation.set(this.input.pitch, this.input.yaw, roll, "YXZ");
     }

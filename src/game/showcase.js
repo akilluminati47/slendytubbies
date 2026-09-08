@@ -46,7 +46,7 @@ const LANE = {
   // things is a tubby appearing. Starting them far enough back that they are
   // genuinely invisible costs nothing when there are four more in front, and
   // the procession is the thing you see instead of the arrival.
-  spacing: 7.5,
+  spacing: 6.0,
   // Room for the chaser to close in, and MORE of it the faster it rolled. The
   // fast laps are the ones where it should start out of sight behind the group
   // and be visibly gaining by the time it reaches the lens; giving it the same
@@ -57,7 +57,7 @@ const LANE = {
   // has to actually END - an empty stage for a moment - before it can read as
   // having begun again, and at thirteen metres the Guardian was already walking
   // out of the dark while the chaser was still in frame.
-  gap: 32.0,
+  gap: 26.0,
   // Nobody walks through anybody. Only the chaser moves at a different speed,
   // so in practice this is the leash that stops it overtaking the group - and
   // a monster that closes on them and then follows them past is a better thing
@@ -71,8 +71,13 @@ const LANE = {
   // Nothing in between, because nothing in between can be ANIMATED - see
   // #carry. A prowl that is secretly a run played at half rate is a monster
   // gliding, which is the thing this was supposed to stop.
-  chaserProwl: [0.62, 0.88],
-  chaserRun: [1.95, 3.05],
+  // The prowl sits near the top of what the walk clip carries and the party
+  // walks at 0.66, so an ambling lap is one it spends slowly gaining - enough
+  // to be inside their panic distance by the time it reaches the lens.
+  chaserProwl: [0.74, 0.90],
+  // And the run sits above anything the party can run at, so a fast lap closes
+  // on them even once they break.
+  chaserRun: [2.6, 3.2],
   chaserRuns: 0.45,        // how often it picks the run
   // Half-extents of the patch worth sowing. Only what the 40 degree lens can
   // see from z=0 through 19 m of fog is ever drawn, so sowing the whole 60 m
@@ -80,24 +85,33 @@ const LANE = {
   grassArea: { x: 13, z: 15 },
   // What a walk actually is.
   //
-  // This was 1.9, and the walk clip covers 0.419 m/s of ground per cycle and
-  // will only play back between 0.82x and 2.45x - so it carries 0.34 to 1.03
-  // and 1.9 was almost twice the top of that. The clip got pinned at its limit
-  // and every one of them slid across the field with their feet turning over
-  // half as fast as the ground went by. Nothing here is allowed to outrun the
-  // animation any more; see #carry.
-  speed: 0.80,
+  // Every number in this block is a speed one of the two clips can actually
+  // carry, and they are ALL smaller than they were, because the clips turned
+  // out to be slower than the bake believed: the walk covers 0.39 m/s of ground
+  // per cycle and the run 1.37, and neither will play back outside 0.82x to
+  // 2.45x. So the walk carries 0.32 to 0.96 and the run 1.13 to 3.36, and the
+  // two now very nearly touch. Nothing here may outrun its own feet; see
+  // #carry.
+  speed: 0.66,
   // How much of that speed each walker is allowed to differ by, and how far
   // off their own lane they drift, per lap. The stagger, in other words.
   pace: 0.16,
   wander: 0.7,
-  // Running, once the thing behind them is close enough to be a reason. Inside
-  // what the chase clip carries, and above anything the chaser prowls at.
-  runSpeed: [2.35, 3.15],
+  // Running, once the thing behind them is close enough to be a reason.
+  //
+  // Three and a half to four and a half times the walking pace, which lands the
+  // run clip at 1.7x to 2.1x - fast, and still short of the ceiling, where the
+  // legs blur and the head starts whipping about.
+  runSpeed: [2.3, 2.9],
   // How near the chaser has to get before they run, and how much further it
   // has to fall behind before they stop.
   panic: 10.0,
   calm: 6.0,
+  // Panic travels forward up the line as well. Somebody sprinting up behind you
+  // is its own reason to move, and without this the front of the queue keeps
+  // strolling while the back piles into it at four metres a second - which is
+  // a traffic jam, not a parade.
+  contagion: 9.0,
   // Beyond this the fog has them completely, which is where two of them can
   // change places without anybody seeing it happen.
   hidden: -28.0,
@@ -378,34 +392,30 @@ export class Showcase {
   /**
    * A speed the clips can actually carry, and the clip that carries it.
    *
-   * Every clip travels a known distance per cycle - the bake measured it off a
-   * planted foot - and three will only play one back between 0.82x and 2.45x
-   * before it stops reading as that motion at all. So each clip covers a BAND
-   * of speeds and nothing else, and the two bands do not touch: the walk
-   * carries about 0.4 to 0.9 m/s, the run about 1.8 to 4.0, and there is a gap
-   * between them that no clip can animate.
-   *
-   * Asking for a speed inside that gap used to give you the walk pinned at its
-   * limit with the body sailing past it. This snaps the request to the nearest
-   * edge it can honour instead, and hands back the clip to play with it - so a
-   * body and its feet always agree, and the only cost is that a wanted speed is
-   * sometimes a little different from the speed you get.
+   * The parade and the game have to agree about this or the menu is animating
+   * by different rules from the thing it advertises, so the answer lives on the
+   * model - see TubbyModel.gaitFor - and this is only the local name for it.
    */
   #carry(model, want) {
-    const of = (name) => model.byState?.get(name)?.userData?.groundSpeed ?? 0;
-    const walk = of("walk") || 0.42;
-    const chase = of("chase") || 2.12;
-    const bands = [
-      ["walk", walk * 1.0, walk * 2.2],
-      ["chase", chase * 0.85, chase * 1.9],
-    ];
-    let best = null;
-    for (const [clip, lo, hi] of bands) {
-      const speed = THREE.MathUtils.clamp(want, lo, hi);
-      const miss = Math.abs(speed - want);
-      if (!best || miss < best.miss) best = { clip, speed, miss };
-    }
-    return best;
+    return model.gaitFor(want);
+  }
+
+  /**
+   * Put a walker into a gait, with the two things that go with it.
+   *
+   * Feet are squared to the direction of travel for everybody EXCEPT the chaser
+   * walking, which keeps the uneven kick its walk cycle was animated with: that
+   * limp is most of what makes it read as the wrong one from a distance. Its
+   * RUN was getting the same exemption and should not have been. At speed the
+   * unsquared feet flare out sideways on every stride, which is not a limp, it
+   * is a model coming apart.
+   *
+   * And where two clips travel at the same speed, walkers take one each, so a
+   * line of five is not one cycle drawn five times.
+   */
+  #wear(walker, clip, fade) {
+    walker.model.squareFeet = walker.kind === "tinkywinky" && clip === "walk" ? 0 : 1;
+    walker.model.play(walker.varied ? walker.model.variantFor(clip) : clip, fade);
   }
 
   /**
@@ -429,9 +439,9 @@ export class Showcase {
 
   #enter(walker) {
     walker.model.root.visible = true;
-    // The chaser keeps its uneven kick; everybody else walks squarely.
-    walker.model.squareFeet = walker.kind === "tinkywinky" ? 0 : 1;
     walker.running = false;
+    // Half the party takes the second walk cycle, rolled per lap.
+    walker.varied = Math.random() < 0.5;
 
     let want;
     if (walker.kind === "tinkywinky") {
@@ -448,7 +458,7 @@ export class Showcase {
     }
     const gait = this.#carry(walker.model, want);
     walker.speed = gait.speed;
-    walker.model.play(gait.clip, 0);
+    this.#wear(walker, gait.clip, 0);
     // Somewhere else in the cycle, so nobody is in step with anybody.
     walker.model.mixer.setTime(Math.random() * 4);
     // And not walking a perfectly straight line down their own lane - except
@@ -582,12 +592,21 @@ export class Showcase {
     //
     // Hysteresis on the way out, or somebody sitting exactly at the threshold
     // flickers between the two clips forever.
+    // Walked from the BACK of the line forward, so a body that starts running
+    // this frame is already running when the one ahead of it is asked whether
+    // anybody behind it is. That is what lets a panic travel up the queue in
+    // one pass instead of one walker a frame.
     const chaser = this.walkers.find((w) => w.kind === "tinkywinky");
-    for (const w of this.walkers) {
-      if (w === chaser || !chaser) continue;
-      const ahead = w.z - chaser.z;
-      const scared = ahead > 0
-        && ahead < LANE.panic + (w.running ? LANE.calm : 0);
+    const line = this.walkers.filter((w) => w !== chaser).sort((a, b) => a.z - b.z);
+    let behind = null;
+    for (const w of line) {
+      const ahead = chaser ? w.z - chaser.z : Infinity;
+      // Two reasons to run, and they get the same hysteresis: the thing itself
+      // is close, or the one behind you is running and closing on your heels.
+      const slack = w.running ? LANE.calm : 0;
+      const scared = (chaser && ahead > 0 && ahead < LANE.panic + slack)
+        || (!!behind?.running && w.z - behind.z < LANE.contagion + slack);
+      behind = w;
       if (scared === !!w.running) continue;
       w.running = scared;
       const want = scared
@@ -597,7 +616,7 @@ export class Showcase {
       // moment a body is most likely to outrun its own feet.
       const gait = this.#carry(w.model, want);
       w.speed = gait.speed;
-      w.model.play(gait.clip, scared ? 0.3 : 0.45);
+      this.#wear(w, gait.clip, scared ? 0.3 : 0.45);
     }
 
     // And two of the party change places, out where the fog has them.

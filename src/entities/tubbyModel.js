@@ -136,6 +136,35 @@ let rigCache = null;
  * on the Rigify one - so the Tinky Winky names lead, being specific enough that
  * they cannot collide with anything in the other donor's 56.
  */
+/**
+ * How far a clip may be pushed from the speed it was animated at.
+ *
+ * Below the floor the motion turns to treacle; above the ceiling the legs blur
+ * and stop reading as legs. Between them the clip still looks like itself, so
+ * these two numbers are the whole of what the animation can do - and since a
+ * clip travels a known distance per cycle, they turn straight into a band of
+ * ground speeds it can carry honestly. Everything that picks a speed for a body
+ * goes through carries()/gaitFor() rather than guessing at these.
+ */
+export const RATE = { min: 0.82, max: 2.45 };
+
+/**
+ * How much of the clip's own head swing to take back out, 0 to 1.
+ *
+ * The donor animates a big roll of the head into both cycles, and these clips
+ * play at up to twice the rate it was made at.
+ */
+const HEAD_CALM = 0.38;
+
+/**
+ * The clips a body can travel on, slowest first. Idle is not travel.
+ *
+ * "stride" is deliberately absent: it carries the same speed as "walk" to
+ * within a percent, so offering it here would only make gaitFor toss a coin
+ * between two identical bands. It is a costume, not a gear - see variantFor.
+ */
+const GAITS = ["walk", "chase"];
+
 const CLIP_FOR = {
   // IDLE_POSE, not IDLE_LOOKAROUND: the lookaround leaves the chaser's head
   // cranked to one side at t=0, so it stood in the menu parade facing sideways.
@@ -143,6 +172,14 @@ const CLIP_FOR = {
   walk:        ["tinky_walking", "walk_main", "walk1", "_walk", "walk"],
   investigate: ["tinky_walking", "walk_main", "walk1", "_walk", "walk"],
   chase:       ["tinky_running_armed", "run_main", "run1", "_run", "run"],
+  // A second walk, at the same speed as the first. Not a wider gait - it was
+  // baked to find out whether it was one, and it is within 1% - but a different
+  // animation, which is worth having when five bodies walk past the lens in a
+  // line. See variantFor. The donor's only other travelling clip is a three
+  // second running ATTACK, which measured at 0.18 m/s because it is a lunge and
+  // not a loop: there is exactly one running cycle in this donor, and no amount
+  // of naming it differently would make a second one.
+  stride:      ["tinky_walking_armed", "walk_main_2", "walk2"],
   flee:        ["tinky_running_armed", "run_main", "run1", "_run", "run"],
   attack:      ["axe_hit1", "axe_hit", "attack1", "attack"],
   death:       ["_death", "death", "ragdoll", "trap_caught_left"],
@@ -1127,6 +1164,9 @@ class RiggedTubby {
     this.inner.traverse((o) => {
       if (!this.headBone && o.isBone && /^head[_ ]/i.test(o.name)) this.headBone = o;
     });
+    // Where the head sits when nothing is driving it, kept so the clip's own
+    // head swing can be damped back towards it. See HEAD_CALM.
+    this.headRest = this.headBone?.quaternion.clone() ?? null;
 
     this.mixer = new THREE.AnimationMixer(mine.target);
     this.byState = mine.byState;
@@ -1222,7 +1262,20 @@ class RiggedTubby {
    */
   #turnHead() {
     const bone = this.headBone;
-    if (!bone || (!this.lookYaw && !this.lookPitch)) return;
+    if (!bone) return;
+
+    // Take some of the clip's own head swing out first.
+    //
+    // These cycles roll the head a long way. On the donor, played at its own
+    // rate, that is fine; here they run at up to twice rate and the head starts
+    // whipping about, and five of them doing it in a line reads as a row of
+    // bobbleheads. Damping towards the rest pose scales the whole motion down
+    // rather than clamping it, so its timing and direction survive and only the
+    // amount changes.
+    if (this.headRest && HEAD_CALM > 0) {
+      bone.quaternion.slerp(this.headRest, HEAD_CALM);
+    }
+    if (!this.lookYaw && !this.lookPitch) return;
 
     // The model faces +Z at yaw 0, so a body at yaw t faces (sin t, 0, cos t)
     // and its right hand points along (-cos t, 0, sin t).
@@ -1293,6 +1346,65 @@ class RiggedTubby {
     }
   }
 
+  /**
+   * The band of ground speeds a clip can carry, in metres a second.
+   *
+   * The bake measured what each clip travels at off its own planted foot, so
+   * this is a measurement scaled by a limit rather than a guess: the walk
+   * carries about 0.34 to 1.03, the run about 1.74 to 5.20, and the gap between
+   * them is real - no clip here covers it, and pretending otherwise is what
+   * skating is.
+   */
+  carries(name) {
+    const own = this.byState.get(name)?.userData?.groundSpeed ?? 0;
+    return own > 0.05 ? [own * RATE.min, own * RATE.max] : [0, 0];
+  }
+
+  /** The fastest this body can travel without its feet lying about it. */
+  topSpeed() {
+    let top = 0;
+    for (const name of GAITS) top = Math.max(top, this.carries(name)[1]);
+    return top || Infinity;
+  }
+
+  /**
+   * A speed the clips can actually carry, and the clip that carries it.
+   *
+   * Snaps a wanted speed to the nearest edge of the nearest band it can be
+   * animated at, and hands back the clip to play with it - so a body and its
+   * feet always agree. The only cost is that a wanted speed is sometimes a
+   * little different from the speed you get, which is the honest trade: the
+   * alternative is the speed you asked for and feet that do not match it.
+   */
+  gaitFor(want) {
+    let best = null;
+    for (const name of GAITS) {
+      const [lo, hi] = this.carries(name);
+      if (hi <= 0) continue;
+      const speed = THREE.MathUtils.clamp(want, lo, hi);
+      const miss = Math.abs(speed - want);
+      if (!best || miss < best.miss) best = { clip: name, speed, miss };
+    }
+    return best ?? { clip: "walk", speed: want, miss: 0 };
+  }
+
+  /**
+   * Another clip that travels at the same speed as this one, or the same one.
+   *
+   * For when several of these walk past together and the eye starts reading the
+   * shared cycle rather than the characters. Only ever offers a swap gaitFor
+   * would have been equally happy with, so taking it cannot reintroduce a
+   * mismatch between a body and its feet.
+   */
+  variantFor(name) {
+    if (name !== "walk") return name;
+    const alt = this.byState.get("stride");
+    if (!alt) return name;
+    const own = this.byState.get("walk")?.userData?.groundSpeed ?? 0;
+    const other = alt.userData?.groundSpeed ?? 0;
+    return own > 0 && Math.abs(other - own) / own < 0.06 ? "stride" : name;
+  }
+
   play(name, fade = 0.25) {
     if (this.currentName === name) return;
     const clip = this.byState.get(name);
@@ -1315,10 +1427,11 @@ class RiggedTubby {
     const own = this.current?.getClip?.().userData?.groundSpeed ?? 0;
     this.mixer.timeScale = this.currentName === "idle" || own <= 0.05
       ? 1
-      // Floor it well short of slow motion. A run clip played at much under
-              // this stops reading as a run at all, and a little foot slide is a
-              // cheaper lie than a monster wading towards you through treacle.
-              : THREE.MathUtils.clamp(speed / own, 0.82, 2.45);
+      // Floor it well short of slow motion, and cap it well short of a blur.
+      // A run clip played at much under the floor stops reading as a run at
+      // all, and a little foot slide is a cheaper lie than a monster wading
+      // towards you through treacle. See RATE.
+      : THREE.MathUtils.clamp(speed / own, RATE.min, RATE.max);
     // Before the mixer, always: see #openHand.
     this.#openHand();
     this.#straightenLegs();
@@ -1645,6 +1758,14 @@ class ProcTubby {
   }
 
   play(name) { this.state = name; }
+
+  /**
+   * The stand-in's stride is generated from the speed rather than played back,
+   * so there is no clip to outrun and every speed is carried exactly.
+   */
+  carries() { return [0, Infinity]; }
+  topSpeed() { return Infinity; }
+  gaitFor(want) { return { clip: want > 1.4 ? "chase" : "walk", speed: want, miss: 0 }; }
 
   /** No fingers on the stand-in, so there is nothing to close. */
   grip() {}

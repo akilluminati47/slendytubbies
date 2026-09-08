@@ -378,6 +378,28 @@ export class World {
     return true;
   }
 
+  /**
+   * Which fallen branch is underfoot at (x, z), as an index, or -1.
+   *
+   * A flat scan of a couple of hundred triples, which is a few microseconds and
+   * happens for one body - the local player - rather than for everything on the
+   * map. Putting these in the collision hash would be the wrong shape: branches
+   * are not solid, nothing is ever pushed out of one, and the question asked
+   * here is "which one" rather than "is anything".
+   *
+   * The index is the point of it: stepping across a stick has to fire once, on
+   * the crossing, so the caller compares this frame's answer with last frame's.
+   */
+  branchUnder(x, z) {
+    const b = this.flora?.branchSpots;
+    if (!b) return -1;
+    for (let i = 0; i < b.length; i += 3) {
+      const dx = x - b[i], dz = z - b[i + 1], r = b[i + 2];
+      if (dx * dx + dz * dz < r * r) return i / 3;
+    }
+    return -1;
+  }
+
   /** Push a circle of radius r out of every obstacle and the map bounds. */
   resolve(pos, r) {
     const lim = CFG.world.size / 2 - 8;
