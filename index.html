@@ -265,7 +265,10 @@
   .btn:hover { background:#12100c; }
   /* A guest's Try again: present, so the card is not missing a control, but
      plainly not theirs to press. */
-  .btn:disabled { cursor:default; opacity:.38; border-color:#221f19; }
+  /* Dimmed, not erased. A button at .3 reads as a rendering fault; this one is
+     meant to be legible and plainly unavailable, because it is telling you
+     whose turn it is rather than hiding from you. .ghost does the colour. */
+  .btn:disabled { cursor:not-allowed; opacity:.62; }
   .btn:disabled:hover { background:none; }
   #end-wait { font-family:var(--hand); font-size:clamp(13px,2.4vw,17px);
     letter-spacing:.02em; color:#8b8373; margin-top:-6px; }
@@ -473,9 +476,10 @@
   .lobby-row .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .row { margin-top:2px; }
+  /* The dim treatment. Used for a button that is present and not yours to
+     press - the guest's "Try again" while the host decides - rather than for
+     Back, which is an ordinary way out and should look like one. */
   .btn.ghost { border-color:#241f18; color:var(--dim); }
-  .btn[disabled] { opacity:.3; cursor:not-allowed; }
-  .btn[disabled]:hover { background:none; }
 
   .foot { font-size:11.5px; line-height:1.85; color:#6f6759; text-align:center;
     margin:18px 0 0; letter-spacing:.02em; }
@@ -750,7 +754,7 @@
       </label>
       <div class="row">
         <button class="btn" id="public-host">Host public lobby</button>
-        <button class="btn ghost" id="lobby-back">Back</button>
+        <button class="btn" id="lobby-back">Back</button>
       </div>
       <p class="foot">Open to anyone. You host as the Guardian.</p>
     </div>
@@ -764,7 +768,7 @@
       <div class="row">
         <button class="btn" id="lobby-join" disabled>Join</button>
         <button class="btn" id="lobby-create" disabled>Create</button>
-        <button class="btn ghost" id="lobby-back2">Back</button>
+        <button class="btn" id="lobby-back2">Back</button>
       </div>
       <p class="foot">Unlisted. Only the password finds it. You host as the Guardian.</p>
     </div>

@@ -307,6 +307,9 @@ export class UI {
     leave.hidden = false;
     leave.textContent = "Quit";
 
+    // Only the button nobody can press is dimmed - see .btn.ghost.
+    retry.classList.toggle("ghost", !!multi && !multi.host);
+
     if (!multi) {
       retry.hidden = false;
       retry.disabled = false;
