@@ -31,6 +31,7 @@ export class MenuNav {
     this.screen = null;
     this.items = [];
     this.osk = new Osk(document.getElementById("osk"));
+    this.#wireTapToType();
   }
 
   /** The screen the player is actually looking at, or null while playing. */
@@ -50,6 +51,29 @@ export class MenuNav {
       return [...el.parentElement.querySelectorAll("button")];
     }
     return null;
+  }
+
+  /**
+   * On a phone, tapping a field brings up OUR keyboard rather than the device's.
+   *
+   * A pad player already got this - accept on a text field opens the on-screen
+   * keyboard - but a thumb got nothing, so tapping a field just focused it and
+   * summoned whatever the phone felt like showing: a full QWERTY over half the
+   * screen, its own idea of autocorrect, and a viewport that scrolls out from
+   * under the menu when it opens.
+   *
+   * Blocked, which makes the field readOnly first, so the device keyboard has
+   * nothing to attach to. The pointerdown is swallowed rather than the click,
+   * because focus happens on the DOWN and focus is the thing that summons it.
+   */
+  #wireTapToType() {
+    document.addEventListener("pointerdown", (e) => {
+      if (!document.body.classList.contains("touch")) return;
+      const el = e.target?.closest?.("input");
+      if (!el || el.type === "range" || !el.closest(".screen")) return;
+      e.preventDefault();
+      this.osk.show(el, true);
+    }, { capture: true });
   }
 
   #rescan(screenEl) {

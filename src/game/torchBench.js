@@ -102,6 +102,9 @@ function slider(parent, name, { min, max, step, value, onInput }) {
   r.type = "range"; r.min = min; r.max = max; r.step = step; r.value = value;
   const n = document.createElement("input");
   n.type = "number"; n.min = min; n.max = max; n.step = step; n.value = value;
+  // A phone shows a full keyboard for type=number unless it is told otherwise,
+  // and these take decimals and minus signs - so decimal, not numeric.
+  n.inputMode = "decimal";
   l.append(r, n);
   parent.appendChild(l);
 
