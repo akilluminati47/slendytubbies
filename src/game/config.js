@@ -157,9 +157,10 @@ export const CFG = {
     lookAngle: 62,
     loseInterest: 6.0,    // seconds without a fix before giving up
     // --- being startled ---------------------------------------------------
-    // Loud enough to make it stop dead and look. A landing is 34 m of noise and
-    // a dish is 26, so this catches somebody coming down off a jump and nothing
-    // else - being startled by every pickup would make the beat wallpaper.
+    // Loud enough to make it stop dead and look. A landing is 34 m of noise, a
+    // trip is 40 and a dish is 26, so this catches somebody coming down off a
+    // jump or going over a branch, and nothing else - being startled by every
+    // pickup would make the beat wallpaper.
     alertNoise: 30,
     // It does not stop. It swings its head round onto you and keeps coming,
     // which is worse: a thing that pauses gives you a moment, and a thing that
@@ -228,9 +229,15 @@ export const CFG = {
     // debts landing behind you - and it puts the loud moment where the sound
     // already was, since the landing thump was always the bigger of the two.
     land: 34,
-    // Catching a foot. Not the landing's number any more: that is now the
-    // loudest thing in the game and a stumble is a scuffle, not an arrival.
-    stumble: 14,
+    // Catching a foot, and the loudest thing in the game - past the landing,
+    // past taking a dish.
+    //
+    // Which is the point of it. Everything else on this list is something you
+    // chose: you knew the hop was loud when you pressed it. This is the one you
+    // did not, and it is worse than any of them - a whole body going down
+    // through dead wood, arms out, nothing caught quietly. You cannot plan
+    // around it, only be somewhere survivable when it happens.
+    stumble: 40,
     torchBonus: 4,        // metres added to tubby sight range when your torch is on
   },
 };

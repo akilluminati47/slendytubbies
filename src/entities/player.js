@@ -165,9 +165,10 @@ export class Player {
   /**
    * Go over: no launch, a crouch, a shake, and a bite out of the bar.
    *
-   * Its own noise, and a small one. You did not leave the ground, so announcing
-   * yourself as though you had come down off a jump would be a lie - but
-   * catching a foot is not silent either.
+   * Its own noise, and the biggest one there is. You did not leave the ground,
+   * so this is not the landing's number - it is louder than the landing's,
+   * because a body going down through dead wood with nothing caught quietly is
+   * the least controlled sound in the game, and the only one you did not choose.
    */
   #trip() {
     this.stumble = CFG.player.stumbleTime;

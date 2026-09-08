@@ -55,7 +55,8 @@ flowchart LR
 | pushing off a jump | 14 |
 | sprinting | 21.6 |
 | taking a dish | 26 |
-| **landing a jump** | **34** |
+| landing a jump | 34 |
+| **going over** | **40** |
 
 > [!IMPORTANT]
 > **Your torch is the loudest thing you own.** It shows a beam from **48 m away** — nearly
@@ -78,10 +79,19 @@ moment than watching one glide.
 across the whole map and never run out of sprint. Everything on the map will know exactly
 where you are the entire time. That is the trade.
 
-The push-off is quiet. It is **coming down** that carries, and it is the loudest thing in
-the game — louder than sprinting, louder than taking a dish. So you get the stamina at the
-top of the hop and pay for it on the way down, a few metres further on, and a chain of hops
-leaves a trail of thuds behind where you actually are.
+The push-off is quiet. It is **coming down** that carries — louder than sprinting, louder
+than taking a dish. So you get the stamina at the top of the hop and pay for it on the way
+down, a few metres further on, and a chain of hops leaves a trail of thuds behind where you
+actually are.
+
+> [!WARNING]
+> **Sometimes you go over.** About one hop in thirty just does not happen — a crouch, a
+> stumble, and five off the bar instead of ten back. And **sprinting over a fallen branch**
+> trips you one time in ten, so the deadwood on the floor is worth reading rather than
+> running through. Walking over one is always safe.
+>
+> Going over is **the loudest thing in the game**, louder than landing a jump. It is also
+> the only one you did not choose.
 
 **Walk over a dish to pick it up.** No button, no holding anything down. It is loud, and
 every tubby hunting you turns and *bolts* — far faster than you can run, out into the open,
