@@ -63,7 +63,11 @@ export const MIST_COLOR = new Float32Array([0.15, 0.17, 0.21]);
  *   z     how far it has rotated, which is what makes it swirl rather than
  *         merely slide: a field that only translates reads as a curtain being
  *         pulled past, and one that turns as it goes reads as air moving
- *   w     spare
+ *   w     1 to treat the ground as a flat plane at y=0 rather than as the
+ *         world's heightfield - which is what the menu stage is, and sampling
+ *         the map's terrain at the stage's coordinates would pool the mist at
+ *         whatever height some hill fifty metres into the wasteland happens to
+ *         be, on a floor that is dead level
  */
 export const MIST_DRIFT = new Float32Array([0, 0, 0, 0]);
 
@@ -103,10 +107,33 @@ const SOFT_MIN = 0.4;
 const ROLL = 0.62;
 const ROLL_SCALE = 0.021;
 
+/**
+ * And how ragged its top edge is, at a much finer scale.
+ *
+ * ROLL above moves the whole layer over fifty-metre features - it decides where
+ * the mist is deep and where it is shallow. This is the other end of the same
+ * idea: metre-scale noise on the lid, drifting, so the SURFACE of the layer is
+ * torn rather than level. Without it the top of the mist is a line - a plane
+ * seen edge-on is a line however soft the ramp under it is - and a straight
+ * horizontal edge across a wood is the one thing fog never does.
+ */
+const WISP = 0.55;
+const WISP_SCALE = 0.085;
+
 let installed = false;
 
 /** Turn the mist off, or back on, for whatever is about to be drawn. */
 export function setMist(max) { MIST[2] = max; }
+
+/**
+ * Whether the ground under the mist is the world's terrain or a flat floor.
+ *
+ * The menu stage is a level plane at y=0 and shares these shaders with the map,
+ * so without this the mist on it pools at the height of whatever the wasteland's
+ * heightfield says about the stage's coordinates - which is a hill nobody can
+ * see, on a floor that has none.
+ */
+export function setMistFlat(on) { MIST_DRIFT[3] = on ? 1 : 0; }
 
 /** Move the banks on. Call once a frame with the frame's own delta. */
 export function driftMist(dt) {
@@ -218,7 +245,7 @@ export function installGroundFog() {
       // Two lids, whichever is higher: an absolute one that fills the hollows
       // like water, and one that follows the ground so the rises still have
       // something round their ankles.
-      float ground = mistGround( vFogWorld.xz );
+      float ground = mix( mistGround( vFogWorld.xz ), 0.0, uMistDrift.w );
       float lid = max( uMist.x + roll, ground + uMist.y );
 
       // Banks standing in the low ground, turning as they drift.
@@ -236,12 +263,30 @@ export function installGroundFog() {
       float low = 1.0 - smoothstep( uMist.x - ${BANK_LOW.toFixed(2)}, uMist.x + ${BANK_LOW.toFixed(2)}, ground );
       float bank = low * smoothstep( ${BANK_EDGE.toFixed(2)}, ${(BANK_EDGE + 0.22).toFixed(2)}, field );
       lid = max( lid, ground + uMist.y + bank * ${BANK_LIFT.toFixed(2)} );
+      // Tear the top of it up, and let the tears drift.
+      lid += ( mistNoise( vFogWorld.xz * ${WISP_SCALE} + uMistDrift.xy * 0.6 ) * 2.0 - 1.0 ) * ${WISP.toFixed(2)}
+           + ( mistNoise( vFogWorld.xz * ${(WISP_SCALE * 2.7).toFixed(4)} - uMistDrift.xy ) * 2.0 - 1.0 ) * ${(WISP * 0.5).toFixed(2)};
+
       // Thickening downward from the lid rather than upward from the ground is
-      // what makes it collect rather than blanket.
-      float sink = clamp( ( lid - vFogWorld.y ) / max( uMist.y, ${SOFT_MIN.toFixed(2)} ), 0.0, 1.0 );
+      // what makes it collect rather than blanket. Smoothstepped rather than
+      // clamped, so the surface eases out instead of arriving at full density
+      // the moment you drop under it.
+      float sink = smoothstep( 0.0, 1.0,
+        ( lid - vFogWorld.y ) / max( uMist.y, ${SOFT_MIN.toFixed(2)} ) );
       // It has to build with distance, or you are stood inside a solid wall of
       // it with your own boots fogged out.
-      float mist = sink * ( 1.0 - exp( - vFogDepth * uMist.w ) ) * uMist.z;
+      // Building with distance, and then gone again once the ordinary fog has
+      // taken everything anyway.
+      //
+      // Without the second half the mist keeps painting its own colour onto
+      // ground the fog has already faded out completely - so the far edge of
+      // the world stays lighter than the sky above it and the two meet in a
+      // dead straight horizontal line. Which is the "solid line of fog mass":
+      // not the top of the layer at all, but the end of the ground. Fading the
+      // mist back out as the fog closes leaves a band that thickens through the
+      // middle distance and lets go of the horizon, which is what mist does.
+      float mist = sink * ( 1.0 - exp( - vFogDepth * uMist.w ) )
+        * ( 1.0 - fogFactor ) * uMist.z;
       fogged = mix( fogged, uMistColor, mist );
     }
 

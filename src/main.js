@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { CFG } from "./game/config.js";
 import { Input } from "./engine/input.js";
 import { World, heightAt } from "./world/world.js";
-import { installGroundFog, driftMist } from "./world/groundFog.js";
+import { installGroundFog, driftMist, setMistFlat } from "./world/groundFog.js";
 import { Player } from "./entities/player.js";
 import { Tubby } from "./entities/tubby.js";
 import { loadTubbyAssets, tickTV } from "./entities/tubbyModel.js";
@@ -868,7 +868,9 @@ function frame() {
     strideLeft = Math.min(strideLeft, 0.25);
   }
 
-  // The fog banks move whether or not anybody is looking at them.
+  // The fog banks move whether or not anybody is looking at them - and out here
+  // the ground is the heightfield again, whatever the menu stage last said.
+  setMistFlat(false);
   driftMist(dt);
 
   // The air, lit by whatever the player is carrying.

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { setMist } from "../world/groundFog.js";
+import { setMist, setMistFlat, MIST, MIST_COLOR } from "../world/groundFog.js";
 import { sowGrass } from "../world/flora.js";
 import { makeTorch, makeTorchLight, torchFor, holdInHand, aimInHand, dropFromHand,
   gripPoseFor } from "../entities/torch.js";
@@ -100,6 +100,48 @@ const OFFSET = { guardian: -1.15, laalaa: 1.25, po: -0.85, dipsy: 1.5, tinkywink
 
 const FRONT_SCREENS = new Set(["title", "mode", "lobby"]);
 
+/**
+ * The stage's own mist, about three times the map's.
+ *
+ * deep   how far the layer stands above the floor
+ * max    the most of the view it can take
+ * build  how fast it thickens with distance, per metre
+ */
+/**
+ * How far the stage's floor falls away with distance, per metre squared.
+ *
+ * A globe's worth of curve, scaled down until it is barely a curve at all.
+ * Two things it buys. The far edge of a sixty-metre plane is a dead straight
+ * line across the screen with nothing behind it; bending it down puts that edge
+ * below the horizon where it cannot be seen. And the cast now RISES as it comes
+ * up the lane rather than only growing, which is what walking towards somebody
+ * over open ground actually looks like and is most of why the far end used to
+ * read as a backdrop rather than as distance.
+ */
+const CURVE = 0.0038;
+
+/** Where the stage's floor is at a point down the lane. */
+const stageY = (z) => -CURVE * z * z;
+
+const STAGE_MIST = {
+  // The map's own strength, not more of it.
+  //
+  // Three times the density over a thirty-metre lane saturates within a few
+  // steps, and a layer that is fully opaque everywhere you can see is not fog,
+  // it is a wall with a line along the top.
+  deep: 1.5,      // waist high on a tubby, so heads stay clear of it
+  max: 0.85,
+  build: 0.10,
+  // Its own colour, and only just above the stage's night.
+  //
+  // At the map's value it is a good deal brighter than this scene's near-black
+  // background, so instead of reading as depth it read as a flat grey wall
+  // standing behind the cast with a hard line along the top. Mist is only
+  // visible because it catches light; on a stage with almost none, it should
+  // barely be lighter than what is behind it.
+  color: [0.115, 0.125, 0.155],
+};
+
 /** As bright as the one you carry yourself - see CFG.player.torchIntensity. */
 const TORCH_CANDELA = 420;
 
@@ -153,10 +195,15 @@ export class Showcase {
     // dread overlay does when something is close - so the ground under the cast
     // is a grey with barely any green left in it rather than the field green
     // the map uses.
+    // Segmented down the lane, because a plane with one quad in it cannot bend.
+    const floor = new THREE.PlaneGeometry(60, 60, 1, 64);
+    floor.rotateX(-Math.PI / 2);
+    const fp = floor.attributes.position;
+    for (let i = 0; i < fp.count; i++) fp.setY(i, stageY(fp.getZ(i)));
+    floor.computeVertexNormals();
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(60, 60),
+      floor,
       new THREE.MeshStandardMaterial({ color: 0x1b1d1a, roughness: 1 }));
-    ground.rotation.x = -Math.PI / 2;
     this.scene.add(ground);
 
     // Grass, and only grass: no trees and no rocks, because anything with a
@@ -166,7 +213,7 @@ export class Showcase {
     // drained of colour to match the floor.
     sowGrass(this.scene, {
       rand: rng(0x5ee1),          // its own stream, so it never moves
-      heightAt: () => 0,          // a flat stage
+      heightAt: (x, z) => stageY(z),   // the stage's own gentle curve
       count: Math.round(LANE.grassArea.x * 2 * LANE.grassArea.z * 2 * 3.2),
       half: LANE.grassArea,
       at: { x: 0, z: -8 },
@@ -411,12 +458,28 @@ export class Showcase {
     // the mist has an opinion about and no business having one. Switched off
     // for the draw rather than worked around, since only one scene is ever
     // rendered per frame.
-    setMist(0);
+    // Mist on the stage, laid on thick.
+    //
+    // It used to be switched off here, because the lid is partly an absolute
+    // world height and this scene stands its cast at y=0 on a flat plane -
+    // which is a place the map's heightfield has an opinion about and no
+    // business having one. setMistFlat says the floor is level and the lid
+    // stops asking.
+    //
+    // At the map's own strength - see STAGE_MIST.
+    setMistFlat(true);
+    MIST[0] = -40;              // no absolute lid; the hug below is the whole of it
+    MIST[1] = STAGE_MIST.deep;
+    MIST[3] = STAGE_MIST.build;
+    MIST_COLOR[0] = STAGE_MIST.color[0];
+    MIST_COLOR[1] = STAGE_MIST.color[1];
+    MIST_COLOR[2] = STAGE_MIST.color[2];
+    setMist(STAGE_MIST.max);
 
     if (this.frozen) {
       // Bench: one character, standing still, everybody else off stage.
       const model = this.current;
-      model.root.position.set(0, 0, this.z);
+      model.root.position.set(0, stageY(this.z), this.z);
       model.root.rotation.y = this.turn ?? 0;
       model.update(dt, this.clipSpeed ?? 0);
       this.#castTorches();
@@ -484,7 +547,8 @@ export class Showcase {
 
     for (const w of this.walkers) {
       w.model.root.position.z = w.z;
-      w.model.root.position.y = 0;      // flat stage; plantFeet does the rest
+      // On the curve, so they come up over it rather than sliding along a plane.
+      w.model.root.position.y = stageY(w.z);
       w.model.root.rotation.y = 0;      // walking towards the camera
       w.model.update(dt, w.speed);
     }
