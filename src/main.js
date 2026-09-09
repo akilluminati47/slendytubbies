@@ -500,10 +500,28 @@ net.addEventListener("closed", () => {
 
 /* --------------------------------------------------------------- lifecycle */
 
+/**
+ * Open the menu. Alone that stops the world; online it cannot.
+ *
+ * A lobby is other people's time. Pausing used to halt the frame for whoever
+ * pressed it, which stopped them sending state as well as moving - so to
+ * everybody else they froze on the spot, and the monster, which hunts remotes
+ * exactly as it hunts the host, kept walking towards a target that could no
+ * longer see or hear it. Alt-tabbing did the same thing automatically.
+ *
+ * So online the panel is an overlay and nothing else: the round runs, packets
+ * keep going out, and the player stands still because their input is frozen
+ * rather than because time is. It is the honest version of stepping away, and
+ * being caught while the menu is open is a fair thing to have happen.
+ *
+ * The audio stays up for the same reason. Hearing it coming is the only warning
+ * left to somebody looking at a settings panel.
+ */
 function pause() {
   if (!running || paused || game.over) return;
   paused = true;
-  audio.suspend();
+  input.frozen = true;
+  if (!online) audio.suspend();
   input.gamepad.stop();
   input.release();               // we are giving the mouse back on purpose
   document.exitPointerLock?.();
@@ -514,6 +532,7 @@ function pause() {
 function resume() {
   if (!paused) return;
   paused = false;
+  input.frozen = false;
   audio.resume();
   input.touch.setInGame(true);
   ui.show("game");
@@ -931,7 +950,9 @@ function frame() {
   // re-entering the pause menu is a fade each way rather than a switch.
   audio.music("theme", showcase.wanted(running) || (running && paused && !game.over));
 
-  if (!running || paused || !player) {
+  // Online, a pause does not take the world with it - see pause(). The panel is
+  // drawn over a round that is still being played.
+  if (!running || (paused && !online) || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
     // or reading the end card - the real world stays behind the panel.
     // The arrow goes when the parade arrives, and not a moment before: the point

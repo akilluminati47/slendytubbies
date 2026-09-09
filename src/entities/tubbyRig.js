@@ -1230,7 +1230,16 @@ function aimBone(bone, axis, want, current, sc) {
  * requestAnimationFrame rather than setTimeout, because the thing being kept
  * alive IS a frame loop and this puts the work exactly between two of them.
  */
-export const breathe = () => new Promise((r) => requestAnimationFrame(() => r()));
+export const breathe = () => new Promise((resolve) => {
+  // requestAnimationFrame is the right yield while somebody is looking, because
+  // it puts the work exactly between two frames of the thing being kept alive.
+  // It is the wrong one when nobody is: a background tab throttles rAF to a
+  // crawl and may stop it entirely, so a load that breathes this way in a tab
+  // the player has switched away from does not finish - it hangs, and finishes
+  // only when they come back. A timeout keeps running either way.
+  if (document.hidden) setTimeout(resolve, 0);
+  else requestAnimationFrame(() => resolve());
+});
 
 export async function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const { bind, bones, pairs, hip, damped } = character;

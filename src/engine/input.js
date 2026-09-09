@@ -22,6 +22,16 @@ export class Input {
     this.wantLock = false;   // does the game want the mouse captured right now?
     this.edge = new Edge();
     this.intent = blankIntent();
+    /**
+     * Gameplay input is ignored while this is set; menu input still is not.
+     *
+     * For the co-op pause, where the world carries on and the player has to
+     * stand still rather than walk about behind the panel. It has to happen in
+     * here rather than in the caller, because update() folds look into yaw and
+     * pitch before it hands the intent back - blanking it afterwards would
+     * leave the camera already turned.
+     */
+    this.frozen = false;
 
     this.gamepad = new GamepadSource();
     this.touch = new TouchSource();
@@ -144,6 +154,14 @@ export class Input {
     mergeIntent(i, this.gamepad.poll(dt));
     mergeIntent(i, this.touch.poll(dt));
     if (this.xr.presenting) mergeIntent(i, this.xr.poll(dt));
+
+    // Menu fields survive - menu, accept, back and the navigation that goes with
+    // them - or a frozen player could never reach the button that unfreezes them.
+    if (this.frozen) {
+      i.move.x = 0; i.move.z = 0;
+      i.look.x = 0; i.look.y = 0;
+      i.jump = false; i.sprint = false; i.torch = false;
+    }
 
     this.yaw += i.look.x;
     if (i.snap) this.yaw -= i.snap * (CFG.xr.snapDegrees * Math.PI / 180);
