@@ -138,6 +138,24 @@ let myName = "Tubby";
 let lobbyTitle = "";
 /** True between connecting and the host starting the run. */
 let waiting = false;
+
+/**
+ * When this round began, on the wall clock, for the one number that has to
+ * agree across the lobby.
+ *
+ * `game.elapsed` cannot be that number. It is a sum of frame deltas, which is
+ * exactly right for driving animation - it is the time the WORLD has had - and
+ * exactly wrong for reporting a duration, because a client whose tab was in the
+ * background got its frames throttled and therefore has less of it. Two players
+ * in the same run would hand in different totals for it, which is the bug that
+ * started this.
+ *
+ * So the card reads a clock instead of a sum. Set from the server's own start
+ * time on a late join, so somebody arriving a minute in reports the run's age
+ * rather than their own.
+ */
+let roundStart = 0;
+const roundAge = () => (performance.now() - roundStart) / 1000;
 let netWorld = null;
 let netAccum = 0;
 let spectating = false;
@@ -306,6 +324,10 @@ function begin() {
   input.lock();
   running = true;
   paused = false;
+  // Solo, and the first round of a lobby, both arrive here without having gone
+  // through restartRound. Anything that HAS set it will set it again after this
+  // with the value it means.
+  if (!roundStart) roundStart = performance.now();
   clock.getDelta();
 }
 
@@ -363,7 +385,11 @@ const ui = new UI(settings, net, {
     // card reads the same number for everybody who was in the same run.
     if (net.started) {
       begin();
+      // Both clocks wound back to where the run actually is: elapsed so the
+      // world's own animation is in phase with everybody else's, and roundStart
+      // so the end card agrees with them.
       game.elapsed = net.age;
+      roundStart = performance.now() - net.age * 1000;
     } else {
       showRoom();
     }
@@ -476,7 +502,7 @@ function applyCustardMask(mask) {
 function checkWon() {
   if (game.over || game.found < game.total) return false;
   endGame("won", "You got out",
-    `All ${game.total} dishes recovered in ${game.elapsed.toFixed(0)} seconds.` +
+    `All ${game.total} dishes recovered in ${roundAge().toFixed(0)} seconds.` +
     `<br>It is still out there.`);
   return true;
 }
@@ -910,6 +936,7 @@ function leaveToMenu() {
   game.found = 0;
   game.over = null;
   game.elapsed = 0;
+  roundStart = 0;
   waiting = false;
   netWorld = null;
   document.exitPointerLock?.();
@@ -978,6 +1005,7 @@ function restartRound(seed) {
   game.found = 0;
   game.over = null;
   game.elapsed = 0;
+  roundStart = performance.now();
   game.gasped = false;
   netWorld = null;
   netAccum = 0;
