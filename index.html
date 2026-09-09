@@ -711,6 +711,18 @@
     letter-spacing:.01em; color:var(--ink); opacity:.92; }
   #spec-who { margin-top:6px; font-size:clamp(11px,1.8vw,13px); letter-spacing:.18em;
     text-transform:uppercase; color:#9a9284; }
+  /* The room's roster. One row per body, in the order the server has them, so
+     the Guardian is always first and a new arrival appears at the bottom where
+     the eye is already going. */
+  .who { display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:8px 12px; border-radius:8px; margin-bottom:5px;
+    background:rgba(255,255,255,.035); }
+  .who b { font-family:var(--hand); font-size:clamp(15px,2.6vw,19px);
+    font-weight:400; letter-spacing:.02em; }
+  .who span { font-size:10.5px; letter-spacing:.18em; text-transform:uppercase;
+    color:#8b8373; }
+  .who.you { background:rgba(255,255,255,.075); }
+
   .spec-hint { margin-top:4px; font-size:10px; letter-spacing:.16em;
     text-transform:uppercase; color:#5d564a; }
   body.touch #hud-left { left:calc(14px + env(safe-area-inset-left));
@@ -849,10 +861,10 @@
         <input id="lobby-title" maxlength="32" autocomplete="off" placeholder="Late night jumpscares">
       </label>
       <div class="row">
-        <button class="btn" id="public-host">Host public lobby</button>
+        <button class="btn" id="public-host">Create public lobby</button>
         <button class="btn" id="lobby-back">Back</button>
       </div>
-      <p class="foot">Open to anyone. You host as the Guardian.</p>
+      <p class="foot">Open to anyone. You host as the Guardian, and begin when everybody is in.</p>
     </div>
 
     <div class="pane hide" id="pane-private">
@@ -866,8 +878,27 @@
         <button class="btn" id="lobby-create" disabled>Create</button>
         <button class="btn" id="lobby-back2">Back</button>
       </div>
-      <p class="foot">Unlisted. Only the password finds it. You host as the Guardian.</p>
+      <p class="foot">Unlisted. Only the password finds it. You host as the Guardian, and begin when everybody is in.</p>
     </div>
+  </div>
+</div>
+
+<!-- 3b. The room. A lobby before it is a round.
+
+     Connecting used to put you straight into a wasteland, so a host had nobody
+     to wait for and a friend arriving twenty seconds later walked into a map
+     that had already been picked over. This is the gap that was missing: names
+     appear as people arrive, and the host decides when it starts. -->
+<div class="screen glass hide" id="room">
+  <div class="card">
+    <h2>Lobby</h2>
+    <p class="sub" id="room-title"></p>
+    <div id="room-list" class="lobby-list"></div>
+    <div class="row">
+      <button class="btn" id="room-start">Begin</button>
+      <button class="btn" id="room-leave">Leave</button>
+    </div>
+    <p class="foot" id="room-foot"></p>
   </div>
 </div>
 

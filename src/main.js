@@ -133,6 +133,11 @@ let paused = false;
 let online = false;      // are we in a lobby?
 let host = true;         // solo counts as host: we simulate the AI
 let myRole = "guardian";
+/** Our own name and the lobby's, for the room's roster. */
+let myName = "Tubby";
+let lobbyTitle = "";
+/** True between connecting and the host starting the run. */
+let waiting = false;
 let netWorld = null;
 let netAccum = 0;
 let spectating = false;
@@ -341,13 +346,32 @@ const ui = new UI(settings, net, {
     online = true;
     host = net.isHost;
     myRole = net.role;
+    myName = name;
+    lobbyTitle = opts?.title || (opts?.public ? "" : key);
     buildWorld(seedFromKey(key));
 
     // The CPU exists on every client, but only the host runs its brain.
     spawnTubby("tinkywinky");
 
     for (const p of net.peers.values()) addRemote(p);
-    begin();
+
+    // A room first, unless there is already a run to walk into.
+    //
+    // Arriving late still drops you straight in - a round in progress is not
+    // something to make four people wait behind a lobby screen for - and the
+    // clock comes from the server rather than starting at zero here, so the end
+    // card reads the same number for everybody who was in the same run.
+    if (net.started) {
+      begin();
+      game.elapsed = net.age;
+    } else {
+      showRoom();
+    }
+  },
+
+  onStartRun: () => {
+    if (!host) return;
+    net.sendStart(newSeed());
   },
 
   onResume: () => resume(),
@@ -387,6 +411,9 @@ function addRemote(info) {
 net.addEventListener("join", (e) => {
   addRemote(e.detail);
   ui.flash(`${e.detail.name} joined as ${ROLE_LABEL[e.detail.role] ?? e.detail.role}`);
+  // In the room the flash is behind the panel, so the roster is the only place
+  // an arrival shows up - which is the entire reason the room exists.
+  roomChanged();
 });
 net.addEventListener("leave", (e) => {
   audio.dropBelly(`p${e.detail.id}`);
@@ -394,6 +421,7 @@ net.addEventListener("leave", (e) => {
   if (r) ui.flash(`${r.name} left`);
   r?.dispose(scene);
   remotes.delete(e.detail.id);
+  roomChanged();
 });
 net.addEventListener("state", (e) => remotes.get(e.detail.id)?.apply(e.detail));
 net.addEventListener("host", (e) => {
@@ -401,6 +429,9 @@ net.addEventListener("host", (e) => {
   if (e.detail.id !== net.id) return;
   host = true;
   myRole = net.role;
+  // Inheriting a lobby that has not started yet means inheriting the button
+  // that starts it, so the room has to be redrawn around the new host.
+  roomChanged();
 });
 net.addEventListener("world", (e) => {
   if (host) return;                      // we are the authority; ignore echoes
@@ -510,6 +541,37 @@ net.addEventListener("over", () => {
   // The verdict is not wrong, only early. Hold it until the sequence lets go.
   if (scaring) { pendingOver = () => endGame("dead", "All caught", ""); return; }
   endGame("dead", "All caught", "");
+});
+
+/**
+ * Show the room, and keep it honest as people come and go.
+ *
+ * Rebuilt on every roster change - see UI.showRoom for why that is not diffed.
+ * The list is ours plus the peers, sorted the way the server hands out roles,
+ * so the Guardian is at the top on every screen and a name never jumps rows
+ * because somebody else's socket happened to open first.
+ */
+const ROLE_ORDER = ["guardian", "laalaa", "po", "dipsy"];
+function showRoom() {
+  waiting = true;
+  input.frozen = true;
+  input.touch.setInGame(false);
+  const people = [
+    { id: net.id, name: myName, role: myRole, isHost: host, you: true },
+    ...[...net.peers.values()].map((p) => ({ ...p, you: false })),
+  ].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role));
+  ui.showRoom(people, host, lobbyTitle);
+}
+
+/** Somebody arrived, left, or inherited the lobby: redraw the roster. */
+function roomChanged() {
+  if (waiting) showRoom();
+}
+
+// The room becoming a round, for everybody in it at once.
+net.addEventListener("start", (e) => {
+  waiting = false;
+  restartRound(e.detail?.seed);
 });
 
 net.addEventListener("restart", (e) => {
@@ -848,6 +910,7 @@ function leaveToMenu() {
   game.found = 0;
   game.over = null;
   game.elapsed = 0;
+  waiting = false;
   netWorld = null;
   document.exitPointerLock?.();
   // The thumb pad belongs to a round. Left up, it sits over the menu it just

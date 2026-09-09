@@ -115,6 +115,8 @@ export class UI {
     for (const id of ["lobby-back", "lobby-back2"]) {
       $(id).onclick = () => { this.#stopWatching(); this.show("mode"); };
     }
+    $("room-start").onclick = () => this.hooks.onStartRun?.();
+    $("room-leave").onclick = () => this.hooks.onLeave?.();
   }
 
   #showTab(name) {
@@ -278,13 +280,54 @@ export class UI {
 
   show(screen) {
     this.screen = screen;
-    for (const id of ["title", "mode", "lobby", "pause", "end"]) {
+    for (const id of ["title", "mode", "lobby", "room", "pause", "end"]) {
       $(id).classList.toggle("hide", id !== screen);
     }
     document.body.classList.toggle("menu-open", screen !== "game");
     // Drives which chrome belongs to this screen, e.g. the byline.
     document.body.dataset.screen = screen;
     if (screen !== "lobby") this.#stopWatching();
+  }
+
+  /**
+   * The room: who is in the lobby, and whose call it is to start.
+   *
+   * Rebuilt from scratch on every change rather than diffed. It is at most four
+   * rows and it changes when somebody opens a door; the version of this that
+   * tracks which row belongs to which id would be longer than the thing it
+   * replaced and would still get it wrong when the host migrates.
+   *
+   * The host's button never disables. Waiting for friends is what the room is
+   * for, but a host who wants to go in alone should not have to be talked out
+   * of it or wait for a fourth - it is their run.
+   *
+   * @param people [{ id, name, role, isHost, you }] in server order
+   * @param host   whether WE are the one who can start it
+   * @param title  the lobby's name, or its password, or nothing
+   */
+  showRoom(people, host, title = "") {
+    $("room-title").textContent = title;
+    const list = $("room-list");
+    list.textContent = "";
+    for (const p of people) {
+      const row = document.createElement("div");
+      row.className = p.you ? "who you" : "who";
+      const name = document.createElement("b");
+      // textContent, not innerHTML: these names come off the wire.
+      name.textContent = p.you ? `${p.name} (you)` : p.name;
+      const role = document.createElement("span");
+      role.textContent = p.isHost ? `${p.role} · host` : p.role;
+      row.append(name, role);
+      list.appendChild(row);
+    }
+    const start = $("room-start");
+    start.hidden = !host;
+    $("room-foot").textContent = host
+      ? (people.length > 1
+          ? "Start when everybody is in. They arrive as they connect."
+          : "Nobody else yet. You can start on your own whenever you like.")
+      : "Waiting for the host to start the run.";
+    this.show("room");
   }
 
   /**

@@ -66,6 +66,22 @@ export class Lobby {
     this.public = false;
     this.title = "";
     this.key = null;
+    /**
+     * Whether a round is actually being played, and when it began.
+     *
+     * A lobby used to be a round: connecting put you straight into one, so a
+     * host had nobody to wait for and a guest arriving thirty seconds later
+     * dropped into a wasteland already half looted. Now a lobby is a room
+     * first. The host decides when it becomes a round.
+     *
+     * `startedAt` is the server's own clock, and it is the only clock in this
+     * game that everybody shares - which is what makes it the right place to
+     * answer "how long has this run been going". A client joining late is told
+     * how old the round is rather than starting its own stopwatch at zero and
+     * reporting a different duration from everybody else on the same end card.
+     */
+    this.started = false;
+    this.startedAt = 0;
   }
 
   async fetch(request) {
@@ -125,6 +141,11 @@ export class Lobby {
       t: "welcome", id, role, isHost, capacity: CAPACITY,
       public: this.public, title: this.title,
       peers: this.#roster(id),
+      // Is there a round to walk into, and how far in is it? Both, because the
+      // answer decides whether this client waits in the room or drops straight
+      // into a wasteland that has been picked over for the last two minutes.
+      started: this.started,
+      age: this.started ? Math.max(0, Date.now() - this.startedAt) : 0,
     });
     this.#broadcast({ t: "join", id, name, role, isHost }, id);
     this.#announce();
@@ -217,16 +238,24 @@ export class Lobby {
         break;
       }
 
-      case "restart":
-        // Only the host may call a new run - otherwise any guest could yank
+      // "start" is the first run, "restart" is every one after it. They do the
+      // same thing to a lobby and are kept apart only so a client can tell the
+      // difference between a room becoming a round and a round being replaced -
+      // one of those wants a loading beat and the other does not.
+      case "start":
+      case "restart": {
+        // Only the host may call a run - otherwise any guest could yank
         // everyone else out of a game they are still playing.
         if (me.id !== this.hostId) return;
         for (const p of this.players.values()) p.dead = false;
+        this.started = true;
+        this.startedAt = Date.now();
         // The seed rides along so every client builds the same new map. It is
         // the host's number, passed through untouched - the server has no
         // opinion about what a world looks like.
-        this.#broadcast({ t: "restart", seed: msg.seed >>> 0 }, null);
+        this.#broadcast({ t: msg.t, seed: msg.seed >>> 0 }, null);
         break;
+      }
 
       case "ping":
         this.#send(me.ws, { t: "pong", at: msg.at });
@@ -234,10 +263,19 @@ export class Lobby {
     }
   }
 
+  /**
+   * Somebody left. If that was everybody, the lobby stops being a round.
+   *
+   * Durable Objects outlive the last socket by a little, and without this a
+   * password reused a minute later would hand its first arrival a "started"
+   * flag for a round nobody is playing - straight past the room and into an
+   * empty map, alone, with the clock reading whatever the last run reached.
+   */
   #drop(me) {
     if (!this.players.has(me.id)) return;
     this.players.delete(me.id);
     this.#broadcast({ t: "leave", id: me.id }, me.id);
+    if (this.players.size === 0) { this.started = false; this.startedAt = 0; }
 
     // Someone leaving can also be the last living player.
     if (this.players.size && ![...this.players.values()].some((p) => !p.dead)) {

@@ -167,10 +167,21 @@ export class NetClient extends EventTarget {
         this.id = msg.id;
         this.role = msg.role;
         this.isHost = msg.isHost;
+        // Is there already a round going on in here, and how far in is it?
+        // Decides whether we wait in the room or drop straight into a wasteland
+        // somebody has been working through for the last two minutes - and, if
+        // the latter, what the clock should already read. Older servers send
+        // neither, and defaulting `started` to true keeps this client working
+        // against one: it behaves exactly as it did before there was a room.
+        this.started = msg.started ?? true;
+        this.age = (msg.age ?? 0) / 1000;
         this.peers.clear();
         for (const p of msg.peers) this.peers.set(p.id, p);
         this.#emit("welcome", msg);
         break;
+      // The room becoming a round. Same payload as restart and handled the same
+      // way; the two are separate only so a client can tell which it is.
+      case "start": this.#emit("start", msg); break;
       case "join":
         this.peers.set(msg.id, msg);
         this.#emit("join", msg);
@@ -261,6 +272,16 @@ export class NetClient extends EventTarget {
    * a number and everyone builds the same new wasteland from it.
    */
   sendRestart(seed) { this.#send({ t: "restart", seed: seed >>> 0 }); }
+
+  /**
+   * Host only: the room becomes a round, now, for everybody in it.
+   *
+   * The same shape as a restart because the server does the same thing with it.
+   * A guest pressing this is ignored server-side, which is the only place that
+   * matters - the button is hidden for them, but a hidden button is a courtesy
+   * and not a rule.
+   */
+  sendStart(seed) { this.#send({ t: "start", seed: seed >>> 0 }); }
 
   close() {
     clearTimeout(this.pollTimer);
