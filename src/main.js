@@ -1133,11 +1133,18 @@ function frame() {
   game.elapsed += dt;
 
   if (spectating) {
-    // Camera only. Jump cycles who you are watching - it is the button your
-    // thumb is already on, and it does nothing else now that you are dead.
-    if (input.intent.jump || specTapped) {
+    // Camera only, and three ways to change who it is on.
+    //
+    // The shoulders step either way through the party, which is where a thumb
+    // looks first and the only one of these that can go BACK - overshooting
+    // somebody in a four-body lobby used to mean going round again. Jump still
+    // steps forward, because it is the button already under the thumb and it
+    // does nothing else now that you are dead, and on a touchscreen the banner
+    // naming who you are watching is itself the button.
+    const step = input.intent.watch || ((input.intent.jump || specTapped) ? 1 : 0);
+    if (step) {
       specTapped = false;
-      const t = spectator.cycle(1);
+      const t = spectator.cycle(step);
       if (t) ui.flash(`Watching ${t.name}`, 1800);
     }
     const watching = spectator.update(dt, input.intent);

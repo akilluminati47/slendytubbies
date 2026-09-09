@@ -135,6 +135,13 @@ export class GamepadSource {
 
     intent.sprint = b(BTN.l3) || v(BTN.r2) > 0.5 || b(BTN.l1);
     intent.jump = this.edge.hit("jump", b(BTN.south));
+    // The shoulders step through the party while spectating, which is where
+    // every game that has a spectator camera puts it and therefore the first
+    // pair of buttons a thumb tries. They are free to take: L1 is a sprint
+    // binding and R1 is nothing at all, and a dead player is not sprinting.
+    // South still works, so nobody has to be told about this to use it.
+    intent.watch = (this.edge.hit("watch-next", b(BTN.r1)) ? 1 : 0)
+                 - (this.edge.hit("watch-prev", b(BTN.l1)) ? 1 : 0);
     intent.torch = this.edge.hit("torch", b(BTN.west));
     intent.menu = this.edge.hit("menu", b(BTN.start));
 

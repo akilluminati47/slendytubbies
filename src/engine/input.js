@@ -142,6 +142,11 @@ export class Input {
 
     i.sprint = on("ShiftLeft", "ShiftRight");
     i.jump = this.edge.hit("kb-jump", on("Space"));
+    // And the same step on a keyboard. Q and E because they sit under the hand
+    // that is already on WASD, and the square brackets because a spectator has
+    // a free hand and they are the two keys nothing else in the game uses.
+    i.watch = (this.edge.hit("kb-watch-next", on("KeyE") || on("BracketRight")) ? 1 : 0)
+            - (this.edge.hit("kb-watch-prev", on("KeyQ") || on("BracketLeft")) ? 1 : 0);
     i.torch = this.edge.hit("kb-torch", on("KeyF"));
     i.menu = this.edge.hit("kb-menu", on("Escape"));
     return i;
@@ -161,6 +166,7 @@ export class Input {
       i.move.x = 0; i.move.z = 0;
       i.look.x = 0; i.look.y = 0;
       i.jump = false; i.sprint = false; i.torch = false;
+      i.watch = 0;
     }
 
     this.yaw += i.look.x;

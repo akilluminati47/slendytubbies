@@ -19,6 +19,11 @@ export function blankIntent() {
     torch: false,
     menu: false,
     snap: 0,
+    // Which way through the party the spectator camera should step. Only ever
+    // read while dead, where none of the fields above mean anything, but kept
+    // separate from them so that being dead does not have to redefine what
+    // "jump" means for every device that can produce one.
+    watch: 0,
   };
 }
 
@@ -37,6 +42,7 @@ export function mergeIntent(into, from) {
   into.torch ||= from.torch;
   into.menu ||= from.menu;
   into.snap ||= from.snap;
+  into.watch ||= from.watch;
   return into;
 }
 
