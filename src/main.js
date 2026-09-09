@@ -484,7 +484,11 @@ net.addEventListener("dead", (e) => {
   if (r.seen) world?.stain(r.target.x, r.target.z, 1.15);
   // And heard from there. Somebody screaming off to your right is a different
   // piece of information from somebody screaming: it says which way not to go.
-  audio.playSample("scream", 0.9, r.target);
+  // Not through a pause screen. Somebody else being taken is the party, and a
+  // paused player hears only what is coming for them - see Audio.muffle. The
+  // "X was caught" flash still lands, so the information is not lost, only the
+  // sound of it.
+  if (!paused) audio.playSample("scream", 0.9, r.target);
   r.setDead(true);
   if (!fallen.includes(r.name)) fallen.push(r.name);
   ui.flash(`${r.name} was caught`);
@@ -532,6 +536,10 @@ function pause() {
   if (!running || paused || game.over) return;
   paused = true;
   input.frozen = true;
+  // And the world goes quiet behind it - all of it except the three sounds that
+  // mean something is walking towards you. See Audio.muffle: the safety of a
+  // pause screen with the theme playing over it is meant to be a lie.
+  audio.muffle(true);
   input.gamepad.stop();
   input.release();               // we are giving the mouse back on purpose
   document.exitPointerLock?.();
@@ -543,6 +551,7 @@ function resume() {
   if (!paused) return;
   paused = false;
   input.frozen = false;
+  audio.muffle(false);
   audio.resume();
   input.touch.setInGame(true);
   ui.show("game");
@@ -712,6 +721,7 @@ function endGame(kind, headline, detail) {
   // underneath a settings panel.
   paused = false;
   input.frozen = false;
+  audio.muffle(false);
   input.gamepad.stop();          // the loop is about to stop calling rumble()
   input.release();
   input.touch.setInGame(false);

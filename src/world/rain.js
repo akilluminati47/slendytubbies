@@ -59,6 +59,18 @@ const TICK = 0.13;                           // metres a splash kicks back up
  */
 const SPLASH_BOX = 17;
 
+/**
+ * How far sideways a drop is carried per metre it falls, per unit of wind.
+ *
+ * One constant in one place because two things have to agree about it: where
+ * the drop has got to, and which way its tail points. They disagreed - the
+ * slant was raised to 0.11 and the tail was left leaning at 0.06 - so every
+ * streak in the game was very slightly bent, its head travelling one way and
+ * its smear pointing another. Nobody would name that, and everybody would see
+ * it in a downpour.
+ */
+const SLANT = 0.11;
+
 /** What the rain turns into for a spectator who gets unlucky. See setColor. */
 const OMEN = new THREE.Color(0x8c1620);
 
@@ -200,14 +212,14 @@ export class Rain {
           // has fallen the height of the box is now carried a couple of metres
           // sideways, and because the wind turns and gusts (see update) the
           // whole shower leans and straightens as you watch it.
-          p.xz += uWind * ( ${(BOX.y / 2).toFixed(1)} - p.y ) * 0.11;
+          p.xz += uWind * ( ${(BOX.y / 2).toFixed(1)} - p.y ) * ${SLANT};
           // Wrap the slant back into the box too, or the whole shower drifts
           // out of it and the near air goes empty.
           p.x = mod( p.x + ${(BOX.x / 2).toFixed(1)}, ${BOX.x.toFixed(1)} ) - ${(BOX.x / 2).toFixed(1)};
           p.z = mod( p.z + ${(BOX.z / 2).toFixed(1)}, ${BOX.z.toFixed(1)} ) - ${(BOX.z / 2).toFixed(1)};
           // The tail sits above the head, along the direction of travel.
           p.y += aTip * ${LEN.toFixed(2)};
-          p.xz -= uWind * aTip * ${(LEN * 0.06).toFixed(4)};
+          p.xz -= uWind * aTip * ${(LEN * SLANT).toFixed(4)};
 
           // Faded at the walls of the box, so it has no edges.
           float r = length( p.xz );
@@ -378,6 +390,10 @@ export class Rain {
    */
   update(dt, eye, amount, canopy = null) {
     this.uniforms.uAmount.value = amount;
+    // How fast the head is moving, before anything else uses it. Kept up to date
+    // even while it is dry, or the first frame of a shower reads the distance
+    // walked since the last one as one frame of velocity.
+    this.#trackEye(dt, eye);
     this.#blow(dt, amount);
     // Eased here rather than in setColor, which is called before this and has
     // no idea how much time has gone by.
@@ -413,6 +429,31 @@ export class Rain {
    * changes and never jumps, which is the only quality that matters when the
    * thing being driven is four thousand streaks that must all agree.
    */
+  /**
+   * How fast the eye is travelling, smoothed, in metres per second.
+   *
+   * From the eye's own movement rather than from the player, because the eye is
+   * what the rain is drawn around and spectating there is no player under it.
+   * Smoothed over about a sixth of a second: a single frame's delta is noisy
+   * enough to make the whole shower twitch, and a teleport - a restart, a
+   * respawn, the debug console - would otherwise read as a hundred metres per
+   * second of wind for one frame.
+   */
+  #trackEye(dt, eye) {
+    this.vel = this.vel ?? new THREE.Vector2();
+    if (!eye || dt <= 0) return;
+    if (!this.lastEye) { this.lastEye = eye.clone(); return; }
+    let vx = (eye.x - this.lastEye.x) / dt;
+    let vz = (eye.z - this.lastEye.z) / dt;
+    this.lastEye.copy(eye);
+    // Nothing in this game moves faster than a sprint; anything that claims to
+    // is a jump in position rather than a speed.
+    if (Math.hypot(vx, vz) > 12) { vx = 0; vz = 0; }
+    const k = Math.min(1, dt * 6);
+    this.vel.x += (vx - this.vel.x) * k;
+    this.vel.y += (vz - this.vel.y) * k;
+  }
+
   #blow(dt, amount) {
     this.blown = (this.blown ?? 0) + dt;
     const t = this.blown;
@@ -420,7 +461,27 @@ export class Rain {
     // 0.55 in a drizzle, up towards 2.2 in a driven downpour, breathing on its
     // own slow cycle so it is never at one strength for long.
     const push = (0.55 + amount * 1.15) * (1 + Math.sin(t * 0.083 + 0.7) * 0.42);
-    this.uniforms.uWind.value.set(Math.cos(turn) * push, Math.sin(turn) * push);
+
+    // And your own speed, which is the other half of what wind is.
+    //
+    // Rain does not care that you are running, but you are the one looking at
+    // it: run into a shower and it comes at your face, because your motion adds
+    // to its apparent direction. Now that the drops are anchored in the world
+    // rather than towed along behind you, this is the piece that was missing -
+    // parallax says you are moving THROUGH it, the tilt says which way.
+    //
+    // The conversion is not a taste value. A drop falling at uFall and drifting
+    // sideways at v covers v / uFall metres across per metre down, and the
+    // shader lays that drift down as uWind * SLANT per metre - so a wind of
+    // v / (uFall * SLANT) is exactly the tilt that speed earns. Six metres a
+    // second of sprint comes to about 3.2, which is more than the weather
+    // usually manages, and that is right: running is the strongest wind most
+    // people ever feel.
+    const perSpeed = 1 / (this.uniforms.uFall.value * SLANT);
+    const v = this.vel;
+    this.uniforms.uWind.value.set(
+      Math.cos(turn) * push - v.x * perSpeed,
+      Math.sin(turn) * push - v.y * perSpeed);
   }
 
   /**

@@ -280,6 +280,7 @@ export class Audio {
    */
   hummingDish(at, dist) {
     if (!this.ready) return;
+    if (this.muffled) return;       // see muffle - a dish is not a warning
     const g = this.nodes.dishHum.gain;
     if (!at) { g.setTargetAtTime(0, this.ctx.currentTime, 0.2); return; }
     this.#moveTo(this.nodes.dishAt, at);
@@ -302,6 +303,9 @@ export class Audio {
    */
   bellyStatic(key, at, dist, kind = "belly") {
     if (!this.ready) return;
+    // A paused player still hears the thing hunting them, and nothing else -
+    // see muffle. Its television is one of the three sounds that gets through.
+    if (this.muffled && key !== "chaser") return;
     const spec = HUM[kind] ?? HUM.belly;
     const voice = kind === "friend" ? bellyVoice(key) : { hz: spec.hz, q: spec.q };
     const b = this.#belly(key, voice);
@@ -310,6 +314,51 @@ export class Audio {
     this.#moveTo(b.panner, at);
     const k = Math.max(0, 1 - dist / spec.from);
     b.gain.gain.setTargetAtTime(spec.gain * k * k, t, 0.12);
+  }
+
+  /**
+   * The pause mix: a room with the music on and the door shut.
+   *
+   * The world does not stop while the menu is open - the hour turns, the thing
+   * keeps walking - and it would be easy to let the whole soundtrack of that
+   * carry on underneath the settings, which is honest and completely wrong. A
+   * paused player is not in the wood any more, they are looking at a panel with
+   * the theme playing, and a panel is a safe place. That safety has to be a lie.
+   *
+   * So the rain goes, the wind goes, the dish stops humming, and the party
+   * stops making any noise at all. What is left is the theme, the buttons, and
+   * the exactly three things that mean something is coming for you: the
+   * heartbeat, the television in its belly, and its feet. You hear it arrive
+   * over the music, in a silence built to make you think there was nothing to
+   * hear - and then it takes you off the pause screen.
+   *
+   * Nothing here stops the CLOCK. Every ducked sound is still being computed and
+   * still being positioned; it is only the level that goes.
+   */
+  muffle(on) {
+    if (!this.ready) return;
+    this.muffled = !!on;
+    const t = this.ctx.currentTime;
+    // Half a second either way. A hard cut announces itself as a mute, and the
+    // point is a room going quiet rather than a switch being thrown.
+    if (this.nodes.wind) {
+      this.nodes.wind.gain.setTargetAtTime(on ? 0 : 0.18, t, 0.5);
+    }
+    if (on) {
+      this.nodes.dishHum.gain.setTargetAtTime(0, t, 0.4);
+      if (this.nodes.rain) {
+        for (const g of ["patterGain", "bodyGain", "canopyGain"]) {
+          this.nodes.rain[g].gain.setTargetAtTime(0, t, 0.5);
+        }
+      }
+      // Everybody's set but the one that matters.
+      for (const [key, b] of this.bellies) {
+        if (key !== "chaser") b.gain.gain.setTargetAtTime(0, t, 0.4);
+      }
+    }
+    // Coming back needs no restore: every one of those is written every frame
+    // by the thing that owns it, so they climb back on their own the moment
+    // this stops forcing them down.
   }
 
   /**
@@ -557,6 +606,10 @@ export class Audio {
    */
   rain(dt, amount, cover = 0) {
     if (!this.ready || !this.nodes.rain) return;
+    // muffle() has already taken these to zero and would only be fought here.
+    // The shelter and squall state still runs, so stepping back into a round
+    // under a tree in a downpour sounds like the tree you are under.
+    if (this.muffled) { amount = 0; }
     const t = this.ctx.currentTime;
     // Eased, so walking under a tree is a second of the sound changing round
     // you rather than a switch. Slightly slower coming out than going in, which
@@ -649,6 +702,9 @@ export class Audio {
 
   /** Bright two-note rise when a dish is taken. */
   pickup(at = null) {
+    // Silent behind a pause screen - see muffle. Somebody else's footstep is
+    // not a warning, and the whole point is that only warnings get through.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const to = this.#place(at, 0.6);
@@ -716,6 +772,9 @@ export class Audio {
    * @param power 0 at a crawl, 1 at a full sprint.
    */
   step(power = 0.5, at = null) {
+    // Silent behind a pause screen - see muffle. Somebody else's footstep is
+    // not a warning, and the whole point is that only warnings get through.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const p = Math.max(0, Math.min(1, power));
@@ -739,6 +798,9 @@ export class Audio {
    * the landing, against hearing radii of 14, 21.6 and 34 m.
    */
   jumpStep(at = null) {
+    // Silent behind a pause screen - see muffle. Somebody else's footstep is
+    // not a warning, and the whole point is that only warnings get through.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const to = this.#place(at, 0.5);
@@ -759,6 +821,9 @@ export class Audio {
    * loudest thing in the game and the only one you did not press a key for.
    */
   stumble(at = null) {
+    // Silent behind a pause screen - see muffle. Somebody else's footstep is
+    // not a warning, and the whole point is that only warnings get through.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const to = this.#place(at, 0.8);
@@ -769,6 +834,9 @@ export class Audio {
 
   /** The loudest one-shot in the game, and the bill for the hop. */
   land(at = null) {
+    // Silent behind a pause screen - see muffle. Somebody else's footstep is
+    // not a warning, and the whole point is that only warnings get through.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const to = this.#place(at, 0.6);
@@ -810,6 +878,8 @@ export class Audio {
    * are standing, which is usually the first they know you have seen it.
    */
   fright(at = null) {
+    // A team-mate's gasp is the party, not the thing - see muffle.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const to = this.#place(at, 0.7);
@@ -847,6 +917,9 @@ export class Audio {
    * other ear.
    */
   torchClick(kind = "handheld", at = null) {
+    // Silent behind a pause screen - see muffle. Somebody else's footstep is
+    // not a warning, and the whole point is that only warnings get through.
+    if (this.muffled) return;
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     const to = this.#place(at, 0.4);
