@@ -291,6 +291,8 @@ function begin() {
   // callers, because every way into a round comes through this.
   fallen = [];
   myCorpse = null;
+  scaring = false;
+  pendingOver = null;
   world?.rain?.setOmen(false);
   resetSightings();
   input.frozen = false;
@@ -497,6 +499,16 @@ net.addEventListener("dead", (e) => {
 });
 
 net.addEventListener("over", () => {
+  // Not over the top of the capture.
+  //
+  // The last player alive is the one case where the server's verdict arrives
+  // while their own jumpscare is still running - they died, the worker saw the
+  // lobby empty out, and it said so inside a couple of hundred milliseconds. So
+  // the card went up over the scare and the one death nobody else is left to
+  // watch was also the one death the player did not get to see either.
+  //
+  // The verdict is not wrong, only early. Hold it until the sequence lets go.
+  if (scaring) { pendingOver = () => endGame("dead", "All caught", ""); return; }
   endGame("dead", "All caught", "");
 });
 
@@ -634,6 +646,31 @@ if (!hasBakedAssets) {
 }
 
 /* -------------------------------------------------------------------- loop */
+
+/**
+ * True from the moment a capture starts until its sequence has finished.
+ *
+ * Separate from `scare`, which is the sequence object and does not exist until
+ * the recording has decoded - a window of a few hundred milliseconds at the
+ * very start, which is exactly when the server's verdict tends to land.
+ */
+let scaring = false;
+/** A verdict that arrived mid-capture, to be applied when it ends. */
+let pendingOver = null;
+
+/**
+ * Is anybody in the party still up?
+ *
+ * The four roles are all players and the thing hunting them is AI, so this is
+ * simply whoever is left. It decides what happens after you are caught: a
+ * spectator camera if there is still a round going on behind it, and the card
+ * if there is not - an empty camera over four bodies is not a thing to hand
+ * somebody instead of telling them the run is over.
+ */
+function partyAlive() {
+  for (const r of remotes.values()) if (!r.dead) return true;
+  return false;
+}
 
 /** Set when you go down in a lobby: the spot, so the camera can hold on it. */
 let myCorpse = null;
@@ -936,6 +973,7 @@ function checkSpotted(dt) {
 
 function beginScare(tubby) {
   player.alive = false;
+  scaring = true;
   world?.stain(player.pos.x, player.pos.z, 1.15);
   // Tell the lobby now, not when the sequence ends. The close-up runs for about
   // two seconds and nothing goes out on the wire while it does, so announcing it
@@ -947,12 +985,47 @@ function beginScare(tubby) {
   tubby.model.play?.("attack", 0.08);
   shake(HAPTIC.caught, HAPTIC.caughtMs);
 
+  // Down comes the menu, for as long as this takes.
+  //
+  // Being caught with the settings open is not something to be told about
+  // afterwards. The panel lifts, the mix comes back so the scream lands at full
+  // weight, and you watch it happen from inside your own head like everybody
+  // else. It goes back up afterwards only if there is still a round behind it.
+  //
+  // The panel and the mix, and nothing else: input stays frozen, because the
+  // scare owns the camera for the next two seconds and there is nothing to do
+  // with a keyboard while it does. So this is deliberately not resume() - that
+  // would also grab the pointer back, mid-cutscene, for a player who is dead.
+  const interrupted = paused;
+  if (paused) {
+    paused = false;
+    audio.muffle(false);
+    ui.show("game");
+  }
+
   const finish = () => {
     scare = null;
-    if (online) { beginSpectating(); return; }
+    scaring = false;
+    // A verdict that came in while this was playing gets its turn now, and it
+    // outranks anything decided here: the server knows who is left, and if it
+    // has already called the round then there is nothing to spectate.
+    if (pendingOver) { const call = pendingOver; pendingOver = null; call(); return; }
+    // Online you go to the spectator camera - but only while there is somebody
+    // left to watch. A lobby whose last one standing has just gone down is over,
+    // and it should say so rather than hand you a camera over four bodies.
+    if (online && partyAlive()) {
+      beginSpectating();
+      // And the menu comes back over it, if that is where you were. The pause
+      // was lifted to show you the scare, not cancelled - see above.
+      if (interrupted) pause();
+      return;
+    }
     // Nothing under it. You know what happened; the card exists to get you
-    // back in, not to read you a report.
-    endGame("dead", "Caught", "");
+    // back in, not to read you a report. It also takes the pause screen with
+    // it - endGame clears both the flag and the freeze - so a player who was
+    // in the menu when it reached them comes out holding the card, not a
+    // settings panel they can no longer leave.
+    endGame("dead", online ? "All caught" : "Caught", "");
   };
 
   // If the recording never arrives - blocked, missing, undecodable - do not
