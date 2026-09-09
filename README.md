@@ -96,6 +96,22 @@ actually are.
 > only sound that makes anything hunting you turn *onto* you rather than merely come
 > looking. It is also the only one you did not choose.
 
+### Rain is cover
+
+The only thing in the game that happens *to* you rather than because of you, and now the
+only thing that ever helps. While it is coming down, **everything you do is quieter** —
+a third off how far your noise carries at the worst of it — and **going over stops turning
+its head**. It still hears you fall and still comes; it just has to find you the ordinary
+way once it gets there.
+
+You can hear how much shelter you are in. Out in the open it is patter; step under a spruce
+and the patter drops away and what is left is the roll of it breaking on the branches five
+metres over your head. The ground under you stays dry, and the rain resolves on the canopy
+instead. It also empties the air of motes, so a torch beam has almost nothing left to catch.
+
+Showers last a couple of minutes and gust while they do. Take the walk you would not
+otherwise risk.
+
 **Walk over a dish to pick it up.** No button, no holding anything down. It is loud, and
 every tubby hunting you turns and *bolts* — far faster than you can run, out into the open,
 away from everybody at once. A few seconds later it settles and starts looking again. Every
