@@ -44,6 +44,22 @@ export const CFG = {
     // it a thing you spend, and the torch is already the loudest thing you own,
     // so a player now has two separate reasons to keep switching it off.
     batteryMax: 120,
+    // --- and it comes back, slowly, if you leave it alone -------------------
+    //
+    // A flat torch used to be flat for the rest of the round, which turns the
+    // back half of a bad run into walking in the dark with nothing to decide.
+    // Now it recovers a little on its own, and the shape of that is the whole
+    // point: ten seconds of nothing at all, so running it dry still costs you a
+    // real stretch of blindness, and then ten seconds of charge arriving on an
+    // ease rather than a trickle - slow, then quick, then settling - so it reads
+    // as something filling up instead of a number counting.
+    //
+    // Ten seconds back, not a hundred and twenty. It is a reprieve to find the
+    // next dish by, not a refill, and the clock restarts the moment the beam is
+    // switched on again.
+    rechargeWait: 10,     // seconds flat before anything happens
+    rechargeTime: 10,     // seconds to go from nothing to rechargeTo
+    rechargeTo: 10,       // seconds of torch handed back
     torchIntensity: 420,  // candela - CONSTANT while lit, never scaled
     pickupRadius: 1.3,    // walk this close and the dish is yours
     hintRadius: 5.0,      // and this close before the HUD mentions it

@@ -286,6 +286,13 @@ function spawnTubby(kind) {
 
 function begin() {
   game.gasped = false;
+  // A new round is a clean slate: nobody has fallen yet, nobody has a body on
+  // the map, and nobody has seen the thing. Here rather than in one of the
+  // callers, because every way into a round comes through this.
+  fallen = [];
+  myCorpse = null;
+  resetSightings();
+  input.frozen = false;
   input.touch.setInGame(true);
   ui.show("game");
   input.lock();
@@ -478,6 +485,7 @@ net.addEventListener("dead", (e) => {
   // piece of information from somebody screaming: it says which way not to go.
   audio.playSample("scream", 0.9, r.target);
   r.setDead(true);
+  if (!fallen.includes(r.name)) fallen.push(r.name);
   ui.flash(`${r.name} was caught`);
   // If we were watching them, move on rather than staring at a body.
   if (spectating) spectator.cycle(1);
@@ -501,27 +509,28 @@ net.addEventListener("closed", () => {
 /* --------------------------------------------------------------- lifecycle */
 
 /**
- * Open the menu. Alone that stops the world; online it cannot.
+ * Open the menu. It never stops the world.
  *
- * A lobby is other people's time. Pausing used to halt the frame for whoever
- * pressed it, which stopped them sending state as well as moving - so to
- * everybody else they froze on the spot, and the monster, which hunts remotes
- * exactly as it hunts the host, kept walking towards a target that could no
- * longer see or hear it. Alt-tabbing did the same thing automatically.
+ * Online it obviously cannot: a lobby is other people's time, and halting the
+ * frame stopped the pauser SENDING as well as moving, so to everyone else they
+ * froze on the spot while the monster - which hunts remotes exactly as it hunts
+ * the host - kept walking towards a target that could no longer see or hear it.
  *
- * So online the panel is an overlay and nothing else: the round runs, packets
- * keep going out, and the player stands still because their input is frozen
- * rather than because time is. It is the honest version of stepping away, and
- * being caught while the menu is open is a fair thing to have happen.
+ * Alone it turns out it should not either. The clock going still is the one
+ * thing that says none of this is happening while you are not looking, and this
+ * game is mostly about a thing that is happening whether or not you are. So the
+ * hour turns, the rain arrives, the motes keep gathering to a lamp left burning,
+ * the cast keeps breathing, and it can walk up behind you while you are changing
+ * the mouse sensitivity. That last part is the point rather than a side effect.
  *
- * The audio stays up for the same reason. Hearing it coming is the only warning
- * left to somebody looking at a settings panel.
+ * The panel is an overlay and nothing else. The player stands still because
+ * their INPUT is frozen, not because time is, and the audio stays up - hearing
+ * it coming is the only warning left to somebody looking at a settings screen.
  */
 function pause() {
   if (!running || paused || game.over) return;
   paused = true;
   input.frozen = true;
-  if (!online) audio.suspend();
   input.gamepad.stop();
   input.release();               // we are giving the mouse back on purpose
   document.exitPointerLock?.();
@@ -537,7 +546,9 @@ function resume() {
   input.touch.setInGame(true);
   ui.show("game");
   input.lock();
-  clock.getDelta();     // throw away the time spent in the menu
+  // The time in the menu is NOT thrown away any more. It was really spent, the
+  // world really moved through it, and handing the loop a discarded delta here
+  // would be the one frame that pretends otherwise.
 }
 
 // Losing pointer lock is how Esc reaches us in most browsers, so treat it as a
@@ -600,7 +611,7 @@ addEventListener("xr", (e) => {
     if (CFG.xr.torchOnController) player?.attachTorchTo(input.xr.grips[1]);
     wrist?.attach(input.xr.grips[0]);
     audio.unlock();
-    if (player) { running = true; paused = false; resetSightings(); ui.show("game"); }
+    if (player) { running = true; paused = false; ui.show("game"); }
   } else if (d.presenting === false) {
     player?.detachTorch();
     wrist?.detach();
@@ -614,9 +625,23 @@ if (!hasBakedAssets) {
 
 /* -------------------------------------------------------------------- loop */
 
-/** Everyone still alive and worth watching. */
-function survivors() {
-  return [...remotes.values()].filter((r) => !r.dead);
+/** Set when you go down in a lobby: the spot, so the camera can hold on it. */
+let myCorpse = null;
+/** Who has been caught this round, in the order it happened. */
+let fallen = [];
+
+/**
+ * Everyone the spectator camera may look at.
+ *
+ * Your own body first, then whoever is still up, then everyone else's. The dead
+ * are on the list on purpose: watching where somebody was taken is how a party
+ * works out what is roaming which end of the map, and being able to go back and
+ * look at your own is most of what a spectator wants to do first.
+ */
+function watchable() {
+  const alive = [...remotes.values()].filter((r) => !r.dead);
+  const down = [...remotes.values()].filter((r) => r.dead);
+  return [myCorpse, ...alive, ...down].filter(Boolean);
 }
 
 /**
@@ -636,8 +661,41 @@ function beginSpectating() {
   player.alive = false;
   player.torch.intensity = 0;
   input.gamepad.stop();
-  spectator.start(survivors);
+  // Where you went down, so the camera has somewhere to start and something to
+  // come back to. It is a plain point rather than a body - the body is the
+  // stain the world already keeps - and it is first in the list, so being caught
+  // hands you a shot of the spot it happened.
+  myCorpse = { name: "You", dead: true, corpse: true,
+               current: player.pos.clone(), pos: player.pos.clone() };
+  fallen.push("You");
+  spectator.start(watchable);
   document.body.classList.add("spectating");
+  // Unlike endGame, a pause survives this. You were watching a menu, the thing
+  // found you anyway, and what is behind the menu is now a camera over your own
+  // body - which is worth letting somebody read at their own pace.
+}
+
+/**
+ * Who did not make it, for the card at the end.
+ *
+ * Only worth saying in a lobby, and only when somebody actually went down: on
+ * your own "You died trying" under "You got out" is nonsense, and a clean run
+ * wants no footnote at all. Every round rolls a different map and a different
+ * order of deaths, so this is the one line on that screen that is about the run
+ * everybody just had rather than about the game.
+ */
+function tribute() {
+  if (!online || !fallen.length) return "";
+  // These names came off the wire and the end card is the one place in the UI
+  // that writes HTML rather than text, so they get escaped on the way in. The
+  // worker caps a name at sixteen characters and nothing else, which is plenty
+  // of room for a tag.
+  const safe = (n) => n.replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const names = fallen.map((n) => (n === "You" ? "you" : safe(n)));
+  const list = names.length === 1 ? names[0]
+    : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+  return `<span class="fallen">${list} died trying</span>`;
 }
 
 function endGame(kind, headline, detail) {
@@ -645,6 +703,11 @@ function endGame(kind, headline, detail) {
   game.over = kind;
   player.alive = false;
   running = false;
+  // The menu can be open when this happens, because the world kept going behind
+  // it. The end card takes the screen: being caught is not something to be shown
+  // underneath a settings panel.
+  paused = false;
+  input.frozen = false;
   input.gamepad.stop();          // the loop is about to stop calling rumble()
   input.release();
   input.touch.setInGame(false);
@@ -657,7 +720,7 @@ function endGame(kind, headline, detail) {
   document.body.classList.remove("spectating");
   // Online, only the host may start the next run - a guest hitting retry would
   // otherwise drop out of a lobby everyone else is still sitting in.
-  ui.showEnd(headline, detail, online
+  ui.showEnd(headline, [detail, tribute()].filter(Boolean).join("<br>"), online
     ? { host, onAgain: () => net.sendRestart(newSeed()) }
     : null);
   if (input.xr.presenting) input.xr.pulse(1, 400);
@@ -950,9 +1013,9 @@ function frame() {
   // re-entering the pause menu is a fade each way rather than a switch.
   audio.music("theme", showcase.wanted(running) || (running && paused && !game.over));
 
-  // Online, a pause does not take the world with it - see pause(). The panel is
-  // drawn over a round that is still being played.
-  if (!running || (paused && !online) || !player) {
+  // A pause does not take the world with it - see pause(). The panel is drawn
+  // over a round that is still being played, in a lobby or on your own.
+  if (!running || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
     // or reading the end card - the real world stays behind the panel.
     // The arrow goes when the parade arrives, and not a moment before: the point

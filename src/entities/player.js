@@ -25,6 +25,10 @@ export class Player {
     this.vel = new THREE.Vector3();
     this.stamina = CFG.player.staminaMax;
     this.battery = CFG.player.batteryMax;
+    // Seconds the torch has been flat and unused, and whether it is on its way
+    // back. See the recharge in update().
+    this.flat = 0;
+    this.recovering = false;
     this.torchOn = true;
     this.jumped = false;    // one-frame flags, read by main's audio
     this.stumbled = false;
@@ -187,6 +191,31 @@ export class Player {
     if (intent.torch && this.battery > 0) this.torchOn = !this.torchOn;
     if (this.battery <= 0) this.torchOn = false;
     if (this.torchOn) this.battery = Math.max(0, this.battery - dt);
+
+    // --- and it charges itself back up ------------------------------------
+    //
+    // The wait is counted only while the thing is actually flat and idle. Using
+    // the beam at all sends it back to zero, so a player cannot sit at the top
+    // of the ramp tapping the switch and drawing on it forever - the recovery
+    // is for somebody who ran it dry and left it alone, which is the only
+    // situation it is meant to rescue.
+    // Whether it is recovering is its OWN state rather than a reading of the
+    // battery, and that distinction is the whole of it: gating the timer on
+    // "battery is empty" means the first scrap of charge the ramp puts in stops
+    // the timer that is putting it there. It settles at three thousandths of a
+    // second of torch and stays there forever, which is a very quiet way to do
+    // nothing at all.
+    if (this.torchOn) { this.flat = 0; this.recovering = false; }
+    else if (this.battery <= 0.001) this.recovering = true;
+    if (this.recovering) {
+      this.flat += dt;
+      const t = Math.min(1, Math.max(0, this.flat - CFG.player.rechargeWait)
+                            / CFG.player.rechargeTime);
+      // Smoothstep, so it starts slow, gathers, and settles rather than
+      // arriving at a flat one second per second.
+      this.battery = Math.max(this.battery,
+                              CFG.player.rechargeTo * t * t * (3 - 2 * t));
+    }
     // The beam is either fully on or fully off - no battery ramp, no threat
     // dimming, nothing. A torch that quietly fades is indistinguishable from the
     // scene getting darker, which makes it impossible to judge what you can see.
