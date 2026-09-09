@@ -291,6 +291,7 @@ function begin() {
   // callers, because every way into a round comes through this.
   fallen = [];
   myCorpse = null;
+  world?.rain?.setOmen(false);
   resetSightings();
   input.frozen = false;
   input.touch.setInGame(true);
@@ -665,6 +666,9 @@ function beginSpectating() {
   // come back to. It is a plain point rather than a body - the body is the
   // stain the world already keeps - and it is first in the list, so being caught
   // hands you a shot of the spot it happened.
+  // One round in twenty-five, the rain a spectator watches is red. Rolled here,
+  // where the only people who can see it are already dead - see Rain.setColor.
+  if (Math.random() < 0.04) world?.rain?.setOmen(true);
   myCorpse = { name: "You", dead: true, corpse: true,
                current: player.pos.clone(), pos: player.pos.clone() };
   fallen.push("You");

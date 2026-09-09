@@ -17,7 +17,18 @@ import * as THREE from "three";
  */
 
 const DROPS = 2200;
-const BOX = new THREE.Vector3(26, 18, 26);   // metres, centred on the camera
+/**
+ * The box, and why it is this tall.
+ *
+ * It was 18 m, which put a hard ceiling nine metres over your head: look up in
+ * a downpour and the rain stopped at a flat lid with clear sky above it, and a
+ * lid does not move, so the whole shower read as a static slab of streaks
+ * hanging there rather than as weather falling out of a cloud. Thirty metres
+ * puts the ceiling far enough up to be past the tree line, and the top third
+ * fades out (see the shader) so there is no edge to find at all - drops appear
+ * out of nothing high up and are at full strength by the time they matter.
+ */
+const BOX = new THREE.Vector3(26, 30, 26);   // metres, centred on the camera
 const LEN = 0.42;                            // how long a streak is drawn
 
 /**
@@ -41,6 +52,9 @@ const TICK = 0.13;                           // metres a splash kicks back up
  * difference between a shower and a wet floor.
  */
 const SPLASH_BOX = 17;
+
+/** What the rain turns into for a spectator who gets unlucky. See setColor. */
+const OMEN = new THREE.Color(0x8c1620);
 
 /**
  * The canopies the shader is told about, at most.
@@ -160,7 +174,13 @@ export class Rain {
           // the top. The box is ${BOX.y} m tall and centred on the eye.
           p.y = mod( p.y - fall, ${BOX.y.toFixed(1)} ) - ${(BOX.y / 2).toFixed(1)};
           // Slanted by the wind, by how far it has already fallen.
-          p.xz += uWind * ( ${(BOX.y / 2).toFixed(1)} - p.y ) * 0.06;
+          //
+          // This is what makes it read as being blown rather than dropped, so
+          // it is worth more than the token amount it used to get: a drop that
+          // has fallen the height of the box is now carried a couple of metres
+          // sideways, and because the wind turns and gusts (see update) the
+          // whole shower leans and straightens as you watch it.
+          p.xz += uWind * ( ${(BOX.y / 2).toFixed(1)} - p.y ) * 0.11;
           // Wrap the slant back into the box too, or the whole shower drifts
           // out of it and the near air goes empty.
           p.x = mod( p.x + ${(BOX.x / 2).toFixed(1)}, ${BOX.x.toFixed(1)} ) - ${(BOX.x / 2).toFixed(1)};
@@ -173,6 +193,13 @@ export class Rain {
           float r = length( p.xz );
           vFade = ( 1.0 - smoothstep( ${(BOX.x * 0.22).toFixed(1)}, ${(BOX.x * 0.5).toFixed(1)}, r ) )
                   * uAmount * uLit;
+
+          // And faded out of the ceiling, which is the whole reason the box is
+          // thirty metres tall. Look up: the top of the shower has to dissolve
+          // into the cloud it is coming out of, or you find the lid and the rain
+          // stops being weather and becomes a texture hanging over your head.
+          float lid = ( p.y + ${(BOX.y / 2).toFixed(1)} ) / ${BOX.y.toFixed(1)};
+          vFade *= 1.0 - smoothstep( 0.55, 0.98, lid );
 
           // And stopped by whatever is over it.
           //
@@ -216,29 +243,40 @@ export class Rain {
    * height of the first thing above the floor there.
    */
   #buildSplashes(scene) {
-    const pos = new Float32Array(SPLASHES * 2 * 3);
-    const tip = new Float32Array(SPLASHES * 2);
-    const seed = new Float32Array(SPLASHES * 2 * 3);
+    // Four vertices a splash: two segments from one point on the ground,
+    // splaying apart. A drop that hits does not go one way - it breaks, and
+    // what you see is the two halves of it thrown out either side. One segment
+    // per splash was a slash, and eighteen hundred slashes all leaning off at
+    // their own angle read as debris rather than as water.
+    const VERTS = 4;
+    const pos = new Float32Array(SPLASHES * VERTS * 3);
+    const tip = new Float32Array(SPLASHES * VERTS);
+    const side = new Float32Array(SPLASHES * VERTS);
+    const seed = new Float32Array(SPLASHES * VERTS * 3);
 
     for (let i = 0; i < SPLASHES; i++) {
       const x = (Math.random() - 0.5) * SPLASH_BOX;
       const z = (Math.random() - 0.5) * SPLASH_BOX;
       // Phase, lean and rate: three numbers that stop eighteen hundred identical
-      // ticks landing on the same beat in the same shape.
+      // ticks landing on the same beat in the same shape. `lean` is now which
+      // way the V opens rather than which way a single tick falls.
       const phase = Math.random();
       const lean = Math.random() * Math.PI * 2;
       const rate = 1.6 + Math.random() * 1.4;
-      for (let v = 0; v < 2; v++) {
-        const k = (i * 2 + v) * 3;
+      for (let v = 0; v < VERTS; v++) {
+        const k = (i * VERTS + v) * 3;
         pos[k] = x; pos[k + 1] = 0; pos[k + 2] = z;
         seed[k] = phase; seed[k + 1] = lean; seed[k + 2] = rate;
-        tip[i * 2 + v] = v;
+        // (base, tip) twice: one arm each way.
+        tip[i * VERTS + v] = v % 2;
+        side[i * VERTS + v] = v < 2 ? -1 : 1;
       }
     }
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.setAttribute("aTip", new THREE.BufferAttribute(tip, 1));
+    geo.setAttribute("aSide", new THREE.BufferAttribute(side, 1));
     geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 3));
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4);
 
@@ -249,6 +287,7 @@ export class Rain {
       fog: false,
       vertexShader: `
         attribute float aTip;
+        attribute float aSide;
         attribute vec3 aSeed;
         uniform float uTime, uAmount, uLit;
         uniform vec3 uEye;
@@ -277,10 +316,13 @@ export class Rain {
           float age = fract( uTime * aSeed.z + aSeed.x );
           float life = smoothstep( 0.0, 0.06, age ) * ( 1.0 - smoothstep( 0.06, 0.34, age ) );
 
-          // The kick, leaning a different way for each one.
+          // The kick: two arms out of one point, opening away from each other.
+          // The arms are shorter than they are wide, so it reads as a splash
+          // opening out rather than as a pair of antennae.
           float up = ${TICK.toFixed(2)} * ( 0.5 + aSeed.z * 0.35 ) * aTip * life;
           p.y = surface + up;
-          p.xz += vec2( cos( aSeed.y ), sin( aSeed.y ) ) * aTip * life * 0.045;
+          vec2 open = vec2( cos( aSeed.y ), sin( aSeed.y ) ) * aSide;
+          p.xz += open * aTip * life * ${(TICK * 0.85).toFixed(3)};
 
           float r = length( p.xz );
           vFade = ( 1.0 - smoothstep( ${(SPLASH_BOX * 0.30).toFixed(1)}, ${(SPLASH_BOX * 0.5).toFixed(1)}, r ) )
@@ -316,6 +358,11 @@ export class Rain {
    */
   update(dt, eye, amount, canopy = null) {
     this.uniforms.uAmount.value = amount;
+    this.#blow(dt, amount);
+    // Eased here rather than in setColor, which is called before this and has
+    // no idea how much time has gone by.
+    this.omenNow = (this.omenNow ?? 0)
+      + ((this.omen ?? 0) - (this.omenNow ?? 0)) * Math.min(1, dt * 0.35);
     // Skipped entirely when it is dry. A shower nobody can see is still two and
     // a half thousand transparent primitives being sorted and drawn - and now
     // eleven hundred more of them landing.
@@ -330,6 +377,30 @@ export class Rain {
       this.uniforms.uEye.value.copy(eye);
       this.#gatherCanopy(eye, canopy);
     }
+  }
+
+  /**
+   * The wind, turning and gusting.
+   *
+   * It was a constant - one direction, one strength, for the whole game - and
+   * a constant slant is the thing that makes a shower look like a wallpaper of
+   * diagonal lines rather than like rain. Two slow sines out of phase turn it
+   * through most of a circle over a couple of minutes, and the gust rides on
+   * top: heavier rain is pushed harder, so a downpour visibly drives across you
+   * and eases off again while it does.
+   *
+   * Nothing here is random. Two sines against the clock give a wind that always
+   * changes and never jumps, which is the only quality that matters when the
+   * thing being driven is four thousand streaks that must all agree.
+   */
+  #blow(dt, amount) {
+    this.blown = (this.blown ?? 0) + dt;
+    const t = this.blown;
+    const turn = Math.sin(t * 0.041) * 1.7 + Math.sin(t * 0.0173 + 2.1) * 1.1;
+    // 0.55 in a drizzle, up towards 2.2 in a driven downpour, breathing on its
+    // own slow cycle so it is never at one strength for long.
+    const push = (0.55 + amount * 1.15) * (1 + Math.sin(t * 0.083 + 0.7) * 0.42);
+    this.uniforms.uWind.value.set(Math.cos(turn) * push, Math.sin(turn) * push);
   }
 
   /**
@@ -383,8 +454,26 @@ export class Rain {
     this.uniforms.uCanopies.value = n;
   }
 
-  /** The colour of the light it is falling through. */
-  setColor(c) { this.uniforms.uColor.value.copy(c); }
+  /**
+   * The colour of the light it is falling through - and, very occasionally,
+   * something else.
+   *
+   * `omen` is an easter egg and it has exactly one rule: the living never see
+   * it. Rain runs red for a spectator now and then, one round in twenty-five,
+   * and there is nobody left alive to tell about it. Anyone you describe it to
+   * is watching clear rain, which is the entire joke. It eases in over a few
+   * seconds rather than switching, so it reads as something you noticed rather
+   * than as a bug you caught.
+   */
+  setColor(c) {
+    const u = this.uniforms.uColor.value;
+    u.copy(c);
+    this.omenNow = (this.omenNow ?? 0);
+    if (this.omenNow > 0.002) u.lerp(OMEN, this.omenNow);
+  }
+
+  /** Roll the egg, or put it away. Called when a round starts and when you die. */
+  setOmen(on) { this.omen = on ? 1 : 0; }
 
   /**
    * How brightly to draw it, from how much light there is to draw it in.
