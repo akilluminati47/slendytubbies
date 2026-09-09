@@ -143,7 +143,16 @@ function bakeFlight(pts) {
     heads[k] = `M${arm(0.62)}L${a[0].toFixed(1)} ${a[1].toFixed(1)}L${arm(-0.62)}`;
     offs[k] = (seg - nose).toFixed(1);
   }
-  return { heads, offs, dash: `${seg.toFixed(1)} ${total.toFixed(1)}` };
+  // The gap is what is LEFT of the loop, not another whole loop.
+  //
+  // A dash pattern repeats every dash-plus-gap, so "seg total" repeats every
+  // seg + total - which is longer than the path. Once a lap the pattern stops
+  // lining up with the closed curve and the front of the next dash appears at
+  // the start while the tail of this one is still at the end: the stroke visibly
+  // comes apart, in the same place, every time round. A gap of total - seg makes
+  // the period exactly one lap, so it tiles the loop seamlessly and the stroke
+  // crosses the join as one piece.
+  return { heads, offs, dash: `${seg.toFixed(1)} ${(total - seg).toFixed(1)}` };
 }
 
 let live = null;
