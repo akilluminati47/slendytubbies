@@ -92,6 +92,23 @@ showcase.resize(innerWidth, innerHeight);
 installMenuSfx(audio);
 installTorchBench({ showcase });
 
+// Compile the parade's shaders before anything asks to see them.
+//
+// three builds a program the first time a material is drawn, and building one
+// stalls the thread it is on. That stall used to land on the very first frame of
+// the parade - the single frame the whole splash is a handover on - so the cast
+// arrived with a hitch. compileAsync does the same work now, while the arrow is
+// still flying and nothing is waiting on the clock, and uses the driver's
+// parallel compile where there is one.
+//
+// Guarded because it is a newer API than the floor this runs on, and a missing
+// one should cost a hitch rather than the game.
+try {
+  await renderer.compileAsync?.(showcase.scene, showcase.camera);
+} catch (err) {
+  console.warn("[boot] shader precompile skipped", err);
+}
+
 /* -------------------------------------------------------------- game state */
 
 const clock = new THREE.Clock();
@@ -340,6 +357,7 @@ net.addEventListener("join", (e) => {
   ui.flash(`${e.detail.name} joined as ${ROLE_LABEL[e.detail.role] ?? e.detail.role}`);
 });
 net.addEventListener("leave", (e) => {
+  audio.dropBelly(`p${e.detail.id}`);
   const r = remotes.get(e.detail.id);
   if (r) ui.flash(`${r.name} left`);
   r?.dispose(scene);
@@ -884,7 +902,12 @@ function frame() {
   // so nothing ever told it to stop and the menu music played through the whole
   // game. A thing that turns itself on has to be asked when to turn itself off
   // from somewhere that is still being reached.
-  audio.music("theme", showcase.wanted(running));
+  // The theme belongs to the screens the parade is on - and to a pause, which is
+  // the one moment inside a round that is a menu. Only the player who paused
+  // hears it, because there is nothing to send: pausing is a local thing and so
+  // is this. music() fades in over 1.4s and out over 0.6, so leaving and
+  // re-entering the pause menu is a fade each way rather than a switch.
+  audio.music("theme", showcase.wanted(running) || (running && paused && !game.over));
 
   if (!running || paused || !player) {
     // On the front screens the cast walks past instead; anywhere else - paused,
@@ -893,6 +916,11 @@ function frame() {
     // is that the screen is never empty, so the two have to overlap rather than
     // hand over. draw() reports whether it actually put the cast on screen, so
     // the first true is the frame the splash stops being a black rectangle.
+    // The world stops humming when it stops being played. The dish hum and the
+    // bellies are loops whose level is only revised inside the branch below, so
+    // left alone they hold their last value and follow you out - which is how
+    // the last dish taken ended up humming over the end card and into the menu.
+    audio.hushWorld();
     const paraded = showcase.draw(dt, renderer, running);
     if (paraded) stopLoader();
     else renderer.render(scene, camera);
@@ -929,6 +957,10 @@ function frame() {
     if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
     if (r.didSee) { audio.fright(r.current); r.didSee = false; }
     if (r.stepped) audio.step(r.stepPower, r.current);
+    // Their television. Never your own - in first person you are not somewhere
+    // over there, and a set you cannot walk away from is a different game.
+    const rd = Math.hypot(r.current.x - player.pos.x, r.current.z - player.pos.z);
+    audio.bellyStatic(`p${r.id}`, r.dead ? null : r.current, rd, "friend");
   }
     world.updateGlow(game.elapsed, spectator.pos);
     world.tickWeather(dt, camera.getWorldPosition(_eye));
@@ -1062,6 +1094,10 @@ function frame() {
     if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
     if (r.didSee) { audio.fright(r.current); r.didSee = false; }
     if (r.stepped) audio.step(r.stepPower, r.current);
+    // Their television. Never your own - in first person you are not somewhere
+    // over there, and a set you cannot walk away from is a different game.
+    const rd = Math.hypot(r.current.x - player.pos.x, r.current.z - player.pos.z);
+    audio.bellyStatic(`p${r.id}`, r.dead ? null : r.current, rd, "friend");
   }
 
   // Drop the scatter that is beyond the fog before anything is drawn. The
@@ -1106,7 +1142,7 @@ function frame() {
     const d = Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z);
     if (d < nearestD) { nearestD = d; nearest = t; }
   }
-  audio.bellyStatic(nearest?.pos ?? null, nearestD);
+  audio.bellyStatic("chaser", nearest?.pos ?? null, nearestD);
 
   // And the nearest dish left, humming for whoever is looking for it. Local
   // only: it feeds nothing to the AI and goes to nobody.

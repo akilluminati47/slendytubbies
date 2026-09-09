@@ -38,11 +38,49 @@ const HUM = {
   // A dish, for the player who is looking for it. Reaches a little past the
   // torch so the ear finds one just outside what the eye can.
   dish: { from: 26, gain: 0.085, hz: 132 },
-  // The set in its belly. Only inside the range the heartbeat lives in, so it
-  // arrives at the same moment the dread does and says which direction it is
-  // coming from, which the heartbeat cannot.
-  belly: { from: 20, gain: 0.16 },
+  // The set in the CHASER's belly. Only inside the range the heartbeat lives
+  // in, so it arrives at the same moment the dread does and says which
+  // direction it is coming from, which the heartbeat cannot.
+  belly: { from: 20, gain: 0.16, hz: 1750, q: 0.55 },
+  // And in everybody else's. Quieter and shorter-ranged than the thing hunting
+  // you, deliberately: four tellies at chaser strength would drown the one that
+  // matters, and the whole value of that sound is that hearing it means
+  // something. A team-mate at arm's length is still under half the chaser at
+  // twenty metres.
+  friend: { from: 11, gain: 0.055 },
 };
+
+/**
+ * A belly's own voice, from whatever names it.
+ *
+ * Every set is tuned slightly differently - a real room of them would be - and
+ * doing it from a hash of the player's id rather than at random means yours
+ * sounds the same to everybody, stays the same all round, and needs nothing
+ * sent to agree on. Two people can be told apart by ear before they are told
+ * apart by eye, which in fog is most of the time.
+ */
+function bellyVoice(key) {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // Avalanche, or short similar keys stay short similar hashes. "p1", "p2" and
+  // "p3" differ in one character and came out at 1789, 1787 and 1786 Hz - three
+  // sets tuned to the same station. Two rounds of xor-shift and multiply spread
+  // a one-bit change across the whole word, which is the entire point of the
+  // step and the reason it is not optional here.
+  h ^= h >>> 16; h = Math.imul(h, 2246822507);
+  h ^= h >>> 13; h = Math.imul(h, 3266489909);
+  h ^= h >>> 16;
+  const a = (h >>> 8 & 1023) / 1023;
+  const b = (h >>> 20 & 255) / 255;
+  // And deliberately BELOW the chaser's band rather than around it. A friend
+  // and the thing hunting you should not be the same sound at two volumes: its
+  // set sits at 1750 and theirs run 820 to 1480, so a room of them is a chord
+  // the monster is not part of.
+  return { hz: 820 + a * 660, q: 0.5 + b * 0.55 };
+}
 
 export class Audio {
   constructor() {
@@ -55,8 +93,11 @@ export class Audio {
     this.pending = new Map();
     // The looping music, and which sample it is - see music().
     this.playing = null;
+    this.fading = null;
     this.musicName = null;
     this.gritBuf = null;
+    // key -> a looping, panned television. See #belly.
+    this.bellies = new Map();
   }
 
   /**
@@ -128,7 +169,6 @@ export class Audio {
     this.#buildWind();
     this.#buildHeart();
     this.#buildHum();
-    this.#buildStatic();
     this.ready = true;
     return true;
   }
@@ -165,32 +205,46 @@ export class Audio {
   }
 
   /**
-   * The set in its belly, from across a clearing.
+   * A belly, built on demand and kept.
    *
    * Looped noise through a narrow band, which is what a detuned CRT actually
    * sounds like through a wall: no top end, no bottom, all hiss in the middle.
    * Panned, so it tells you which way the thing is - the heartbeat tells you it
-   * is close and nothing more, and knowing it is close without knowing where is
-   * a worse kind of useless than not knowing at all.
+   * is close and nothing more, and knowing a thing is close without knowing
+   * where is a worse kind of useless than not knowing at all.
+   *
+   * One of these per body rather than one shared, because in a lobby there are
+   * four of them and they are in four places. They are made when a body first
+   * needs one and dropped when it leaves; the chaser's is simply the one keyed
+   * "chaser".
+   *
+   * Your own is never made. In first person you are not somewhere over there,
+   * and a television you cannot get away from is a different game.
    */
-  #buildStatic() {
+  #belly(key, voice) {
+    let b = this.bellies.get(key);
+    if (b) return b;
     const panner = this.#emitter();
     const gain = this.ctx.createGain();
     gain.gain.value = 0;
     const band = this.ctx.createBiquadFilter();
     band.type = "bandpass";
-    band.frequency.value = 1750;
-    band.Q.value = 0.55;
+    band.frequency.value = voice.hz;
+    band.Q.value = voice.q;
     const cut = this.ctx.createBiquadFilter();
     cut.type = "lowpass";
     cut.frequency.value = 3400;
     const src = this.ctx.createBufferSource();
     src.buffer = this.#grit();
     src.loop = true;
+    // Each starts at its own point in the noise, or four of them line up and
+    // stop being four.
+    src.loopStart = 0;
     src.connect(band).connect(cut).connect(gain).connect(panner);
-    src.start();
-    this.nodes.staticGain = gain;
-    this.nodes.staticAt = panner;
+    src.start(this.ctx.currentTime, Math.random() * 0.35);
+    b = { panner, gain, src };
+    this.bellies.set(key, b);
+    return b;
   }
 
   /** A panner that stays put in the graph and gets moved, for the loops. */
@@ -233,20 +287,52 @@ export class Audio {
   }
 
   /**
-   * And the belly, at whichever tubby is closest.
+   * Point one belly at a body, or quieten it.
    *
    * Squared falloff on top of the panner's own, so it is genuinely absent until
-   * the thing is near rather than a hiss that is always faintly there. It keeps
-   * playing through the jumpscare on purpose: the scream goes over the top of it
-   * and the static is what is left underneath.
+   * the thing is near rather than a hiss that is always faintly there. The
+   * chaser's keeps playing through the jumpscare on purpose: the scream goes
+   * over the top of it and the static is what is left underneath.
+   *
+   * @param key   "chaser", or a player's id
+   * @param at    where it is, or null to fade this one out
+   * @param dist  how far, in metres
+   * @param kind  which set of numbers - the thing hunting you, or a friend
    */
-  bellyStatic(at, dist) {
+  bellyStatic(key, at, dist, kind = "belly") {
     if (!this.ready) return;
-    const g = this.nodes.staticGain.gain;
-    if (!at) { g.setTargetAtTime(0, this.ctx.currentTime, 0.3); return; }
-    this.#moveTo(this.nodes.staticAt, at);
-    const k = Math.max(0, 1 - dist / HUM.belly.from);
-    g.setTargetAtTime(HUM.belly.gain * k * k, this.ctx.currentTime, 0.12);
+    const spec = HUM[kind] ?? HUM.belly;
+    const voice = kind === "friend" ? bellyVoice(key) : { hz: spec.hz, q: spec.q };
+    const b = this.#belly(key, voice);
+    const t = this.ctx.currentTime;
+    if (!at) { b.gain.gain.setTargetAtTime(0, t, 0.3); return; }
+    this.#moveTo(b.panner, at);
+    const k = Math.max(0, 1 - dist / spec.from);
+    b.gain.gain.setTargetAtTime(spec.gain * k * k, t, 0.12);
+  }
+
+  /**
+   * Everything the world is humming, off.
+   *
+   * The dish hum and the bellies are loops whose level is only revised while a
+   * round is being played, so when one ends they hold whatever they were last
+   * set to and follow you into the menus - which is how the last dish taken
+   * ended up humming over the end card. Ending a round has to say so.
+   */
+  hushWorld() {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    this.nodes.dishHum.gain.setTargetAtTime(0, t, 0.18);
+    for (const b of this.bellies.values()) b.gain.gain.setTargetAtTime(0, t, 0.18);
+  }
+
+  /** A body that has left the lobby takes its television with it. */
+  dropBelly(key) {
+    const b = this.bellies.get(key);
+    if (!b) return;
+    this.bellies.delete(key);
+    try { b.src.stop(this.ctx.currentTime + 0.3); } catch { /* already gone */ }
+    setTimeout(() => { try { b.panner.disconnect(); } catch { /* gone */ } }, 500);
   }
 
   /**
@@ -687,15 +773,28 @@ export class Audio {
       const live = this.playing;
       if (!live) return;
       this.playing = null;
+      // Held while it fades, so that a screen coming straight back can cut it
+      // rather than start a second copy over the top of it - see below.
+      this.fading = live;
       const t = this.ctx.currentTime;
       live.gain.gain.cancelScheduledValues(t);
       live.gain.gain.setValueAtTime(live.gain.gain.value, t);
       live.gain.gain.linearRampToValueAtTime(0.0001, t + 0.6);
       try { live.src.stop(t + 0.7); } catch { /* already stopped */ }
+      setTimeout(() => { if (this.fading === live) this.fading = null; }, 750);
       return;
     }
     if (this.musicName === name) return;
     this.musicName = name;
+    // Whatever was on the way out goes now rather than over the next six
+    // hundred milliseconds. Pausing, resuming and pausing again inside that
+    // window used to leave two copies of the theme running against each other,
+    // slightly out of step, which is the worst possible way for a loop to be
+    // wrong - it sounds like the file is broken rather than the code.
+    if (this.fading) {
+      try { this.fading.src.stop(); } catch { /* already stopped */ }
+      this.fading = null;
+    }
     const buf = await this.#decode(name);
     if (!buf || this.musicName !== name || this.playing) return;
     const src = this.ctx.createBufferSource();

@@ -54,7 +54,12 @@
 
   /* The scrawl, wherever it is big enough to earn its place. */
   h1, h2, .btn, .tab, #objective b { font-family:var(--hand); }
-  canvas { display:block; }
+  /* The canvas starts hidden and dissolves in as the arrow dissolves out, so
+     the parade arrives rather than appearing. Both are over black, so what the
+     eye sees is one thing becoming the other rather than two things swapping.
+     .loaded is set the frame the cast is actually on screen - see loader.js. */
+  canvas { display:block; opacity:0; transition:opacity .75s ease; }
+  body.loaded canvas { opacity:1; }
   .hide { display:none !important; }
 
   /* ------------------------------------------------------------------ HUD */
@@ -325,12 +330,11 @@
     transition:opacity .55s ease; }
   #loading-arrow.done { opacity:0; transition:opacity .5s ease; }
   @keyframes arrowIn { to { opacity:1 } }
-  #loading-arrow path { fill:none; stroke:#f4efe2; stroke-linecap:round;
-    stroke-linejoin:round; }
-  #loading-arrow path:nth-child(1) { stroke-width:2.6; opacity:.95; }
-  #loading-arrow path:nth-child(2) { stroke-width:2.0; opacity:.45; }
-  #loading-arrow path:nth-child(3) { stroke-width:1.4; opacity:.18; }
-  #loading-arrow .arrow-head { stroke-width:2.6; opacity:.95; }
+  /* One weight for the whole thing, matched to the stroke the title is drawn
+     with rather than to itself. The head is the same line as the tail because
+     on paper it would be: it is one pen. */
+  #loading-arrow path { fill:none; stroke:#f4efe2; stroke-width:3.4;
+    stroke-linecap:round; stroke-linejoin:round; opacity:.92; }
   @media (prefers-reduced-motion: reduce) { #loading-arrow { display:none; } }
   #vr { border-color:#4d6a55; color:#a9c9b3; }
 
@@ -465,7 +469,17 @@
     padding:7px 13px; letter-spacing:.09em; text-transform:uppercase; }
   .set-toggle.on, .set-choices button.on { color:var(--ink); border-color:#6d7f63;
     background:#12140f; }
-  .set-choices { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+  /* Four across, or two by two, and never three and one.
+     
+     flex-wrap gives whatever fits, and what fits at most widths is three on one
+     line and a lonely fourth underneath - which reads as a layout that broke
+     rather than a layout. A grid of equal columns cannot do that: either they
+     all fit on one row or the row count is chosen here, and 2x2 is the only
+     other arrangement of four that looks deliberate. Equal columns also make
+     the buttons the same width, which "Smooth" and "Snap 15" never were. */
+  .set-choices { display:grid; gap:5px; justify-self:end;
+    grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); }
+  .set-choices button { white-space:nowrap; }
 
   /* ----------------------------------------------------------------- lobby */
   #lobby { align-content:start; padding-top:7vh; overflow-y:auto; gap:0; }
@@ -600,6 +614,9 @@
       gap:10px; width:100%; }
     .row .btn { width:100%; padding:13px 6px; }
     .set-row { grid-template-columns:1fr auto; gap:2px 10px; padding:7px 13px; }
+    /* Two by two rather than four across, at the width four stops fitting. */
+    .set-choices { grid-auto-flow:row; grid-template-columns:repeat(2,minmax(0,1fr));
+      grid-column:1 / -1; grid-row:2; justify-self:stretch; }
     .set-row input[type=range] { grid-column:1 / -1; grid-row:2; width:100%; }
     .set-value { grid-column:2; grid-row:1; width:auto; min-width:46px; padding:2px 4px; }
     .set-label { font-size:11px; }
@@ -637,8 +654,17 @@
     .set-label { font-size:11px; }
     /* Small enough that four of them stay on one line - wrapped, the VR row
        was twice the height of every other row on its own. */
-    .set-choices button, .set-toggle { padding:4px 8px; font-size:10px; }
-    .set-choices { flex-wrap:nowrap; }
+    .set-toggle { padding:4px 8px; font-size:10px; }
+    /* Sideways the settings run in two columns, so these four share half a
+       screen. At the old padding and tracking "Snap 45" wanted 57px inside a
+       51px button and was quietly cut off; both come down rather than the
+       label, because "Snap 45" abbreviated is just a number nobody can read. */
+    .set-choices button { padding:4px 3px; font-size:10px; letter-spacing:.03em; }
+    /* Sideways there is width to spare and no height at all, so four across
+       again - a 2x2 here costs a whole extra row of a screen that has none. */
+    .set-choices { grid-auto-flow:column; grid-template-columns:none;
+      grid-auto-columns:minmax(0,1fr); grid-column:auto; grid-row:auto;
+      justify-self:end; }
     #pause .card { gap:8px; padding:12px 18px; }
     #pause h2 { font-size:17px; }
     #hints { font-size:10px; line-height:1.5; }

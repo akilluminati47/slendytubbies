@@ -27,13 +27,28 @@ export const GROUND = 0;
 export const BARK = 1;
 export const ROCK = 2;
 
+/*
+ * highp, said out loud, on everything this file touches.
+ *
+ * three emits a default precision based on what the device reports, and on a
+ * phone that can come back mediump - which for ordinary shading is fine and for
+ * hash noise is fatal. A mediump float carries about eleven bits of mantissa, so
+ * by the time a world coordinate has been scaled to 4.3x and pushed through
+ * three octaves it is a number near a thousand with no fractional part left.
+ * floor() and fract() then return the same values across whole bands of the
+ * surface, and the lattice the noise is built on becomes visible as a grid.
+ *
+ * That is the bug: not a missing height map, the height map quantised into
+ * steps. WebGL2 guarantees highp is AVAILABLE in fragment shaders; it does not
+ * guarantee it is the default. Asking for it per declaration does.
+ */
 const COMMON = /* glsl */`
-  varying vec3 vSurfWorld;
-  varying vec3 vSurfObj;
+  varying highp vec3 vSurfWorld;
+  varying highp vec3 vSurfObj;
 `;
 
 const NOISE = /* glsl */`
-  float sHash(vec3 p) {
+  highp float sHash(highp vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
     p *= 17.0;
     return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
@@ -41,8 +56,8 @@ const NOISE = /* glsl */`
 
   // Value noise with smooth interpolation. Cheap, and the only quality that
   // matters here is that it has no visible grid.
-  float sNoise(vec3 x) {
-    vec3 i = floor(x), f = fract(x);
+  highp float sNoise(highp vec3 x) {
+    highp vec3 i = floor(x), f = fract(x);
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(mix(sHash(i + vec3(0,0,0)), sHash(i + vec3(1,0,0)), f.x),
                    mix(sHash(i + vec3(0,1,0)), sHash(i + vec3(1,1,0)), f.x), f.y),
@@ -50,8 +65,8 @@ const NOISE = /* glsl */`
                    mix(sHash(i + vec3(0,1,1)), sHash(i + vec3(1,1,1)), f.x), f.y), f.z);
   }
 
-  float sFbm(vec3 p, int octaves) {
-    float v = 0.0, amp = 0.5;
+  highp float sFbm(highp vec3 p, int octaves) {
+    highp float v = 0.0, amp = 0.5;
     for (int i = 0; i < 5; i++) {
       if (i >= octaves) break;
       v += sNoise(p) * amp;
@@ -63,11 +78,11 @@ const NOISE = /* glsl */`
 
   // Ridged noise: folding the field about its midpoint turns smooth blobs into
   // creases, which is what stone and bark both actually are.
-  float sRidge(vec3 p, int octaves) {
-    float v = 0.0, amp = 0.5;
+  highp float sRidge(highp vec3 p, int octaves) {
+    highp float v = 0.0, amp = 0.5;
     for (int i = 0; i < 5; i++) {
       if (i >= octaves) break;
-      float n = 1.0 - abs(sNoise(p) * 2.0 - 1.0);
+      highp float n = 1.0 - abs(sNoise(p) * 2.0 - 1.0);
       v += n * n * amp;
       p = p * 2.11 + 19.3;
       amp *= 0.5;
@@ -86,7 +101,7 @@ const NOISE = /* glsl */`
  * sharper, because stone breaks rather than wearing.
  */
 const HEIGHT = /* glsl */`
-  float sHeight(int kind, vec3 w, vec3 o) {
+  highp float sHeight(int kind, highp vec3 w, highp vec3 o) {
     if (kind == 0) {
       // Two scales: broad damp patches, and a fine tread underfoot.
       return sFbm(w * 0.55, 3) * 0.7 + sFbm(w * 4.3, 2) * 0.3;
@@ -94,9 +109,9 @@ const HEIGHT = /* glsl */`
     if (kind == 1) {
       // Furrows up the trunk. The angular term is what makes them run
       // vertically; the noise added to it is what stops them being a barcode.
-      float wander = sFbm(o * vec3(3.0, 0.55, 3.0), 3);
-      float around = atan(o.z, o.x) * 2.6 + wander * 5.0;
-      float furrow = sin(around) * 0.5 + 0.5;
+      highp float wander = sFbm(o * vec3(3.0, 0.55, 3.0), 3);
+      highp float around = atan(o.z, o.x) * 2.6 + wander * 5.0;
+      highp float furrow = sin(around) * 0.5 + 0.5;
       return furrow * 0.55 + sRidge(o * vec3(6.0, 1.1, 6.0), 3) * 0.45;
     }
     // Rock.
@@ -188,7 +203,7 @@ export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } 
       // Albedo first: the same field that will bend the normal also decides
       // what colour the low ground is, so the two agree instead of fighting.
       .replace("#include <color_fragment>", `#include <color_fragment>
-        float sH = sHeight(${kind}, vSurfWorld, vSurfObj);
+        highp float sH = sHeight(${kind}, vSurfWorld, vSurfObj);
         diffuseColor.rgb = mix(diffuseColor.rgb,
           mix(uSurfTint, diffuseColor.rgb * 1.35, sH),
           uSurfMottle);`)
@@ -200,11 +215,11 @@ export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } 
           // None of this geometry has tangents - the rocks are solids, the
           // trunks are generated and the ground is a heightfield - and this
           // needs none.
-          vec3 dPdx = dFdx(vSurfWorld), dPdy = dFdy(vSurfWorld);
-          float dHdx = dFdx(sH), dHdy = dFdy(sH);
-          vec3 r1 = cross(dPdy, normal), r2 = cross(normal, dPdx);
-          float det = dot(dPdx, r1);
-          vec3 grad = (r1 * dHdx + r2 * dHdy) / max(abs(det), 1e-7);
+          highp vec3 dPdx = dFdx(vSurfWorld), dPdy = dFdy(vSurfWorld);
+          highp float dHdx = dFdx(sH), dHdy = dFdy(sH);
+          highp vec3 r1 = cross(dPdy, normal), r2 = cross(normal, dPdx);
+          highp float det = dot(dPdx, r1);
+          highp vec3 grad = (r1 * dHdx + r2 * dHdy) / max(abs(det), 1e-7);
           normal = normalize(normal - uSurfBump * grad);
         }`);
   };

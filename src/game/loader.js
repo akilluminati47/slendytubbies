@@ -90,14 +90,12 @@ export function startLoader() {
   svg.setAttribute("id", "loading-arrow");
   svg.setAttribute("aria-hidden", "true");
 
-  // Three strokes on one path, at falling width and opacity, with the shortest
-  // at the front. A single dash is a worm; three of different lengths taper
-  // behind the head and read as ink running out.
-  const trails = [
-    { w: 2.6, o: 0.95, len: 0.30 },
-    { w: 2.0, o: 0.45, len: 0.62 },
-    { w: 1.4, o: 0.18, len: 1.00 },
-  ].map(() => document.createElementNS("http://www.w3.org/2000/svg", "path"));
+  // One stroke, one width, one opacity - the same line the name above it is
+  // drawn with. It was three of falling width and opacity, tapering behind the
+  // head like ink running out, and that is a lovely effect belonging to a
+  // different typeface: the game's hand is a marker held at a constant angle,
+  // so its strokes do not thin out and neither does this.
+  const trails = [document.createElementNS("http://www.w3.org/2000/svg", "path")];
 
   const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
   head.setAttribute("class", "arrow-head");
@@ -135,7 +133,7 @@ export function startLoader() {
   addEventListener("resize", shape);
   state.onResize = shape;
 
-  const lens = [0.30, 0.62, 1.0];
+  const lens = [1.0];
   state.t0 = performance.now();
   const tick = (now) => {
     state.raf = requestAnimationFrame(tick);
@@ -146,8 +144,8 @@ export function startLoader() {
     state.trails.forEach((p, i) => {
       const seg = total * ARC.trail * lens[i];
       p.style.strokeDasharray = `${seg} ${total}`;
-      // The dash is drawn BACK from the nose, so the bright short one is the
-      // tip and the faint long one is what it has already flown through.
+      // The dash is drawn BACK from the nose, so the stroke is what the arrow
+      // has just flown through and the head sits at its leading end.
       p.style.strokeDashoffset = `${seg - nose}`;
     });
     // The head, pointed the way it is going. The tangent is taken from a point
