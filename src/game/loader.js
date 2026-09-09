@@ -16,6 +16,15 @@
  * it imports runs first, and this is that module.
  */
 
+/**
+ * How many steps of the loop are baked.
+ *
+ * A lap runs 2.6 to 4.2 seconds, so this is 114 to 185 steps a second - ahead of
+ * any refresh rate it will meet, which is the only number that matters. Two
+ * short strings each, thrown away with the arrow.
+ */
+const BAKE = 480;
+
 /** How the flight is shaped, and how much of it is left to chance. */
 const ARC = {
   points: 440,          // samples around the loop
@@ -55,6 +64,7 @@ function flightPath(cx, cy, rx, ry) {
   const w = [rand(0, 6.28), rand(0, 6.28), rand(0, 6.28)];
 
   const cos = Math.cos(tilt), sin = Math.sin(tilt);
+  const pts = new Float64Array((ARC.points + 1) * 2);
   let d = "";
   for (let i = 0; i <= ARC.points; i++) {
     const th = dir * (i / ARC.points) * Math.PI * 2;
@@ -66,9 +76,74 @@ function flightPath(cx, cy, rx, ry) {
     const ey = Math.sin(th) * (ry * swell + shake);
     const x = cx + ex * cos - ey * sin;
     const y = cy + ex * sin + ey * cos;
+    pts[i * 2] = x;
+    pts[i * 2 + 1] = y;
     d += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
   }
-  return d + "Z";
+  // The points as well as the string. Everything the animation needs is worked
+  // out from these once and never again - see bakeFlight.
+  return { d: d + "Z", pts };
+}
+
+/**
+ * Every step of the flight, worked out before the first one is shown.
+ *
+ * The tick used to ask the SVG where a point on the path was, twice, and build
+ * four strings, every frame. getPointAtLength is a geometry query into the
+ * layout engine; what it costs is not something this code decides, and it was
+ * the stutter.
+ *
+ * The whole loop is two lookup tables now - the arrowhead's path string and the
+ * dash offset, for each of BAKE steps around it. At run time a timestamp becomes
+ * an index and two strings that already exist get assigned. No geometry, no
+ * trigonometry, no string building, nothing for the collector to come back for.
+ *
+ * Stepped by ARC LENGTH rather than by the angle the curve was drawn from, which
+ * is what keeps the speed even: the radius swells as it goes round, so equal
+ * steps of angle are unequal steps of distance, and an arrow that speeds up on
+ * the narrow side reads as a dropped frame rather than as a flourish.
+ */
+function bakeFlight(pts) {
+  const n = pts.length / 2 - 1;
+  // Distance along the polyline, so a length can be turned into a position by
+  // walking the table instead of searching it.
+  const run = new Float64Array(n + 1);
+  for (let i = 1; i <= n; i++) {
+    run[i] = run[i - 1] + Math.hypot(pts[i * 2] - pts[i * 2 - 2],
+                                     pts[i * 2 + 1] - pts[i * 2 - 1]);
+  }
+  const total = run[n];
+  if (!(total > 0)) return null;
+
+  let cursor = 0;
+  const at = (len, out) => {
+    let d = len % total;
+    if (d < 0) d += total;
+    // Restarted per lookup rather than carried, because the head and the point
+    // behind it are asked for out of order.
+    cursor = 0;
+    while (cursor < n && run[cursor + 1] <= d) cursor++;
+    const a = run[cursor], b = run[cursor + 1];
+    const f = b > a ? (d - a) / (b - a) : 0;
+    const j = cursor * 2;
+    out[0] = pts[j] + (pts[j + 2] - pts[j]) * f;
+    out[1] = pts[j + 1] + (pts[j + 3] - pts[j + 1]) * f;
+  };
+
+  const seg = total * ARC.trail;
+  const heads = new Array(BAKE), offs = new Array(BAKE);
+  const a = [0, 0], b = [0, 0];
+  for (let k = 0; k < BAKE; k++) {
+    const nose = (k / BAKE) * total;
+    at(nose, a);
+    at(nose - 9, b);
+    const ang = Math.atan2(a[1] - b[1], a[0] - b[0]);
+    const arm = (t) => `${(a[0] - Math.cos(ang + t) * ARC.head).toFixed(1)} ` +
+                       `${(a[1] - Math.sin(ang + t) * ARC.head).toFixed(1)}`;
+    heads[k] = `M${arm(0.62)}L${a[0].toFixed(1)} ${a[1].toFixed(1)}L${arm(-0.62)}`;
+    offs[k] = (seg - nose).toFixed(1);
+  }
+  return { heads, offs, dash: `${seg.toFixed(1)} ${total.toFixed(1)}` };
 }
 
 let live = null;
@@ -123,40 +198,34 @@ export function startLoader() {
     const clear = Math.hypot(r.width, r.height) * 0.5 + 34;
     const rx = Math.min(Math.max(r.width * 0.5 + 58, clear), w * 0.45);
     const ry = Math.min(Math.max(r.height * 0.5 + 54, clear), h * 0.4);
-    const d = flightPath(cx, cy, rx, ry);
+    const { d, pts } = flightPath(cx, cy, rx, ry);
     for (const p of state.trails) p.setAttribute("d", d);
     state.path = state.trails[0];
-    state.total = state.path.getTotalLength();
+    const baked = bakeFlight(pts);
+    if (!baked) return;
+    state.heads = baked.heads;
+    state.offs = baked.offs;
+    // Constant for the life of a shape, so it is written once rather than sixty
+    // times a second with the same value.
+    state.path.style.strokeDasharray = baked.dash;
+    state.frame = -1;
     state.lap = rand(ARC.seconds[0], ARC.seconds[1]) * 1000;
   };
   shape();
   addEventListener("resize", shape);
   state.onResize = shape;
 
-  const lens = [1.0];
   state.t0 = performance.now();
   const tick = (now) => {
     state.raf = requestAnimationFrame(tick);
-    const total = state.total;
-    if (!total) return;
-    const at = ((now - state.t0) % state.lap) / state.lap;   // 0..1 round the loop
-    const nose = at * total;
-    state.trails.forEach((p, i) => {
-      const seg = total * ARC.trail * lens[i];
-      p.style.strokeDasharray = `${seg} ${total}`;
-      // The dash is drawn BACK from the nose, so the stroke is what the arrow
-      // has just flown through and the head sits at its leading end.
-      p.style.strokeDashoffset = `${seg - nose}`;
-    });
-    // The head, pointed the way it is going. The tangent is taken from a point
-    // slightly behind rather than differentiated, which on a path this dense is
-    // the same answer and a great deal less arithmetic.
-    const a = state.path.getPointAtLength(nose % total);
-    const b = state.path.getPointAtLength((nose - 9 + total) % total);
-    const ang = Math.atan2(a.y - b.y, a.x - b.x);
-    const arm = (s) => `${a.x - Math.cos(ang + s) * ARC.head} ` +
-                       `${a.y - Math.sin(ang + s) * ARC.head}`;
-    head.setAttribute("d", `M${arm(0.62)}L${a.x} ${a.y}L${arm(-0.62)}`);
+    if (!state.heads) return;
+    // A timestamp into an index, and two strings that already exist. That is the
+    // whole frame.
+    const k = (((now - state.t0) / state.lap * BAKE) | 0) % BAKE;
+    if (k === state.frame) return;      // the same step twice draws nothing new
+    state.frame = k;
+    state.path.style.strokeDashoffset = state.offs[k];
+    head.setAttribute("d", state.heads[k]);
   };
   state.raf = requestAnimationFrame(tick);
   state.up = performance.now();

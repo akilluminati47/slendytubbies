@@ -574,7 +574,10 @@
   body.touch #crosshair { opacity:.5; }
 
   /* Spectating: no crosshair, no gauges, no prompt - none of it is yours. */
-  body.spectating #crosshair, body.spectating #hud-right,
+  /* The gauges stay. They read the person being watched now rather than the
+     one who is dead - see specHud - and a spectator wants them more than a
+     player does, having nothing else to do but notice things. */
+  body.spectating #crosshair,
   body.spectating #prompt { display:none; }
   body.spectating #vignette { box-shadow:inset 0 0 260px 90px #000; }
 
@@ -589,7 +592,8 @@
     opacity:0; transform:translateY(-8px);
     transition:opacity .28s ease, transform .28s ease; }
   #tally.on { opacity:1; transform:none; }
-  body.spectating #tally { display:none; }
+  /* The tally is the lobby's count, not yours - everybody fills the same ten,
+     so dying does not stop it being true. */
 
   /* Centred across the full width, but the HUD column lives at the left, so on
      a narrow screen the banner drops below it rather than running into the
@@ -691,6 +695,14 @@
     .btn { padding:7px 14px; font-size:12px; }
   }
   body.spectating #spectate-banner { display:block; }
+  /* On a touchscreen the jump button is gone while spectating, and jump is what
+     cycles who you are watching - so the banner that names them becomes the way
+     to change them. It is the one thing on the screen already pointing at the
+     answer. */
+  .spec-touch { display:none; }
+  body.touch .spec-hint:not(.spec-touch) { display:none; }
+  body.touch .spec-touch { display:block; }
+  body.touch.spectating #spectate-banner { pointer-events:auto; cursor:pointer; }
   #spectate-banner h2 { font-family:var(--hand); font-size:clamp(24px,5vw,38px);
     letter-spacing:.01em; color:var(--ink); opacity:.92; }
   #spec-who { margin-top:6px; font-size:clamp(11px,1.8vw,13px); letter-spacing:.18em;
@@ -785,6 +797,7 @@
     <h2>Spectator</h2>
     <p id="spec-who"></p>
     <p class="spec-hint">Jump to switch player</p>
+    <p class="spec-hint spec-touch">Tap here to switch player</p>
   </div>
 </div>
 

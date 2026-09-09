@@ -3,7 +3,7 @@ import { solveTwoBone, levelFoot, groundNormal } from "./footwork.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as skinnedClone } from "three/addons/utils/SkeletonUtils.js";
 import { CFG } from "../game/config.js";
-import { buildTubbyRigs, bakeClips } from "./tubbyRig.js";
+import { buildTubbyRigs, bakeClips, breathe } from "./tubbyRig.js";
 
 /**
  * Two ways to get a tubby:
@@ -233,7 +233,7 @@ function pickClip(clips, keys) {
  * the game asks for rather than all 56 - and it bakes each clip once even when
  * three states share it, which walk, investigate and the two run states do.
  */
-function bakeStates(character, rig, height) {
+async function bakeStates(character, rig, height) {
   const wanted = new Map();
   const forState = {};
   for (const [state, keys] of Object.entries(CLIP_FOR)) {
@@ -243,7 +243,7 @@ function bakeStates(character, rig, height) {
     wanted.set(clip.name, clip);
   }
 
-  const baked = bakeClips(character, rig, [...wanted.values()], height);
+  const baked = await bakeClips(character, rig, [...wanted.values()], height);
   const byName = new Map(baked.map((c) => [c.name, c]));
   character.byState = new Map(
     Object.entries(forState)
@@ -549,6 +549,15 @@ async function wearHorrorFace(character) {
   }
   cutCtx.putImageData(px, 0, 0);
 
+  // Breaths between the passes.
+  //
+  // This is the last long task left on the loading screen: a per-pixel key, a
+  // scan for the face's bounds, a generated normal map and a recolour of every
+  // sheet on the chaser, all in one job of about 290 ms - which the arrow flying
+  // round the title stops dead for. None of it is fast enough to hide, but each
+  // pass on its own is short enough not to be seen, and they do not depend on
+  // being in the same frame.
+  await breathe();
   const box = contentBox(px.data, cut.width, cut.height, (r, g, b, a) => a > 8);
   if (!box) {
     console.warn("[tubbies] no face found on the rip's sheet");
@@ -581,11 +590,13 @@ async function wearHorrorFace(character) {
   faceTex.flipY = false;
   faceTex.needsUpdate = true;
 
+  await breathe();
   const normalMap = new THREE.CanvasTexture(maskNormalMap(mask, null));
   normalMap.flipY = false;
   normalMap.needsUpdate = true;
 
   // Now that the mask exists, the rest of the chaser can be made out of it.
+  await breathe();
   const greyed = greyTheChaser(character, cheekRamp(mask));
 
   const plate = buildMaskPlate(character, { face: faceTex, normalMap });
@@ -1033,7 +1044,8 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
     const tubes = [];
     {
       for (const [kind, character] of Object.entries(rig.characters)) {
-        characters[kind] = bakeStates(character, rig, CFG.tubby.height);
+        await breathe();
+        characters[kind] = await bakeStates(character, rig, CFG.tubby.height);
         // A different tube per set, rolled fresh each time the game loads. The
         // chaser always draws the worse of two rolls on every fault, so its
         // screen is the one that looks wrong from across a clearing.
@@ -1045,6 +1057,7 @@ export async function loadTubbyAssets(base = "./assets/game/rig") {
       }
     }
     console.info(`[tubbies] ${tubes.length} tubes: ${tubes.join(", ")}`);
+
 
     const short = Object.entries(characters)
       .filter(([, c]) => c.byState.size < 4)

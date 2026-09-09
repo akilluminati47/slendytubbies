@@ -1216,7 +1216,23 @@ function aimBone(bone, axis, want, current, sc) {
  * Arms keep the pure rotation path. Nothing they do has to meet the ground, and
  * their reference pose is the whole point of REST_POSE.
  */
-export function bakeClips(character, rig, clips, targetHeight = 1.85) {
+/**
+ * Hand the frame back, so the loading screen keeps animating through this.
+ *
+ * The bake is the longest stretch of arithmetic in the game and it all happens
+ * while somebody is looking at a splash screen with an arrow flying round it. Run
+ * as one job it is a 383 ms task, which is the arrow stopping dead twice and then
+ * carrying on - the exact hitch this yields to remove. Broken at the seams
+ * between clips and between characters, no single task is long enough to miss a
+ * frame, and the total takes very slightly longer in exchange for looking like
+ * nothing is happening at all.
+ *
+ * requestAnimationFrame rather than setTimeout, because the thing being kept
+ * alive IS a frame loop and this puts the work exactly between two of them.
+ */
+export const breathe = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+export async function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const { bind, bones, pairs, hip, damped } = character;
   const sourceOf = new Map(pairs);
   const order = bones.slice().sort((a, b) => bind.get(a).depth - bind.get(b).depth);
@@ -1446,7 +1462,12 @@ export function bakeClips(character, rig, clips, targetHeight = 1.85) {
   const fit = scaleRig(character.scene, character.meshes, targetHeight);
   character.feet = fit.feet;
   character.clips = out;
-  for (const clip of out) measureGroundSpeed(character, clip);
+  // One clip per task. Each is 240 skeleton poses and a world-matrix rebuild
+  // apiece, which is the single heaviest thing here.
+  for (const clip of out) {
+    await breathe();
+    measureGroundSpeed(character, clip);
+  }
   return out;
 }
 

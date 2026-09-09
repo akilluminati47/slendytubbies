@@ -117,7 +117,7 @@ export class Lobby {
     const id = this.nextId++;
     const { role, isHost } = this.#freeRole();
     const me = { ws, id, name, role, isHost, pos: [0, 0, 0], yaw: 0, pitch: 0,
-                 anim: "idle", lit: 0, dead: false };
+                 anim: "idle", lit: 0, bat: 100, sta: 100, dead: false };
     this.players.set(id, me);
     if (isHost) this.hostId = id;
 
@@ -180,12 +180,18 @@ export class Lobby {
         if (typeof msg.pitch === "number") me.pitch = msg.pitch;
         if (typeof msg.anim === "string") me.anim = msg.anim.slice(0, 16);
         if (typeof msg.lit === "number") me.lit = msg.lit ? 1 : 0;
+        // Standing state, unlike trip and saw, so these DO live on the player -
+        // somebody joining mid-round should see the gauges as they are rather
+        // than as full until the next packet.
+        if (typeof msg.bat === "number") me.bat = Math.max(0, Math.min(100, msg.bat | 0));
+        if (typeof msg.sta === "number") me.sta = Math.max(0, Math.min(100, msg.sta | 0));
         // `trip` and `saw` are events, not state, so they are passed through
         // rather than kept on `me`. Anything stored here is the player's standing condition
         // and gets sent again to whoever joins next; a stumble that happened
         // once must not go out twice.
         this.#broadcast({ t: "state", id: me.id, pos: me.pos, yaw: me.yaw,
                           pitch: me.pitch, anim: me.anim, lit: me.lit,
+                          bat: me.bat, sta: me.sta,
                           ...(msg.trip ? { trip: 1 } : {}),
                           ...(msg.saw ? { saw: 1 } : {}) }, me.id);
         break;

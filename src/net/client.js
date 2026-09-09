@@ -219,7 +219,7 @@ export class NetClient extends EventTarget {
    * carries the jump instead, and the receiver adds it to its own ground.
    */
   sendState({ pos, lift = 0, yaw, pitch = 0, anim = "idle", torch = false,
-              trip = false, saw = false }) {
+              trip = false, saw = false, bat = 1, sta = 1 }) {
     this.#send({
       t: "state",
       pos: [+pos.x.toFixed(2), +lift.toFixed(2), +pos.z.toFixed(2)],
@@ -230,6 +230,11 @@ export class NetClient extends EventTarget {
       // already widens its sight cone for it, so it has to be on the wire or a
       // guest with a torch lit is invisible in a way the host never is.
       lit: torch ? 1 : 0,
+      // Two more bytes of standing state, for the gauges a spectator watches.
+      // Whole percents: nobody can see a finer reading than that on a dial the
+      // size of a thumbnail, and it keeps the packet small.
+      bat: Math.round(bat * 100),
+      sta: Math.round(sta * 100),
       // And one more, only on the packets that need it. Going over is the
       // loudest thing anybody can do and it is not one of the four states
       // `anim` can hold, so without this a guest tripping is silent to the

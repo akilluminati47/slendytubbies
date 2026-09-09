@@ -93,6 +93,10 @@ export class RemotePlayer {
     // which is the whole reason a guest could not escape the way a host can.
     this.vel = { x: 0, z: 0 };
     this.torchOn = false;
+    // 0..1, straight onto a gauge. Full until they say otherwise, which is what
+    // a player who has just joined actually has.
+    this.battery = 1;
+    this.stamina = 1;
     // One-shot metres of noise, decaying, exactly as the local player's does.
     // Without this a guest jumping or grabbing a dish was silent to the monster
     // while the host doing the same thing was heard across the map.
@@ -232,7 +236,7 @@ export class RemotePlayer {
     this.label.material.opacity = this.dead ? 0.35 : v;
   }
 
-  apply({ pos, yaw, pitch, anim, lit, trip, saw }) {
+  apply({ pos, yaw, pitch, anim, lit, trip, saw, bat, sta }) {
     if (pos) {
       this.target.set(pos[0], 0, pos[2]);
       // The middle slot is height above their ground, not world Y - see
@@ -287,6 +291,9 @@ export class RemotePlayer {
     // it is a squeak, not a shout - but the people they are playing with should
     // absolutely hear it, and hear which direction it came from.
     if (saw) this.didSee = true;
+    // Whatever their dials read, for a spectator watching over their shoulder.
+    if (typeof bat === "number") this.battery = bat / 100;
+    if (typeof sta === "number") this.stamina = sta / 100;
   }
 
   /**

@@ -71,6 +71,16 @@ const CSS = `
   place-content:center; text-align:center; z-index:3; -webkit-backdrop-filter:blur(2px);
   backdrop-filter:blur(2px); }
 .tc-root.on .tc-btn { pointer-events:auto; }
+/* Spectating there is nothing to jump over and nothing to light, so the only
+   button left is the one that gets you out. The stick goes with them - a dead
+   player who could still walk would be a second, invisible participant - and
+   what is left is a thumb that turns the camera and a button that pauses.
+   Hidden rather than disabled, because a control that is there and does nothing
+   is worse than one that is not there. */
+body.spectating #tc-jump,
+body.spectating #tc-torch,
+body.spectating .tc-home,
+body.spectating .tc-stick { display:none; }
 .tc-btn.held { background:rgba(216,210,196,.28); border-color:rgba(216,210,196,.6); }
 .tc-btn.latched { border-color:#7d9b86; color:#bcd4c2; }
 /* Equal and stacked: with sprint moved onto the stick these are the only two
@@ -352,7 +362,10 @@ export class TouchSource {
         b.fire();
         return;
       }
-      if (inStick(t.clientX, t.clientY)) {
+      // No stick while spectating: the camera is the only thing left to drive,
+      // so the whole screen is the camera.
+      if (!document.body.classList.contains("spectating")
+          && inStick(t.clientX, t.clientY)) {
         // Only one thumb drives the stick. A second finger in the box while the
         // first is already steering is somebody resting a hand, not a command.
         for (const p of this.touches.values()) if (p.role === "move") return;

@@ -76,8 +76,18 @@ audio.preload("scream", "./assets/game/scream.mp3");
 // finished is a decoration.
 startLoader();
 
-const hasBakedAssets = Boolean(await loadTubbyAssets());
-await loadTorchAssets();
+// What the splash is actually waiting on, for whoever next wonders why it is a
+// splash and not a menu. The arrow flies through all of it.
+const boot = [];
+const phase = async (name, fn) => {
+  const t = performance.now();
+  const out = await fn();
+  boot.push(`${name} ${Math.round(performance.now() - t)}ms`);
+  return out;
+};
+
+const hasBakedAssets = Boolean(await phase("rigs", () => loadTubbyAssets()));
+await phase("torches", () => loadTorchAssets());
 
 // The menu backdrop. Built after the rigs so it has something to parade, and
 // before anything else so the title screen is never empty.
@@ -87,7 +97,9 @@ let tripPending = false;
 let sawPending = false;
 /** The dust and the bugs in the air. Rebuilt with the world. */
 let motes = null;
+const stageAt = performance.now();
 const showcase = new Showcase();
+boot.push(`showcase ${Math.round(performance.now() - stageAt)}ms`);
 showcase.resize(innerWidth, innerHeight);
 installMenuSfx(audio);
 installTorchBench({ showcase });
@@ -104,10 +116,11 @@ installTorchBench({ showcase });
 // Guarded because it is a newer API than the floor this runs on, and a missing
 // one should cost a hitch rather than the game.
 try {
-  await renderer.compileAsync?.(showcase.scene, showcase.camera);
+  await phase("compile", () => renderer.compileAsync?.(showcase.scene, showcase.camera));
 } catch (err) {
   console.warn("[boot] shader precompile skipped", err);
 }
+console.info("[boot] " + boot.join(" · "));
 
 /* -------------------------------------------------------------- game state */
 
@@ -123,6 +136,15 @@ let myRole = "guardian";
 let netWorld = null;
 let netAccum = 0;
 let spectating = false;
+// Set by a tap on the spectator banner, drained by the frame. On a touchscreen
+// the jump button is hidden while spectating and jump is what cycles, so the
+// banner naming who you are watching is what changes them.
+let specTapped = false;
+$("spectate-banner").addEventListener("pointerdown", (e) => {
+  if (!spectating) return;
+  e.preventDefault();
+  specTapped = true;
+});
 let spectator = null;
 let scare = null;        // the capture sequence, while it is playing
 
@@ -931,7 +953,8 @@ function frame() {
   if (spectating) {
     // Camera only. Jump cycles who you are watching - it is the button your
     // thumb is already on, and it does nothing else now that you are dead.
-    if (input.intent.jump) {
+    if (input.intent.jump || specTapped) {
+      specTapped = false;
       const t = spectator.cycle(1);
       if (t) ui.flash(`Watching ${t.name}`, 1800);
     }
@@ -946,22 +969,11 @@ function frame() {
       }
       else { const w = netWorld?.tubby?.[i]; t.netApply(w?.p, w?.f, w?.s, dt, w?.v); }
     }
-    for (const r of remotes.values()) {
-    r.update(dt, camera);
-    // What they did, turned into sound from where they are. remote.js raises
-    // the flags and does not know what a speaker is; this is the only place
-    // that knows where the listener is standing.
-    if (r.didJump) { audio.jumpStep(r.current); r.didJump = false; }
-    if (r.didLand) { audio.land(r.current); r.didLand = false; }
-    if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
-    if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
-    if (r.didSee) { audio.fright(r.current); r.didSee = false; }
-    if (r.stepped) audio.step(r.stepPower, r.current);
-    // Their television. Never your own - in first person you are not somewhere
-    // over there, and a set you cannot walk away from is a different game.
-    const rd = Math.hypot(r.current.x - player.pos.x, r.current.z - player.pos.z);
-    audio.bellyStatic(`p${r.id}`, r.dead ? null : r.current, rd, "friend");
-  }
+    // Everything the world sounds like, from where the CAMERA is - which
+    // while spectating is over somebody's shoulder rather than behind your
+    // own eyes.
+    worldAudio(dt, _eye);
+    world.cullFlora(spectator.pos);
     world.updateGlow(game.elapsed, spectator.pos);
     world.tickWeather(dt, camera.getWorldPosition(_eye));
     if (online) {
@@ -1083,22 +1095,6 @@ function frame() {
     threat = Math.max(threat, t.threat(player));
   }
 
-  for (const r of remotes.values()) {
-    r.update(dt, camera);
-    // What they did, turned into sound from where they are. remote.js raises
-    // the flags and does not know what a speaker is; this is the only place
-    // that knows where the listener is standing.
-    if (r.didJump) { audio.jumpStep(r.current); r.didJump = false; }
-    if (r.didLand) { audio.land(r.current); r.didLand = false; }
-    if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
-    if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
-    if (r.didSee) { audio.fright(r.current); r.didSee = false; }
-    if (r.stepped) audio.step(r.stepPower, r.current);
-    // Their television. Never your own - in first person you are not somewhere
-    // over there, and a set you cannot walk away from is a different game.
-    const rd = Math.hypot(r.current.x - player.pos.x, r.current.z - player.pos.z);
-    audio.bellyStatic(`p${r.id}`, r.dead ? null : r.current, rd, "friend");
-  }
 
   // Drop the scatter that is beyond the fog before anything is drawn. The
   // frustum handles behind and beside; this handles in front and too far.
@@ -1117,6 +1113,8 @@ function frame() {
         pitch: input.pitch,
         anim: player.motion,
         torch: player.torchOn,
+        bat: player.battery / CFG.player.batteryMax,
+        sta: player.stamina / CFG.player.staminaMax,
         trip: tripPending || undefined,
         saw: sawPending || undefined,
       });
@@ -1126,33 +1124,7 @@ function frame() {
     }
   }
 
-  // Where the ears are. Every panned sound is placed relative to this, and it
-  // comes off the CAMERA rather than the player: spectating, you are not where
-  // your body is, and the sound should follow the eyes.
-  camera.getWorldPosition(_eye);
-  camera.getWorldDirection(_look);
-  audio.listenAt(_eye, _look);
-
-  // The monster's feet, and the set in its belly. Every tubby in the world,
-  // from where it is standing - between them the only things in the game that
-  // say where one is when you cannot see it.
-  let nearest = null, nearestD = Infinity;
-  for (const t of tubbies) {
-    if (t.stepped) audio.monsterStep(t.stepPower, t.pos);
-    const d = Math.hypot(t.pos.x - player.pos.x, t.pos.z - player.pos.z);
-    if (d < nearestD) { nearestD = d; nearest = t; }
-  }
-  audio.bellyStatic("chaser", nearest?.pos ?? null, nearestD);
-
-  // And the nearest dish left, humming for whoever is looking for it. Local
-  // only: it feeds nothing to the AI and goes to nobody.
-  let dish = null, dishD = Infinity;
-  for (const c of world.custards) {
-    if (c.taken) continue;
-    const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
-    if (d < dishD) { dishD = d; dish = c; }
-  }
-  audio.hummingDish(dish?.pos ?? null, dishD);
+  worldAudio(dt, _eye);
 
   seeingIt(dt);
 
@@ -1238,10 +1210,85 @@ function gauge(g, v, lit) {
 }
 
 /** Spectating: a standing banner, plus who you are on. */
+/**
+ * Everything the world sounds like, from wherever the ears are.
+ *
+ * One function for the living and the dead, because it was two and they had
+ * already drifted apart: the spectator's copy never moved the listener, never
+ * gave the monster its feet, and measured every distance from a corpse. Watching
+ * somebody over their shoulder is exactly when you most want to hear what is
+ * walking up behind them.
+ *
+ * `from` is the CAMERA and not the player. Alive those are a few centimetres
+ * apart and it hardly matters; spectating they are a room apart, and that is the
+ * whole point.
+ */
+function worldAudio(dt, from) {
+  camera.getWorldPosition(from);
+  camera.getWorldDirection(_look);
+  audio.listenAt(from, _look);
+
+  const near = (x, z) => Math.hypot(x - from.x, z - from.z);
+
+  for (const r of remotes.values()) {
+    r.update(dt, camera);
+    // What they did, turned into sound from where they are. remote.js raises the
+    // flags and does not know what a speaker is; this is the only place that
+    // knows where the listener is standing.
+    if (r.didJump) { audio.jumpStep(r.current); r.didJump = false; }
+    if (r.didLand) { audio.land(r.current); r.didLand = false; }
+    if (r.didTrip) { audio.stumble(r.current); r.didTrip = false; }
+    if (r.didClick) { audio.torchClick(torchFor(r.role), r.current); r.didClick = false; }
+    if (r.didSee) { audio.fright(r.current); r.didSee = false; }
+    if (r.stepped) audio.step(r.stepPower, r.current);
+    // Their television. Never your own - in first person you are not somewhere
+    // over there, and a set you cannot walk away from is a different game. The
+    // one you are watching is somebody else's, so spectating you get theirs.
+    audio.bellyStatic(`p${r.id}`, r.dead ? null : r.current,
+                      near(r.current.x, r.current.z), "friend");
+  }
+
+  // The monster's feet, and the set in its belly. Between them the only things
+  // in the game that say where one is when you cannot see it.
+  let closest = null, closestD = Infinity;
+  for (const t of tubbies) {
+    if (t.stepped) audio.monsterStep(t.stepPower, t.pos);
+    const d = near(t.pos.x, t.pos.z);
+    if (d < closestD) { closestD = d; closest = t; }
+  }
+  audio.bellyStatic("chaser", closest?.pos ?? null, closestD);
+
+  // And the nearest dish left, humming for whoever is looking for it. Local
+  // only: it feeds nothing to the AI and goes to nobody.
+  let dish = null, dishD = Infinity;
+  for (const c of world.custards) {
+    if (c.taken) continue;
+    const d = near(c.pos.x, c.pos.z);
+    if (d < dishD) { dishD = d; dish = c; }
+  }
+  audio.hummingDish(dish?.pos ?? null, dishD);
+}
+
+/**
+ * The HUD, reading the person you are watching rather than the one you were.
+ *
+ * A dead player's own gauges are meaningless - no battery, no breath, no reason
+ * to look - so they used to be hidden entirely and the spectator flew about with
+ * nothing on screen but a name. The dials work perfectly well pointed at
+ * somebody else, and knowing that the person you are following is nearly out of
+ * torch is the most useful thing a spectator can be told.
+ *
+ * The tally comes back too. It is the LOBBY's count, not yours: everybody is
+ * filling the same ten, so it never stopped being true just because you died.
+ */
 function specHud(watching) {
   $("dread").style.opacity = 0;
   setDrain(0);
   $("spec-who").textContent = watching ? watching.name : "Nobody left to watch";
+  gauge(gBattery, watching?.battery ?? 0, !!watching?.torchOn);
+  gauge(gStamina, watching?.stamina ?? 0, false);
+  clockGauge(gDaylight, world?.sky);
+  $("found").textContent = game.found;
 }
 
 function hud(threat) {
