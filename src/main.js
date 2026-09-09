@@ -726,16 +726,24 @@ function beginSpectating() {
 }
 
 /**
- * Who did not make it, for the card at the end.
+ * Who did not make it, for the card of the people who got out.
  *
- * Only worth saying in a lobby, and only when somebody actually went down: on
- * your own "You died trying" under "You got out" is nonsense, and a clean run
- * wants no footnote at all. Every round rolls a different map and a different
- * order of deaths, so this is the one line on that screen that is about the run
- * everybody just had rather than about the game.
+ * It belongs to exactly one ending: somebody carried the ten dishes out while
+ * the rest of the party did not make it. That is what the line is FOR - the
+ * cost of the win, named, so getting out with three of you gibbed in the trees
+ * reads differently from walking out clean.
+ *
+ * Under "All caught" it says nothing at all. Everybody died; a list of who is
+ * not a footnote, it is the headline again in smaller type, and reading out the
+ * names of the whole party to a party that already watched it happen is worse
+ * than silence. Under a solo card it is nonsense in both directions.
+ *
+ * Every round rolls a different map and a different order of deaths, so on the
+ * one card that earns it this is the only line about the run everybody just had
+ * rather than about the game.
  */
-function tribute() {
-  if (!online || !fallen.length) return "";
+function tribute(kind) {
+  if (kind !== "won" || !online || !fallen.length) return "";
   // These names came off the wire and the end card is the one place in the UI
   // that writes HTML rather than text, so they get escaped on the way in. The
   // worker caps a name at sixteen characters and nothing else, which is plenty
@@ -771,7 +779,7 @@ function endGame(kind, headline, detail) {
   document.body.classList.remove("spectating");
   // Online, only the host may start the next run - a guest hitting retry would
   // otherwise drop out of a lobby everyone else is still sitting in.
-  ui.showEnd(headline, [detail, tribute()].filter(Boolean).join("<br>"), online
+  ui.showEnd(headline, [detail, tribute(kind)].filter(Boolean).join("<br>"), online
     ? { host, onAgain: () => net.sendRestart(newSeed()) }
     : null);
   if (input.xr.presenting) input.xr.pulse(1, 400);
