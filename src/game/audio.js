@@ -167,6 +167,7 @@ export class Audio {
     this.nodes.master = master;
 
     this.#buildWind();
+    this.#buildRain();
     this.#buildHeart();
     this.#buildHum();
     this.ready = true;
@@ -323,6 +324,16 @@ export class Audio {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     this.nodes.dishHum.gain.setTargetAtTime(0, t, 0.18);
+    // There is no weather on the front screens either.
+    if (this.nodes.rain) {
+      this.rainLevel = 0;
+      this.squall = 0;
+      this.squallFor = 0;
+      this.shelter = 0;
+      this.nodes.rain.patterGain.gain.setTargetAtTime(0, t, 0.5);
+      this.nodes.rain.bodyGain.gain.setTargetAtTime(0, t, 0.5);
+      this.nodes.rain.canopyGain.gain.setTargetAtTime(0, t, 0.5);
+    }
     for (const b of this.bellies.values()) b.gain.gain.setTargetAtTime(0, t, 0.18);
   }
 
@@ -444,6 +455,153 @@ export class Audio {
     lfo.start();
 
     this.nodes.wind = gain;
+  }
+
+  /**
+   * Rain, out of two layers of the same noise.
+   *
+   * A downpour is not one sound. There is the patter - thousands of separate
+   * impacts, bright and grainy, which is what tells you it is rain and not
+   * wind - and underneath it the roar, the sum of all the ones too far away to
+   * hear individually. Splitting the same loop through a highpass and a lowpass
+   * and moving the two against each other is what lets a shower become a
+   * downpour: the body comes up faster than the patter, so heavy rain gets
+   * closer to a roar without ever losing the grain on top.
+   *
+   * One buffer, one source, two filters. A rainstorm that costs four nodes.
+   */
+  #buildRain() {
+    const ctx = this.ctx;
+    const len = ctx.sampleRate * 5;         // long enough not to hear it loop
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      let last = 0;
+      for (let i = 0; i < len; i++) {
+        const white = Math.random() * 2 - 1;
+        // A touch of brown mixed into the white. Pure white noise is a hiss and
+        // reads as static; the low end under it is what makes it weather.
+        last = (last + white * 0.35) * 0.86;
+        d[i] = white * 0.55 + last * 0.9;
+      }
+    }
+    // Two channels of independently generated noise, so it arrives wide rather
+    // than as a point between your ears. Rain has no direction.
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+
+    const patter = ctx.createBiquadFilter();
+    patter.type = "highpass";
+    patter.frequency.value = 1900;
+    patter.Q.value = 0.5;
+
+    const body = ctx.createBiquadFilter();
+    body.type = "lowpass";
+    body.frequency.value = 760;
+
+    // And the third layer: rain hitting things rather than falling through air.
+    //
+    // A shower on open ground is mostly hiss. Get under a spruce and the sound
+    // changes completely - the hiss drops away, because none of it is reaching
+    // you any more, and what is left is heavier and slower and coming from
+    // directly overhead: thousands of drops breaking on needles and running off
+    // them. A midrange band with a bit of Q on it is that sound, and swapping it
+    // against the patter as you walk under cover is the only way the ear is ever
+    // told you have found shelter.
+    const canopy = ctx.createBiquadFilter();
+    canopy.type = "bandpass";
+    canopy.frequency.value = 900;
+    canopy.Q.value = 0.8;
+
+    const patterGain = ctx.createGain();
+    const bodyGain = ctx.createGain();
+    const canopyGain = ctx.createGain();
+    patterGain.gain.value = 0;
+    bodyGain.gain.value = 0;
+    canopyGain.gain.value = 0;
+
+    const bed = ctx.createGain();
+    bed.gain.value = 1;
+
+    src.connect(patter).connect(patterGain).connect(bed);
+    src.connect(body).connect(bodyGain).connect(bed);
+    src.connect(canopy).connect(canopyGain).connect(bed);
+    bed.connect(this.nodes.master);
+    src.start();
+
+    this.nodes.rain = { bed, patter, body, canopy, patterGain, bodyGain, canopyGain };
+    this.shelter = 0;
+    // How hard it is coming down right now, and the squall riding on top of it.
+    this.rainLevel = 0;
+    this.squall = 0;
+    this.squallLeft = 14 + Math.random() * 26;
+    this.squallFor = 0;
+  }
+
+  /**
+   * Drive the rain from the sky, once a frame.
+   *
+   * `amount` is the sky's own rainfall, 0 to 1, and everything here follows it -
+   * which is the whole contract: when the rain thins out on screen it thins out
+   * in the ears, and when it stops the sound has already been on its way down
+   * for several seconds. There is no separate audio state that can be left
+   * playing over a clear sky.
+   *
+   * On top of that it gusts. Real rain is not a constant: it comes on harder
+   * for twenty or thirty seconds and eases off again, and a bed that never
+   * changes stops being heard within a minute. The squall is a slow envelope
+   * that occasionally rises and always comes back down, and it is scaled BY the
+   * rainfall rather than added to it, so a squall can never outlive the shower
+   * it belongs to.
+   */
+  rain(dt, amount, cover = 0) {
+    if (!this.ready || !this.nodes.rain) return;
+    const t = this.ctx.currentTime;
+    // Eased, so walking under a tree is a second of the sound changing round
+    // you rather than a switch. Slightly slower coming out than going in, which
+    // is what stepping back into the open actually sounds like.
+    const cov = Math.max(0, Math.min(1, cover));
+    this.shelter += (cov - this.shelter) * Math.min(1, dt * (cov > this.shelter ? 2.2 : 1.4));
+
+    // Gusts, but only while there is rain for them to happen to.
+    if (amount > 0.2) {
+      this.squallLeft -= dt;
+      if (this.squallFor > 0) {
+        this.squallFor -= dt;
+        if (this.squallFor <= 0) this.squallLeft = 20 + Math.random() * 40;
+      } else if (this.squallLeft <= 0) {
+        this.squallFor = 8 + Math.random() * 14;
+      }
+    } else {
+      this.squallFor = 0;
+    }
+    const want = this.squallFor > 0 ? 1 : 0;
+    // Up over about four seconds, down over about eight: weather arrives faster
+    // than it leaves.
+    this.squall += (want - this.squall) * Math.min(1, dt / (want ? 4 : 8));
+
+    const wet = Math.max(0, Math.min(1, amount)) * (1 + this.squall * 0.45);
+    this.rainLevel += (wet - this.rainLevel) * Math.min(1, dt * 0.9);
+    const r = this.rainLevel;
+    if (r < 0.002 && this.nodes.rain.patterGain.gain.value < 0.0005
+        && this.nodes.rain.canopyGain.gain.value < 0.0005) return;
+
+    // The patter is most of a shower; the roar only really arrives in a
+    // downpour, which is why it is squared. Under cover the patter is what goes
+    // - it is the sound of rain reaching you - and the canopy layer comes up in
+    // its place, so the total barely changes while the character of it changes
+    // completely.
+    const sh = this.shelter;
+    const open = 1 - sh * 0.8;
+    this.nodes.rain.patterGain.gain.setTargetAtTime(r * 0.058 * open, t, 0.35);
+    this.nodes.rain.bodyGain.gain.setTargetAtTime(r * r * 0.065 * (1 - sh * 0.35), t, 0.5);
+    this.nodes.rain.canopyGain.gain.setTargetAtTime(r * 0.075 * sh, t, 0.4);
+    // And it gets brighter as it gets heavier - harder drops, closer to you.
+    this.nodes.rain.patter.frequency.setTargetAtTime(1500 + r * 900, t, 0.6);
+    this.nodes.rain.body.frequency.setTargetAtTime(620 + r * 420, t, 0.6);
+    // Heavier rain on a canopy is a lower, fuller roll off the branches.
+    this.nodes.rain.canopy.frequency.setTargetAtTime(980 - r * 220, t, 0.6);
   }
 
   /** A heartbeat that only exists while something is chasing you. */

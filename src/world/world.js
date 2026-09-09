@@ -209,6 +209,8 @@ export class World {
         grass: CFG.world.grassCount,
       },
     });
+    // Trees and boulders together: everything the rain can break on.
+    this.canopy = built.canopy ?? [];
     console.info('[world] ' + built.trees + '/' + CFG.world.treeCount + ' trees, ' +
       built.rocks + ' rocks, ' + built.branches + ' branches, ' +
       built.grass + ' grass tufts');
@@ -388,8 +390,17 @@ export class World {
    */
   tickWeather(dt, eye) {
     this.rain.setColor(this.scene.fog ? this.scene.fog.color : this.sky.uniforms.uHorizon.value);
-    this.rain.update(dt, eye, this.sky.rainfall);
+    // Rain is lit by the sky it is falling out of, so it follows the hour the
+    // same way everything else does: bright and hard at noon, a hint after dark.
+    // Same window the motes use, so the two agree about when it is night.
+    const h = ((this.sky.hour % 24) + 24) % 24;
+    this.rain.setLight(Math.max(0, Math.min(1,
+      Math.min((h - 5.0) / 2.0, (19.0 - h) / 2.0))));
+    this.rain.update(dt, eye, this.sky.rainfall, this.canopy);
   }
+
+  /** How much of a roof the camera is under, 0 to 1. Set by the rain. */
+  get sheltered() { return this.rain?.cover ?? 0; }
 
   /** Take a dish: hide its meshes only. Nothing here touches a light. */
   take(c) {

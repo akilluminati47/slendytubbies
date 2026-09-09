@@ -124,9 +124,23 @@ export class Tubby {
     return false;
   }
 
+  /**
+   * How much of the world the rain is covering for you, 0 to 1.
+   *
+   * Straight off the sky's own rainfall, so it eases in and out with the thing
+   * on screen: by the time you can hear it you are already harder to hear.
+   */
+  #wet() {
+    return this.world?.sky?.rainfall ?? 0;
+  }
+
   #hears(player) {
     const d = Math.hypot(player.pos.x - this.pos.x, player.pos.z - this.pos.z);
-    return d < player.noise;
+    // Rain is louder than you are. Not deaf - a landing still carries, and
+    // sprinting through a downpour is still a bad idea - but a shower is worth
+    // several metres of not being found, which is the only help this world
+    // ever gives you.
+    return d < player.noise * (1 - T.rainDeafen * this.#wet());
   }
 
   update(dt, player, threats = null) {
@@ -146,7 +160,16 @@ export class Tubby {
     // caused. It is the only sound in the game you did not decide to make, so it
     // is the only one that gets this.
     this.alignLeft = Math.max(0, this.alignLeft - dt);
-    const startled = alive &&
+    // And the rain takes the snap away.
+    //
+    // The head turn is the trip's real cost: it is not that it heard you, it is
+    // that it knows exactly where you are the instant you go over. Through rain
+    // it does not. It still HEARS the fall and still comes - the noise is
+    // unchanged, so it walks towards where you were - it just has to find you
+    // the ordinary way once it gets there. The one favour the weather does you,
+    // and it only lasts as long as the shower does.
+    const covered = this.#wet() >= T.rainCover;
+    const startled = alive && !covered &&
       ((heard && player.noise >= T.alertNoise) ||
        (lit && !this.#sees(player)));
 

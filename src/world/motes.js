@@ -95,6 +95,8 @@ export class Motes {
       // How thoroughly they have found the beam: nought the moment it comes on,
       // one after it has been burning a while. Night only.
       uLure: { value: 0 },
+      // 1 in clear air, down towards nothing in a downpour. See update().
+      uDry: { value: 1 },
       uDustColor: { value: new THREE.Color(0xdfe6f2) },
       uBugColor: { value: new THREE.Color(0xfff0c8) },
     };
@@ -106,7 +108,7 @@ export class Motes {
       uniforms: this.uniforms,
       vertexShader: /* glsl */`
         uniform float uTime, uDay, uTorchCos, uTorchRange, uTorchOn;
-        uniform float uGround, uLow, uHigh, uLure;
+        uniform float uGround, uLow, uHigh, uLure, uDry;
         uniform vec3 uEye, uBox, uTorchPos, uTorchDir;
         attribute vec3 seed;
         attribute vec3 wob;
@@ -200,7 +202,16 @@ export class Motes {
           float above = world.y - uGround;
           float lift = (1.0 - smoothstep(uLow, uHigh, above))
             * smoothstep(-0.25, 0.05, above);
-          vGlow *= edge * lift;
+          // Rain takes the air out.
+          //
+          // Whole specks, not dimmer ones: a mote is either there or it is not,
+          // and fading every one of them down together reads as the screen
+          // getting darker rather than as the air clearing. The draw is a hash
+          // of the seed, so it is the SAME specks that go each time - they do
+          // not flicker in and out frame to frame - and they come back in the
+          // same order the rain leaves in.
+          float keep = step(fract(dot(seed, vec3(41.3, 17.7, 91.1))), uDry);
+          vGlow *= edge * lift * keep;
           float size = kind > 0.5 ? 5.5 + wob.z * 4.0 : 1.5 + wob.z * 1.1;
           gl_PointSize = size * 26.0 / max(-mv.z, 0.2);
           gl_Position = projectionMatrix * mv;
@@ -235,8 +246,14 @@ export class Motes {
    * @param torch   the player's SpotLight, or null
    * @param ground  the terrain height under the camera
    */
-  update(dt, eye, hour, torch, ground = 0) {
+  update(dt, eye, hour, torch, ground = 0, wet = 0) {
     const u = this.uniforms;
+    // Eased, so a shower arriving empties the air over a few seconds rather
+    // than between two frames. Down to a seventh of them at its worst - enough
+    // left that a torch beam still has something in it, and few enough that
+    // the difference is the first thing you notice about the weather.
+    const dry = 1 - 0.85 * Math.max(0, Math.min(1, wet));
+    u.uDry.value += (dry - u.uDry.value) * Math.min(1, dt * 0.7);
     u.uTime.value += dt;
     u.uEye.value.copy(eye);
     u.uGround.value = ground;

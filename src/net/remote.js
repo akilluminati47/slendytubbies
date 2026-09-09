@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CFG } from "../game/config.js";
-import { makeTubby, STRIDE_GAIN, RATE } from "../entities/tubbyModel.js";
+import { makeTubby, STRIDE_GAIN, RATE, ARM_CALM } from "../entities/tubbyModel.js";
 import { heightAt } from "../world/world.js";
 import { makeTorch, torchFor, holdInHand, aimInHand, gripPoseFor }
   from "../entities/torch.js";
@@ -134,6 +134,10 @@ export class RemotePlayer {
     this.root.traverse((o) => {
       if (!hand && o.isBone && /^hand[_ ]?r([_ ]|$)/i.test(o.name)) hand = o;
     });
+    // What they are carrying decides how much the arm is allowed to do with it.
+    // The Guardian heaves its lamp about; everybody else has a torch in one hand
+    // and walks like it. See ARM_CALM.
+    this.model.armCalm = role === "guardian" ? 0 : ARM_CALM;
     this.held = makeTorch(torchFor(role));
     // The cone angle belongs to the lamp, not to a constant: the Guardian's
     // throws wider, and it should do that for everybody watching and not only

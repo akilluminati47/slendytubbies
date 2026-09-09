@@ -80,6 +80,9 @@ const _dq2 = new THREE.Quaternion();
 const _scr = new THREE.Vector3();
 const _eul = new THREE.Euler();
 const _sole = new THREE.Vector3();
+const _arm = new THREE.Vector3();
+const _aq = new THREE.Quaternion();
+const _aq2 = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
 // A hair of sink so the sole meets the ground rather than hovering on it.
 const FOOT_SINK = 0.01;
@@ -187,6 +190,64 @@ function strideOf(clip) {
 const HEAD_CALM = 0.38;
 
 /**
+ * How much of the clip's own ARM swing to take back out, for everyone who is
+ * not the Guardian. Same trick as HEAD_CALM, aimed a limb lower.
+ *
+ * The donor's walk throws the hands 35cm fore and aft. On a body carrying
+ * nothing that is a good walk; on one carrying a torch it is a lamp being
+ * hurled back and forth, and a party of four of them is four searchlights
+ * scything the trees in time. The Guardian keeps the whole thing - it is
+ * holding a two-handed lamp and the heave suits it, and it is the one member of
+ * the party you should be able to pick out of a line at fifty metres.
+ *
+ * Damped rather than swapped for the other walk. The donor's second walking
+ * clip is TINKY_WALKING_ARMED, which has a QUARTER of a metre of sideways
+ * travel in the hand where the plain walk has 15cm: it carries across the body
+ * because the donor was holding a weapon there, and on somebody holding a torch
+ * it reads exactly as knocking it against their own hip. Measured, not guessed -
+ * see the handTrack the bake records. Scaling the good walk down keeps its
+ * timing and its direction and changes only the amount.
+ *
+ * Damped towards the arm's own AVERAGE over the cycle, and emphatically not
+ * towards its rest pose the way the head is. These rigs bind in a T, so resting
+ * an arm is raising it: the first version of this walked the whole party about
+ * with their arms half out to the sides, which is a worse read than the swing it
+ * was fixing. The mean is a low-pass of what the clip is doing, so it sits where
+ * the arm actually hangs and only the swing about it gets scaled.
+ */
+export const ARM_CALM = 0.45;
+
+/**
+ * Seconds for the running mean to catch up with the pose. Comfortably longer
+ * than a stride, so it reads the middle of the swing rather than following it,
+ * and short enough that changing gait does not leave the arms hanging in the
+ * shape of the last one.
+ */
+const ARM_MEAN_TAU = 0.55;
+
+/**
+ * How the damping is split between the two things an arm does.
+ *
+ * A walk swings the arm fore and aft, about the body's own left-right axis, and
+ * that is the part worth keeping - it is what makes a walk look like walking.
+ * The rest of the motion is the arm travelling sideways, out and across, and on
+ * a body carrying a torch that is the part that reads as flapping. Damping both
+ * by the same amount takes the walk out along with the flap, so they are
+ * separated by the axis the motion happens about and scaled apart.
+ */
+const ARM_FLAP = 0.78;      // of the sideways component, removed
+const ARM_SWAY = 0.16;      // of the fore-and-aft, removed - almost none
+
+/**
+ * Radians of tuck: how far a torch-carrying arm is brought in towards the body.
+ *
+ * These donors stand with the elbows a little away from the ribs, which is fine
+ * empty-handed and looks like shrugging once there is a lamp in the hand. Small
+ * - it is a tuck, not a pin.
+ */
+const ARM_TUCK = 0.16;
+
+/**
  * The clips a body can travel on, slowest first. Idle is not travel.
  *
  * "stride" is deliberately absent: it carries the same speed as "walk" to
@@ -212,8 +273,21 @@ const CLIP_FOR = {
   stride:      ["tinky_walking_armed", "walk_main_2", "walk2"],
   flee:        ["tinky_running_armed", "run_main", "run1", "_run", "run"],
   attack:      ["axe_hit1", "axe_hit", "attack1", "attack"],
-  death:       ["_death", "death", "ragdoll", "trap_caught_left"],
-  spawn:       ["teleport_forward", "spawn1", "spawn"],
+  // "death" and "spawn" used to be here and are not any more.
+  //
+  // Nothing ever played either of them, and they were two of the seven distinct
+  // clips this bakes - a fifth of the longest wait in the game, spent on frames
+  // no player will ever be shown. They were not cheap either: the death donor is
+  // trap_caught_left, three seconds of it, and the spawn is a teleport.
+  //
+  // Death does not need a clip. Being caught is a scream, a face, and a body
+  // left lying in the stain the world keeps - which is already on screen and
+  // already reads. A found animation of a rig going down would have to be better
+  // than that to be worth a second of loading, and trap_caught_left is a figure
+  // still standing upright two thirds of the way through it.
+  //
+  // Spawn does not need one either. Bodies arrive by fading up out of nothing
+  // - see materialise - which is a deliberate effect rather than a missing one.
 };
 
 function pickClip(clips, keys) {
@@ -1282,6 +1356,32 @@ class RiggedTubby {
     // head swing can be damped back towards it. See HEAD_CALM.
     this.headRest = this.headBone?.quaternion.clone() ?? null;
 
+    // Both arm chains and where they hang when nothing is driving them. Both,
+    // not just the torch arm: damping one side of a walk gives you a body
+    // rowing with one oar. The hand itself is deliberately absent - it carries
+    // the grip pose and the torch, and calming it would fight #closeHand.
+    this.armBones = [];
+    this.inner.traverse((o) => {
+      if (o.isBone && /^arm_[rl]\d/i.test(o.name)) {
+        // `mean` is filled from the first animated pose rather than from this
+        // one - see #calmArms. The bind pose is a T and is no use as a target.
+        // The chain is Arm_R1 (shoulder to elbow), Arm_R2 (elbow to wrist): the
+        // tuck goes on the first, which brings the second with it.
+        this.armBones.push({
+          bone: o, mean: o.quaternion.clone(), ready: false,
+          upper: /^arm_[rl]1/i.test(o.name),
+          side: /^arm_r/i.test(o.name) ? 1 : -1,
+        });
+      }
+    });
+    /**
+     * 0 keeps the clip's full arm swing, 1 pins the arms to their rest pose.
+     * Set per body by whoever knows what it is carrying - see ARM_CALM.
+     */
+    this.armCalm = 0;
+    /** Radians the elbows come in by, at full armCalm. See ARM_TUCK. */
+    this.tuck = ARM_TUCK;
+
     this.mixer = new THREE.AnimationMixer(mine.target);
     this.byState = mine.byState;
     this.current = null;
@@ -1558,12 +1658,84 @@ class RiggedTubby {
     // After the mixer, always: it owns these bones during every clip and
     // anything written before it runs is overwritten the same frame.
     this.#turnHead();
+    this.#calmArms(dt);
     this.#closeHand();
     // And anything hung off a bone that has an opinion about the world rather
     // than about the arm - a torch, which should keep pointing where its owner
     // looks however the wrist has rolled. It has to be here, after the mixer,
     // for the same reason the head twist and the grip are.
     this.afterPose?.();
+  }
+
+  /**
+   * Take some of the clip's own arm swing back out. See ARM_CALM.
+   *
+   * After the mixer and before afterPose, so the torch hanging off the hand is
+   * aimed from where the arm ended up rather than from where the clip put it.
+   */
+  #calmArms(dt) {
+    if (!(this.armCalm > 0)) return;
+    // Exponential, so it is frame-rate independent: at 30fps and at 144 the
+    // mean settles over the same half second of animation.
+    const k = 1 - Math.exp(-dt / ARM_MEAN_TAU);
+    // The model faces +Z at yaw 0, so a body at yaw t faces (sin t, 0, cos t)
+    // and its right hand points along (-cos t, 0, sin t). An arm swinging fore
+    // and aft turns about that second one; an arm flapping out turns about the
+    // first. Both in WORLD space, because no two joints on these donors agree
+    // on which of their own axes is which - the same reason #turnHead works the
+    // way it does.
+    const t = this.root.rotation.y;
+    _axis.set(-Math.cos(t), 0, Math.sin(t));
+    _arm.set(Math.sin(t), 0, Math.cos(t));
+
+    for (const a of this.armBones) {
+      const bone = a.bone;
+      if (!a.ready) { a.mean.copy(bone.quaternion); a.ready = true; }
+      // Average the CLIP's pose, which is what the bone holds right now - the
+      // mixer has just run and nothing has touched the arms since. Averaging
+      // the damped output instead would make this chase its own tail.
+      a.mean.slerp(bone.quaternion, k);
+
+      bone.parent.updateWorldMatrix(true, false);
+      // decompose, not setFromRotationMatrix: there is scale on these chains.
+      bone.parent.matrixWorld.decompose(_scr, _pq, _v);
+
+      // Where the clip has it and where it sits on average, both in world, and
+      // the turn from one to the other: D = Wnow . Wmean-1.
+      _aq.copy(_pq).multiply(bone.quaternion);              // Wnow
+      _aq2.copy(_pq).multiply(a.mean);                      // Wmean
+      _aq.multiply(_aq2.invert());                          // D
+
+      // Split D by the axis it turns about. Aligned with the swing axis it is
+      // the walk and mostly survives; aligned with anything else it is the flap.
+      let ang = 2 * Math.acos(Math.min(1, Math.abs(_aq.w)));
+      const sin = Math.sqrt(Math.max(0, 1 - _aq.w * _aq.w));
+      if (ang > 1e-4 && sin > 1e-6) {
+        const sign = _aq.w < 0 ? -1 : 1;
+        _v.set(_aq.x, _aq.y, _aq.z).multiplyScalar(sign / sin);
+        if (_aq.w < 0) ang = 2 * Math.PI - ang;
+        if (ang > Math.PI) { ang -= 2 * Math.PI; }
+        // 1 when the turn is pure fore-and-aft, 0 when it is pure flap.
+        const along = Math.abs(_v.dot(_axis));
+        const cut = (ARM_FLAP + (ARM_SWAY - ARM_FLAP) * along) * this.armCalm;
+        _aq.setFromAxisAngle(_v, ang * (1 - cut));
+      } else {
+        _aq.identity();
+      }
+
+      // A tuck on top, for the upper arm only - it carries the rest of the
+      // chain with it. Mirrored, so both elbows come in rather than both
+      // travelling the same way round the body.
+      if (a.upper && this.tuck) {
+        _aq2.setFromAxisAngle(_arm, a.side * this.tuck * this.armCalm);
+        _aq.premultiply(_aq2);
+      }
+
+      // Back through the parent: L' = P-1 . D' . P . Lmean.
+      _aq2.copy(_pq).multiply(a.mean);
+      _aq.multiply(_aq2);
+      bone.quaternion.copy(_pq.invert()).multiply(_aq);
+    }
   }
 
   /**

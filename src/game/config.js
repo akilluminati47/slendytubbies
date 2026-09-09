@@ -189,6 +189,21 @@ export const CFG = {
     // cannot do anything about, and every other loud thing stays a thing you
     // can be loud with and live.
     alertNoise: 37,
+    // --- and what the rain does to all of it -------------------------------
+    //
+    // Rain is cover. It is the one thing in the game that happens TO you rather
+    // than because of you, and until now the only difference it made was that
+    // the sky went grey - the thing hunting you heard every footfall through a
+    // downpour exactly as well as it heard them through still air, which is
+    // both wrong and a waste of the only weather in the game.
+    //
+    // So a shower buys you two things. Everything you do is quieter, because
+    // the rain is louder than you are; and it stops the head snapping round on
+    // a trip, which is the one penalty in the game you cannot decide not to
+    // take. Under rain a trip is still heard - it walks towards where you fell -
+    // it just does not know instantly which way to look.
+    rainDeafen: 0.35,   // of your noise radius, taken away in a full downpour
+    rainCover: 0.4,     // rainfall past which the head no longer snaps round
     // It does not stop. It swings its head round onto you and keeps coming,
     // which is worse: a thing that pauses gives you a moment, and a thing that
     // simply corrects its course while walking gives you none.
@@ -236,6 +251,50 @@ export const CFG = {
     // the custard glow is the one colour worth keeping, and a fully grey screen
     // is also a screen you cannot spot a dish on.
     drainMax: 0.8,
+  },
+  /**
+   * What the pad does, and it is almost all footsteps now.
+   *
+   * It used to be one number: how frightened you are, straight onto both motors,
+   * rising as the thing closed on you and sitting there. That tells a hand
+   * exactly one fact and then keeps telling it, and a held vibration is the one
+   * signal a hand stops noticing - a minute in, a chase and a quiet walk feel
+   * the same, which is precisely backwards.
+   *
+   * So the ramp is gone and the pad reports events instead. Its feet, mostly:
+   * heavy, spaced, and loud enough that you can tell a walk from a run through
+   * your thumbs alone. Yours underneath, much lighter, so running and jumping
+   * have some weight without competing with the thing chasing you. One big shake
+   * for the moment it turns round, and that is the only one.
+   */
+  haptics: {
+    stomp: 0.95,        // its foot, underfoot - nearly everything the pad has
+    stompReach: 16,     // metres; squared falloff, so 8 m is already a quarter
+    stompMs: 110,       // long enough to read as weight, short enough to space
+    // Yours. A third of its, because you are not the frightening one, and short
+    // enough that a sprint is a patter rather than a drone.
+    step: 0.3,
+    stepMs: 55,
+    jump: 0.34,         // the push-off, which is the quiet half
+    land: 0.55,         // and the arrival, which is not
+    // Catching a foot. Half of them are worse than the other half - a trip you
+    // walk off and a trip that nearly puts you down, and not knowing which is
+    // coming is most of why it is worth feeling at all.
+    stumble: 0.6,
+    stumbleBad: 1.0,
+    stumbleMs: 260,
+    // The two big ones: it turns round and screams, and it reaches you. These
+    // are the only long shakes left in the game.
+    turn: 1.0,
+    turnMs: 420,
+    caught: 1.0,
+    caughtMs: 500,
+    pickup: 0.45,       // a dish coming off the ground
+    pickupMs: 120,
+    // The one held level: a custard humming a few metres off in the dark. Small
+    // on purpose - it should be findable, not felt.
+    hum: 0.16,
+    humReach: 6,
   },
   noise: {
     idle: 0.15,

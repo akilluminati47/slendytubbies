@@ -498,6 +498,15 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
   scene.add(trunks, crowns);
   built.meshes.push(trunks, crowns);
   built.trees = trees.length;
+  // Where the roof is, for the rain to break on. A disc per tree at the widest
+  // whorl, with its underside at the bottom of the lowest one - the same
+  // numbers crownGeometry lays the cones out from, so the rain stops where the
+  // needles actually start and not at some second guess at a tree's shape.
+  built.canopy = trees.map((t) => ({
+    x: t.x, z: t.z,
+    r: t.h * 0.155,
+    y: heightAt(t.x, t.z) + t.h * 0.30,
+  }));
 
   // --- rocks -------------------------------------------------------------
   // Three shapes, squashed differently and half buried, so no two read as the
@@ -520,6 +529,22 @@ export function plantWorld(scene, { rand, heightAt, size, place, clear, counts }
                        0.055 + rand() * 0.075).getHex(),
     });
   }
+  // Boulders catch rain too - a wet rock in a shower is one of the few things
+  // in a wood that looks like it is being rained on rather than near. The base
+  // shapes are radius 1, so the crown of one sits sy above a centre already
+  // lifted by sy * (0.5 - sink). Nothing shelters under a rock, but the same
+  // disc that decides where a splash lands decides that, and the cost of it
+  // sheltering a patch of ground it is standing on is nothing at all.
+  for (const list of buckets) {
+    for (const r of list) {
+      built.canopy.push({
+        x: r.x, z: r.z,
+        r: Math.max(r.sx, r.sz),
+        y: heightAt(r.x, r.z) + r.sy * (1.5 - r.sink),
+      });
+    }
+  }
+
   let rocksPlaced = 0;
   shapes.forEach((geo, gi) => {
     const list = buckets[gi];

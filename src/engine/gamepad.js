@@ -62,6 +62,10 @@ export class GamepadSource {
     this.index = null;
     this.rumbleUntil = 0;
     this.rumbling = false;
+    // A one-shot knock owns the motors until this passes - see jolt(). Kept
+    // apart from rumbleUntil so that the continuous caller re-arming every
+    // sixth of a second cannot cut a footfall in half.
+    this.joltUntil = 0;
 
     // Anything that can stop our frame loop must also stop the motors, or the
     // pad keeps buzzing with nobody left to tell it otherwise.
@@ -197,7 +201,8 @@ export class GamepadSource {
   }
 
   /**
-   * Dual-rumble scaled by how close the tubby is.
+   * A held level: something that is going on, rather than something that just
+   * happened. The dish humming under the floor, and not much else.
    *
    * Every effect is given a duration slightly longer than the re-trigger
    * interval so it stays continuous while being re-armed, and SHORT enough that
@@ -207,6 +212,9 @@ export class GamepadSource {
    * the failure this guards against. stop() is also wired to blur/hide/unload.
    */
   rumble(threat, now) {
+    // A knock in progress wins. Silencing the pad underneath one would clip it,
+    // and the knocks are the part carrying the information now.
+    if (now < this.joltUntil) return;
     if (threat < 0.05) { this.stop(); return; }
     if (now < this.rumbleUntil) return;
     const p = this.#pad();
@@ -221,9 +229,41 @@ export class GamepadSource {
     }).catch(() => {});
   }
 
+  /**
+   * One knock, for one thing that just happened.
+   *
+   * The chase used to be a single ramp that rose as the thing got closer and sat
+   * there humming, which tells you it is near and nothing else - and after ten
+   * seconds of it your hands stop reporting it at all. A footfall carries more:
+   * it has a rhythm, so you can hear it walking rather than running, and it has
+   * gaps, so the next one still lands.
+   *
+   * `now` is game seconds, the same clock rumble() runs on. The duration is
+   * clamped hard at both ends: too short and cheap motors never spin up, too
+   * long and this becomes the held buzz it exists to replace.
+   */
+  jolt(power, now, ms = 90) {
+    if (!(power > 0.02)) return;
+    const p = this.#pad();
+    const act = p?.vibrationActuator;
+    if (!act?.playEffect) return;
+    const dur = Math.min(500, Math.max(30, ms | 0));
+    this.joltUntil = now + dur / 1000;
+    this.rumbleUntil = this.joltUntil;
+    this.rumbling = true;
+    act.playEffect("dual-rumble", {
+      duration: dur,
+      // Weighted the other way round from rumble(): a step is a thud in the low
+      // motor, not a buzz. The high one only takes the edge off it.
+      strongMagnitude: Math.min(1, power),
+      weakMagnitude: Math.min(1, power * 0.35),
+    }).catch(() => {});
+  }
+
   /** Silence every connected pad. Safe to call repeatedly. */
   stop() {
     this.rumbleUntil = 0;
+    this.joltUntil = 0;
     if (!this.rumbling) return;
     this.rumbling = false;
     for (const p of navigator.getGamepads?.() || []) {

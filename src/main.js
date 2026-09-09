@@ -912,7 +912,9 @@ function checkSpotted(dt) {
     const look = (-Math.sin(input.yaw) * dx + -Math.cos(input.yaw) * dz) / d;
     if (look < Math.cos(CFG.tubby.lookAngle * Math.PI / 180)) continue;
     game.gasped = true;
-    input.gamepad.rumble(0.7, game.elapsed);
+    // It has turned round and it is screaming at you. This is the shake the
+    // whole rest of the pad was quietened down to make room for.
+    shake(HAPTIC.turn, HAPTIC.turnMs);
     audio.playSample("jumpscare", 0.8);
     return;
   }
@@ -929,6 +931,7 @@ function beginScare(tubby) {
   // No synth sting under it. The recording is the whole joke and a sawtooth
   // drone across it just muddies both.
   tubby.model.play?.("attack", 0.08);
+  shake(HAPTIC.caught, HAPTIC.caughtMs);
 
   const finish = () => {
     scare = null;
@@ -1074,9 +1077,17 @@ function frame() {
 
   const wasGrounded = player.grounded;
   player.update(dt);
-  if (!wasGrounded && player.grounded) audio.land();
-  if (player.jumped) audio.jumpStep();
-  if (player.stumbled) audio.stumble();
+  if (!wasGrounded && player.grounded) { audio.land(); shake(HAPTIC.land, 90); }
+  if (player.jumped) { audio.jumpStep(); shake(HAPTIC.jump, 70); }
+  if (player.stumbled) {
+    audio.stumble();
+    // Half of them are twice the other half. A trip is the same event every
+    // time on screen and in the ears, and having it land differently in the
+    // hands is the cheapest way to make catching a foot feel like bad luck
+    // rather than like a counter going up.
+    shake(Math.random() < 0.5 ? HAPTIC.stumbleBad : HAPTIC.stumble,
+          HAPTIC.stumbleMs);
+  }
   // Latched until the next packet goes out. A trip is one frame long and state
   // is sent fifteen times a second, so reading it live would drop most of them.
   if (player.stumbled) tripPending = true;
@@ -1103,6 +1114,9 @@ function frame() {
       strideLeft += gait ? gait.period
         : (0.92 + power * 0.5) / Math.max(groundSpeed, 0.6);
       audio.step(power);
+      // Your own feet, well under its. Scaled by how fast you are going, so a
+      // sprint has some weight to it and a walk barely registers.
+      shake(HAPTIC.step * power, HAPTIC.stepMs);
     }
   } else {
     // Land with a foot ready to go, so the first step after a jump is not
@@ -1117,7 +1131,8 @@ function frame() {
 
   // The air, lit by whatever the player is carrying.
   motes?.update(dt, camera.getWorldPosition(_eye), world.sky.hour,
-    player.torchOn ? player.torch : null, heightAt(player.pos.x, player.pos.z));
+    player.torchOn ? player.torch : null, heightAt(player.pos.x, player.pos.z),
+    world.sky.rainfall);
 
   const got = player.tickCollect(dt, world.custards);
   if (got) {
@@ -1126,8 +1141,7 @@ function frame() {
     $("found").textContent = game.found;
     ui.tally(game.total - game.found);
     audio.pickup();
-    input.gamepad.rumble(0.5, game.elapsed);
-    input.xr.pulse(0.4, 90);
+    shake(HAPTIC.pickup, HAPTIC.pickupMs);
     if (online) net.sendTook(world.custards.indexOf(got));
     // It does not bolt. Slendytubbies 1 rules: taking a dish makes noise and the
     // noise is the point - it comes towards you, it does not give you a breather.
@@ -1213,10 +1227,10 @@ function frame() {
   seeingIt(dt);
 
   audio.update(dt, threat);
-  // Always call through, including at zero - rumble() stops the motors itself
-  // when the threat clears. Skipping the call is what leaves a pad buzzing.
-  input.gamepad.rumble(threat > 0.15 ? threat : 0, game.elapsed);
-  if (input.xr.presenting && threat > 0.15) input.xr.pulse(threat * 0.5, 80);
+  // The threat ramp used to be here: how near it is, held on both motors, all
+  // the time. It is gone. Everything the pad says now is an event - its feet,
+  // your feet, the turn - and worldAudio holds the only continuous level left,
+  // which is a custard humming. See CFG.haptics.
 
   hud(threat);
   renderer.render(scene, camera);
@@ -1307,6 +1321,34 @@ function gauge(g, v, lit) {
  * apart and it hardly matters; spectating they are a room apart, and that is the
  * whole point.
  */
+/**
+ * One knock in the hands, wherever the hands are.
+ *
+ * The pad and the headset were driven from separate lines at every call site,
+ * which is how the headset ended up with half of them. `ms` is how long the
+ * motors are given, not how long the thing lasts - a footfall wants to be over
+ * before the next one arrives or the two run together into the buzz all of this
+ * exists to get rid of.
+ */
+const HAPTIC = CFG.haptics;
+
+function shake(power, ms = 90) {
+  input.gamepad.jolt(power, game.elapsed, ms);
+  if (input.xr.presenting) input.xr.pulse(Math.min(1, power), ms);
+}
+
+/**
+ * How hard something that far away should land, 0 at `reach` and 1 underfoot.
+ *
+ * Squared rather than linear. A footfall that fades off in a straight line is
+ * still faintly there at twenty metres, which is exactly the low constant hum
+ * this replaced; squared, it is nothing until it is close and then it is a lot.
+ */
+const felt = (d, reach) => {
+  const t = 1 - Math.min(1, d / reach);
+  return t * t;
+};
+
 function worldAudio(dt, from) {
   camera.getWorldPosition(from);
   camera.getWorldDirection(_look);
@@ -1336,8 +1378,18 @@ function worldAudio(dt, from) {
   // in the game that say where one is when you cannot see it.
   let closest = null, closestD = Infinity;
   for (const t of tubbies) {
-    if (t.stepped) audio.monsterStep(t.stepPower, t.pos);
     const d = near(t.pos.x, t.pos.z);
+    if (t.stepped) {
+      audio.monsterStep(t.stepPower, t.pos);
+      // And in the hands. This is the whole of the chase now: no ramp, no held
+      // level, just a heavy thing putting its feet down somewhere behind you.
+      // It is the loudest thing the pad does short of being caught, on purpose -
+      // the point of feeling a footstep at all is that it is a footstep.
+      if (!spectating) {
+        shake(felt(d, HAPTIC.stompReach) * HAPTIC.stomp * (0.7 + t.stepPower * 0.3),
+              HAPTIC.stompMs);
+      }
+    }
     if (d < closestD) { closestD = d; closest = t; }
   }
   audio.bellyStatic("chaser", closest?.pos ?? null, closestD);
@@ -1351,6 +1403,20 @@ function worldAudio(dt, from) {
     if (d < dishD) { dishD = d; dish = c; }
   }
   audio.hummingDish(dish?.pos ?? null, dishD);
+
+  // And the weather, which is the one sound in the game that is not coming from
+  // anywhere: it is not panned, it has no source, and it follows the sky's own
+  // rainfall so it can never be heard over a clear one.
+  audio.rain(dt, world.sky.rainfall, world.sheltered);
+
+  // The one held level left in the game, and it is tiny: a custard sitting a few
+  // metres away buzzing faintly through the pad, the way the hum already carries
+  // through the speakers. It is a hint that something is close in the dark, and
+  // a jolt on top of it always wins - see rumble().
+  if (!spectating) {
+    input.gamepad.rumble(dishD < HAPTIC.humReach
+      ? felt(dishD, HAPTIC.humReach) * HAPTIC.hum : 0, game.elapsed);
+  }
 }
 
 /**

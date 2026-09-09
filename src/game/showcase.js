@@ -4,7 +4,7 @@ import { sowGrass } from "../world/flora.js";
 import { makeTorch, makeTorchLight, torchFor, holdInHand, aimInHand, dropFromHand,
   gripPoseFor } from "../entities/torch.js";
 import { rng } from "../world/world.js";
-import { makeTubby } from "../entities/tubbyModel.js";
+import { makeTubby, ARM_CALM } from "../entities/tubbyModel.js";
 
 /**
  * The menu backdrop: the cast walks past you, one at a time, on a loop.
@@ -532,7 +532,12 @@ export class Showcase {
     walker.torch = null;
     model.grip?.(null);
     model.afterPose = null;
+    // Empty-handed, so nothing to hold still for - the walk gets its arms back.
+    model.armCalm = 0;
     if (!hand || (!first && Math.random() >= (TORCH_CHANCE[kind] ?? 0))) return;
+    // And with a torch in it, the same rule the lobby runs: the Guardian swings
+    // its lamp, everybody else carries theirs. See ARM_CALM.
+    model.armCalm = kind === "guardian" ? 0 : ARM_CALM;
     const t = makeTorch(torchFor(kind));
     if (holdInHand(t, hand, model.root)) {
       walker.torch = t;
