@@ -3,11 +3,17 @@ import * as THREE from "three";
 /**
  * Rain.
  *
- * A fixed box of streaks that travels with the camera, which is the only
- * sensible way to do weather in an open world: rain is everywhere, so there is
- * nothing to be gained by simulating the half of the map you cannot see. The
- * box is small enough that every drop in it is close enough to read as a drop
- * rather than as noise.
+ * A fixed box of streaks that scrolls under the camera as you move, which is
+ * the only sensible way to do weather in an open world: rain is everywhere, so
+ * there is nothing to be gained by simulating the half of the map you cannot
+ * see. The box is small enough that every drop in it is close enough to read as
+ * a drop rather than as noise.
+ *
+ * Each drop is stored as a single random point in world space. The vertex
+ * shader folds that point into the box around the eye — the same modulo-vs-eye
+ * trick the splashes use — so the streaks scroll past you when you run: a drop
+ * a metre from your face goes by in a rush, a distant one crawls, instead of
+ * the whole shower being dragged along on a leash behind the camera.
  *
  * Nothing moves on the CPU. Each drop knows where it started and the vertex
  * shader works out where it has fallen to from the clock, so a downpour costs
@@ -112,8 +118,12 @@ export class Rain {
     const life = new Float32Array(DROPS * 2);
 
     for (let i = 0; i < DROPS; i++) {
+      // A random point in ONE cell of world space. The shader folds this cell
+      // onto the box around the eye every frame, so as the eye moves the drops
+      // that happen to be ahead of you stay ahead and the ones behind you stay
+      // behind — the shower is steady in the world and you walk through it.
       const x = (Math.random() - 0.5) * BOX.x;
-      const y = Math.random() * BOX.y;
+      const y = (Math.random() - 0.5) * BOX.y;
       const z = (Math.random() - 0.5) * BOX.z;
       // Two vertices per drop: the head, and the tail it is smeared into.
       for (let v = 0; v < 2; v++) {
@@ -168,10 +178,20 @@ export class Rain {
         ${COVER_GLSL}
 
         void main() {
+          // The drop lives at a fixed point in the world, stored as one cell of
+          // it. Fold that point into the box around the eye, exactly like the
+          // splashes fold their x/z. This is the whole trick: the eye moves,
+          // the fold moves with it, so a drop that is ahead of you stays ahead
+          // of you and a drop behind you stays behind - the shower is steady
+          // and you walk through it, with a drop a metre from your face rushing
+          // past while a distant one crawls.
           vec3 p = position;
-          float fall = uTime * uFall * aRate;
+          p.x = mod( p.x - uEye.x + ${(BOX.x / 2).toFixed(1)}, ${BOX.x.toFixed(1)} ) - ${(BOX.x / 2).toFixed(1)};
+          p.z = mod( p.z - uEye.z + ${(BOX.z / 2).toFixed(1)}, ${BOX.z.toFixed(1)} ) - ${(BOX.z / 2).toFixed(1)};
+          p.y = mod( p.y - uEye.y + ${(BOX.y / 2).toFixed(1)}, ${BOX.y.toFixed(1)} ) - ${(BOX.y / 2).toFixed(1)};
           // Wrapped, so a drop leaving the bottom is the same drop arriving at
           // the top. The box is ${BOX.y} m tall and centred on the eye.
+          float fall = uTime * uFall * aRate;
           p.y = mod( p.y - fall, ${BOX.y.toFixed(1)} ) - ${(BOX.y / 2).toFixed(1)};
           // Slanted by the wind, by how far it has already fallen.
           //
