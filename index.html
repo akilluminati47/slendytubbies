@@ -723,6 +723,15 @@
     color:#8b8373; }
   .who.you { background:rgba(255,255,255,.075); }
 
+  #room-pass { margin:2px 0 12px; }
+  #room-pass span { display:block; font-size:10px; letter-spacing:.22em;
+    text-transform:uppercase; color:#6a6152; margin-bottom:2px; }
+  #room-pass b { font-family:var(--hand); font-weight:400;
+    font-size:clamp(22px,4.4vw,32px); letter-spacing:.03em; color:#d8d2c4;
+    /* Long ones wrap rather than running off the card, and a password is
+       exactly the sort of string that must never be silently truncated. */
+    overflow-wrap:anywhere; }
+
   .spec-hint { margin-top:4px; font-size:10px; letter-spacing:.16em;
     text-transform:uppercase; color:#5d564a; }
   body.touch #hud-left { left:calc(14px + env(safe-area-inset-left));
@@ -861,7 +870,7 @@
         <input id="lobby-title" maxlength="32" autocomplete="off" placeholder="Late night jumpscares">
       </label>
       <div class="row">
-        <button class="btn" id="public-host">Create public lobby</button>
+        <button class="btn" id="public-host">Create</button>
         <button class="btn" id="lobby-back">Back</button>
       </div>
       <p class="foot">Open to anyone. You host as the Guardian, and begin when everybody is in.</p>
@@ -869,8 +878,10 @@
 
     <div class="pane hide" id="pane-private">
       <label class="field">
-        <span>Password</span>
-        <input id="lobby-pass" maxlength="48" autocomplete="off" spellcheck="false" placeholder="a word only your friends know">
+        <!-- The length rule is written in by PASS_MIN/PASS_MAX at start-up, so
+             the label and the check that enforces it cannot drift apart. -->
+        <span id="pass-label">Password</span>
+        <input id="lobby-pass" autocomplete="off" spellcheck="false" placeholder="a word only your friends know">
       </label>
       <div id="lobby-status" class="status">Enter a password to see who is in there.</div>
       <div class="row">
@@ -893,6 +904,10 @@
   <div class="card">
     <h2>Lobby</h2>
     <p class="sub" id="room-title"></p>
+    <!-- The password, in the hand the game is written in, big enough to read
+         off a screen and say out loud. A private lobby is only findable by the
+         word that made it, and the host is the one people will ask. -->
+    <p id="room-pass" hidden><span>Password</span><b></b></p>
     <div id="room-list" class="lobby-list"></div>
     <div class="row">
       <button class="btn" id="room-start">Begin</button>

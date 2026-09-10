@@ -111,6 +111,24 @@ const LANE = {
   // How near the chaser has to get before they run. There is no matching number
   // for stopping: see the panic pass, which only goes one way.
   panic: 13.0,
+  /**
+   * How long a body takes to actually break into a run, in seconds.
+   *
+   * Without this the whole line bolted on the same frame. The contagion pass
+   * walks the queue from the back forward specifically so a panic can travel
+   * its whole length in one go, which is right for propagation and wrong for
+   * the eye: five bodies changing clip on the same frame is a cutscene, not a
+   * fright. What is missing is the part where somebody has to notice.
+   *
+   * The one nearest the thing always goes first, and that is deterministic
+   * rather than rolled - `react` is interpolated across the panic radius, so a
+   * closer body always has the shorter fuse and no amount of luck reorders
+   * them. Catching it off somebody else is a reaction to a person rather than
+   * to a monster, so that one IS rolled: you looked up, you saw them go, and
+   * how fast you work it out is not about geometry.
+   */
+  react: [0.05, 0.55],     // straight fright: nearest to furthest, in seconds
+  catchOn: [0.2, 0.6],     // seeing the body behind you bolt
   // Panic travels forward up the line as well. Somebody sprinting up behind you
   // is its own reason to move, and without this the front of the queue keeps
   // strolling while the back piles into it at four metres a second - which is
@@ -131,7 +149,17 @@ const LIT = 3;
 // nobody spends the whole walk directly behind the title.
 const OFFSET = { guardian: -1.15, laalaa: 1.25, po: -0.85, dipsy: 1.5, tinkywinky: 0 };
 
-const FRONT_SCREENS = new Set(["title", "mode", "lobby"]);
+/**
+ * The screens the parade stands behind.
+ *
+ * "room" belongs here and was missed when it was added, with a specific and
+ * ugly result: the parade did not draw, so the frame fell through to rendering
+ * the real world with a camera nothing had placed - sitting at the origin,
+ * which the terrain puts 1.4m underground. The lobby looked out from inside a
+ * hill. Anything that is a menu goes in this set; "pause" and "end" do not,
+ * because those are drawn over a round that still exists.
+ */
+const FRONT_SCREENS = new Set(["title", "mode", "lobby", "room"]);
 
 /**
  * The stage's own mist, about three times the map's.
@@ -304,12 +332,27 @@ export class Showcase {
    * the arm was a frame ago.
    */
   #castTorches() {
+    // Not in the lobby room.
+    //
+    // The room is a card with a password on it that somebody is about to read
+    // out loud, and four torch beams swinging across the stage behind it drag
+    // the eye off the one thing on screen that matters. The cast still carries
+    // the props - a Guardian without its lamp is not a Guardian - they are
+    // simply not switched on, and the beam glow goes with them.
+    const dark = document.body.dataset.screen === "room";
+
     // Nearest first, because those are the beams whose pool on the ground you
     // can actually see - the ones further back are behind the fog.
-    const lit = this.frozen
+    const lit = dark ? [] : this.frozen
       ? (this.torch ? [this.torch] : [])
       : [...this.walkers].filter((w) => w.torch).sort((a, b) => b.z - a.z)
         .slice(0, LIT).map((w) => w.torch);
+
+    // The props' own visible beams, which are separate from the lamps above.
+    for (const w of this.walkers) {
+      if (w.torch?.beam) w.torch.beam.visible = !dark;
+      if (w.torch?.glow) w.torch.glow.visible = !dark;
+    }
 
     for (let i = 0; i < this.lamps.length; i++) {
       const lamp = this.lamps[i];
@@ -467,6 +510,8 @@ export class Showcase {
     // way for the whole lap - a monster that breaks into a run halfway is a
     // moment, and one that gives up halfway and strolls is a joke.
     walker.running = false;
+    // And no half-burnt fuse carried over from the lap it just finished.
+    walker.fuse = null;
     // Half the party takes the second walk cycle, rolled per lap.
     walker.varied = Math.random() < 0.5;
 
@@ -646,10 +691,26 @@ export class Showcase {
       const ahead = chaser ? w.z - chaser.z : Infinity;
       // Two reasons to run: the thing itself is close, or the one behind you is
       // running and closing on your heels.
-      const scared = (chaser && ahead > 0 && ahead < LANE.panic)
-        || (!!behind?.running && w.z - behind.z < LANE.contagion);
+      const fright = chaser && ahead > 0 && ahead < LANE.panic;
+      const caught = !!behind?.running && w.z - behind.z < LANE.contagion;
       behind = w;
-      if (!scared) continue;
+
+      // Start the fuse rather than the run - see LANE.react. Whichever reason
+      // arrives first sets it, and the thing itself always beats hearsay: a
+      // body already counting down from watching a friend go will shorten to
+      // the fright delay the moment the chaser is actually on them.
+      if (fright) {
+        const near = Math.max(0, Math.min(1, ahead / LANE.panic));
+        const fuse = LANE.react[0] + near * (LANE.react[1] - LANE.react[0]);
+        w.fuse = w.fuse == null ? fuse : Math.min(w.fuse, fuse);
+      } else if (caught && w.fuse == null) {
+        w.fuse = LANE.catchOn[0]
+          + Math.random() * (LANE.catchOn[1] - LANE.catchOn[0]);
+      }
+      if (w.fuse == null) continue;
+      w.fuse -= dt;
+      if (w.fuse > 0) continue;
+      w.fuse = null;
       w.running = true;
       const want = LANE.runSpeed[0]
         + Math.random() * (LANE.runSpeed[1] - LANE.runSpeed[0]);

@@ -4,6 +4,17 @@ import { hashKey, randomKey } from "../net/client.js";
 const $ = (id) => document.getElementById(id);
 
 /**
+ * What a private lobby's password may be.
+ *
+ * One pair of numbers, used three times: the input's own maxlength, the check
+ * that decides whether to go looking for a lobby, and the label that says the
+ * rule before you have broken it. They used to be a hardcoded 3 in this file
+ * and a maxlength of 48 in the markup, with nothing on screen mentioning either.
+ */
+export const PASS_MIN = 3;
+export const PASS_MAX = 48;
+
+/**
  * Screen flow: title -> mode -> (lobby) -> game -> (pause) -> end.
  *
  * The title screen earns its place: browsers will not start an AudioContext
@@ -115,6 +126,9 @@ export class UI {
     for (const id of ["lobby-back", "lobby-back2"]) {
       $(id).onclick = () => { this.#stopWatching(); this.show("mode"); };
     }
+    // The rule, written where it is about to be broken.
+    $("lobby-pass").maxLength = PASS_MAX;
+    $("pass-label").textContent = `Password (${PASS_MIN}–${PASS_MAX} characters)`;
     $("room-start").onclick = () => this.hooks.onStartRun?.();
     $("room-leave").onclick = () => this.hooks.onLeave?.();
   }
@@ -175,7 +189,7 @@ export class UI {
     this.#stopWatching();
     const password = $("lobby-pass").value.trim();
 
-    if (password.length < 3) {
+    if (password.length < PASS_MIN) {
       this.lobby = { key: null, info: null };
       this.#setStatus("Enter a password to see who is in there.", "");
       this.#setPrivateButtons(false, false);
@@ -228,6 +242,9 @@ export class UI {
   async #enter(key, create, opts) {
     if (!key) return;
     const name = ($("lobby-name").value.trim() || "Tubby").slice(0, 16);
+    // Carried through for the room to display, and for nothing else. Only the
+    // hash is ever sent to the server.
+    opts = { ...opts, pass: this.tab === "private" ? $("lobby-pass").value.trim() : "" };
     localStorage.setItem("slendytubbies.name", name);
     this.#setPrivateButtons(false, false);
     this.#stopWatching();
@@ -305,8 +322,17 @@ export class UI {
    * @param host   whether WE are the one who can start it
    * @param title  the lobby's name, or its password, or nothing
    */
-  showRoom(people, host, title = "") {
+  showRoom(people, host, title = "", password = "") {
     $("room-title").textContent = title;
+    // The password itself, for a private lobby, so the host can read it back to
+    // whoever has not arrived yet. It is the plaintext they typed and it has
+    // never left this browser - the server only ever saw its hash - so putting
+    // it here tells nobody anything they could not already see on the screen.
+    // It used to show that hash, which is unreadable and, worse, is not the
+    // thing a friend needs to type.
+    const pass = $("room-pass");
+    pass.hidden = !password;
+    if (password) pass.querySelector("b").textContent = password;
     const list = $("room-list");
     list.textContent = "";
     for (const p of people) {

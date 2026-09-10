@@ -59,7 +59,28 @@ export class Player {
     this.torch.shadow.mapSize.set(1024, 1024);
     this.torch.shadow.camera.near = 0.4;
     this.torch.shadow.camera.far = 40;
-    this.torch.shadow.bias = -0.0015;
+    // --- and the reason the ground had a grid drawn on it ------------------
+    //
+    // The dark lines across the floor on a phone were shadow acne, not the
+    // procedural surface: the terrain's own triangles self-shadowing, which is
+    // why they only ever appeared inside the lit pool and why no amount of
+    // shader precision made them go away. Depth bias alone is a fixed nudge in
+    // depth units, and it was tuned against a desktop depth buffer; a phone's
+    // is routinely half the bits, so the same number stopped clearing the
+    // quantisation step and every triangle started shadowing itself.
+    //
+    // normalBias is the fix rather than a bigger depth bias. It moves the
+    // lookup along the surface NORMAL, in metres, so it scales with how
+    // glancing the light is - which is exactly when acne appears and exactly
+    // what a fixed depth bias cannot know about. 6cm against a shadow texel
+    // that covers about 4cm of ground at the far end of a 40m beam: enough to
+    // clear the step on a coarse depth buffer, small enough that nothing
+    // detaches from the thing casting it.
+    //
+    // The depth bias stays, much smaller, for the head-on case normalBias
+    // barely moves.
+    this.torch.shadow.bias = -0.0004;
+    this.torch.shadow.normalBias = 0.06;
     this.torch.target.position.set(0, 0, -1);
     this.torch.add(this.torch.target);
 

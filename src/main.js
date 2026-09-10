@@ -136,6 +136,8 @@ let myRole = "guardian";
 /** Our own name and the lobby's, for the room's roster. */
 let myName = "Tubby";
 let lobbyTitle = "";
+/** The private lobby's password, in plaintext, for the room to show. Local. */
+let lobbyPass = "";
 /** True between connecting and the host starting the run. */
 let waiting = false;
 
@@ -307,8 +309,52 @@ function spawnTubby(kind) {
   tubbies.push(new Tubby(scene, world, kind, p));
 }
 
+/**
+ * The whole screen, if the player wants it, once per page load.
+ *
+ * A phone gives about four fifths of its display to a game running in a browser
+ * tab; the rest is address bar, tab strip and gesture bar, on the device that
+ * can least spare it. So the first time a round starts we ask for the lot.
+ *
+ * Once, and only on the way in. Escape leaves fullscreen - that is the browser's
+ * rule and not ours, and it is the same key that opens the menu, so trying to
+ * claw the screen back on resume would be a fight with the player rather than a
+ * feature. The toggle in the settings is how you get it back, and clicking a
+ * toggle is a user gesture, which is the only way a browser will hand it over.
+ *
+ * The flag is set on SUCCESS rather than on asking. A guest whose round is
+ * started by the host is not in a user gesture and will simply be refused -
+ * marking it done there would burn the one attempt on a request that never
+ * happened.
+ */
+let wentFullscreen = false;
+
+function goFullscreen() {
+  if (document.fullscreenElement) return Promise.resolve();
+  const el = document.documentElement;
+  // Not on iOS Safari, which has no fullscreen outside a <video>. The optional
+  // call and the catch are both load-bearing.
+  return el.requestFullscreen?.({ navigationUI: "hide" })
+    ?? Promise.reject(new Error("no fullscreen here"));
+}
+
+function leaveFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+}
+
+settings.onChange((key, value) => {
+  if (key !== "fullscreen") return;
+  // Straight away, because the click that flipped it is the gesture that pays
+  // for it. Waiting until the next round would mean asking without one.
+  if (value) goFullscreen().then(() => { wentFullscreen = true; }).catch(() => {});
+  else leaveFullscreen();
+});
+
 function begin() {
   game.gasped = false;
+  if (!wentFullscreen && settings.get("fullscreen")) {
+    goFullscreen().then(() => { wentFullscreen = true; }).catch(() => {});
+  }
   // A new round is a clean slate: nobody has fallen yet, nobody has a body on
   // the map, and nobody has seen the thing. Here rather than in one of the
   // callers, because every way into a round comes through this.
@@ -369,7 +415,9 @@ const ui = new UI(settings, net, {
     host = net.isHost;
     myRole = net.role;
     myName = name;
-    lobbyTitle = opts?.title || (opts?.public ? "" : key);
+    // The lobby's name if it has one; the hashed key is never shown to anybody.
+    lobbyTitle = opts?.title || "";
+    lobbyPass = opts?.pass || "";
     buildWorld(seedFromKey(key));
 
     // The CPU exists on every client, but only the host runs its brain.
@@ -586,7 +634,7 @@ function showRoom() {
     { id: net.id, name: myName, role: myRole, isHost: host, you: true },
     ...[...net.peers.values()].map((p) => ({ ...p, you: false })),
   ].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role));
-  ui.showRoom(people, host, lobbyTitle);
+  ui.showRoom(people, host, lobbyTitle, lobbyPass);
 }
 
 /** Somebody arrived, left, or inherited the lobby: redraw the roster. */
@@ -1049,6 +1097,15 @@ function restartRound(seed) {
  */
 function checkSpotted(dt) {
   if (!player?.alive || spectating) return;
+  // Not while the menu is up. You are not looking at the screen, so you have
+  // not seen anything - the same rule seeingIt already runs for the gasp.
+  //
+  // This matters more than suppressing a sound, which the pause mix would do
+  // anyway: `gasped` is once per round. Noticing it behind a settings panel
+  // would spend that on a moment nobody witnessed, and the real one - the time
+  // you look up and it is there - would arrive in silence with no shake under
+  // it. The moment is kept rather than dropped.
+  if (paused) return;
   // You cannot flinch at what you cannot make out, and the fog decides that -
   // which moves with the weather and the hour, exactly as it should.
   const canSee = scene.fog ? scene.fog.far : 40;
