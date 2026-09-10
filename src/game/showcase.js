@@ -161,6 +161,9 @@ const OFFSET = { guardian: -1.15, laalaa: 1.25, po: -0.85, dipsy: 1.5, tinkywink
  */
 const FRONT_SCREENS = new Set(["title", "mode", "lobby", "room"]);
 
+/** The room is the one front screen where the cast carries nothing. */
+const bareStage = () => document.body.dataset.screen === "room";
+
 /**
  * The stage's own mist, about three times the map's.
  *
@@ -579,6 +582,16 @@ export class Showcase {
     model.afterPose = null;
     // Empty-handed, so nothing to hold still for - the walk gets its arms back.
     model.armCalm = 0;
+    // And in the lobby room, empty-handed is where it stops.
+    //
+    // Switching the beams off was half the job: a body still holding a dark
+    // torch is a body with one fist closed round nothing and that arm damped
+    // to keep it from swinging the lamp about, which reads as a limp on
+    // anybody who breaks into a run. Nobody is lighting anything back there -
+    // it is a card with a password on it - so they may as well have their
+    // hands and their full stride back. See #bareHanded for what puts the
+    // torches back when the room closes.
+    if (bareStage()) return;
     if (!hand || (!first && Math.random() >= (TORCH_CHANCE[kind] ?? 0))) return;
     // And with a torch in it, the same rule the lobby runs: the Guardian swings
     // its lamp, everybody else carries theirs. See ARM_CALM.
@@ -595,6 +608,22 @@ export class Showcase {
   }
 
   /**
+   * Take the torches away when the room opens, and hand them back when it shuts.
+   *
+   * #maybeTorch normally runs once per lap, at #enter, which would leave
+   * whoever is already mid-lap carrying a lamp across a screen that is meant to
+   * have none - and for a while, because a lap is most of a minute. This
+   * catches the transition instead and re-runs the decision for everybody, so
+   * the change happens on the frame the screen does.
+   */
+  #bareHanded() {
+    const bare = bareStage();
+    if (bare === this.bare) return;
+    this.bare = bare;
+    for (const w of this.walkers) this.#maybeTorch(w);
+  }
+
+  /**
    * Advance and draw. Returns false when the caller should draw the game world
    * instead, so main.js never has to know the rules twice.
    */
@@ -602,6 +631,7 @@ export class Showcase {
     if (!this.wanted(running)) return false;
     if (!this.models) this.#build();
     if (!this.current) return false;
+    this.#bareHanded();
 
     // No ground mist on the stage. The lid is partly an absolute world height
     // and this scene stands its cast at y=0 on a flat plane, which is a place
