@@ -954,7 +954,72 @@
      than each carrying a copy that could drift apart. -->
 <div id="byline">AK &amp; Co.</div>
 
-<script>if (location.search.includes("gsdebug")) globalThis.__GS_DEBUG = 1;</script>
+<!-- Shown only when the game genuinely cannot start: no 3D at all (WebGL off or
+     a proxy browser like Opera Mini), or a script that would not run on a build
+     too old for modules. A friend who opens this in the wrong browser gets a
+     sentence instead of a black rectangle. -->
+<style>
+  /* Self-contained, so it renders even if the game's own stylesheet never got
+     as far as applying - a browser this message exists for is one where little
+     is guaranteed. */
+  #boot-fail { position:fixed; inset:0; z-index:9999; display:flex;
+    align-items:center; justify-content:center; padding:24px;
+    background:#0a0a0c; color:#d8d2c4;
+    font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #boot-fail[hidden] { display:none; }
+  #boot-fail .card { max-width:34rem; display:grid; gap:14px; text-align:center;
+    background:rgba(20,20,24,.9); border:1px solid rgba(255,255,255,.08);
+    border-radius:16px; padding:28px 32px; }
+  #boot-fail h2 { margin:0; font-size:1.4rem; }
+  #boot-fail p { margin:0; line-height:1.5; color:#b7b2a6; }
+  #boot-fail .sub { font-size:.85rem; color:#7d776b; word-break:break-word; }
+  #boot-fail b { color:#d8d2c4; }
+</style>
+<div id="boot-fail" hidden>
+  <div class="card">
+    <h2>Can't start the game</h2>
+    <p>This browser couldn't open the 3D view. It usually means WebGL is
+       switched off, or the browser is too old.</p>
+    <p class="sub" data-why></p>
+    <p>Try the latest <b>Chrome</b>, <b>Edge</b> or <b>Firefox</b>, and check
+       that hardware acceleration is on.</p>
+  </div>
+</div>
+
+<script>
+  // Classic script on purpose: it has to run even where the module below will
+  // not parse, so it cannot use import, top-level await, or arrow-only syntax
+  // an ancient engine would choke on before it ever reaches the game.
+  (function () {
+    function fail(why) {
+      var el = document.getElementById("boot-fail");
+      if (!el) return;
+      var w = el.querySelector("[data-why]");
+      if (w && why) w.textContent = why;
+      el.hidden = false;
+    }
+    window.__bootFail = fail;
+    // No context of any kind means no 3D at all - decide it here, before three
+    // throws its own opaque error, so the message is one a person can read.
+    try {
+      var c = document.createElement("canvas");
+      var gl = c.getContext("webgl2") || c.getContext("webgl") ||
+               c.getContext("experimental-webgl");
+      if (!gl) {
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", function () {
+            fail("No WebGL context is available.");
+          });
+        } else {
+          fail("No WebGL context is available.");
+        }
+      }
+    } catch (e) {
+      fail(String(e && e.message || e));
+    }
+  })();
+  if (location.search.includes("gsdebug")) globalThis.__GS_DEBUG = 1;
+</script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

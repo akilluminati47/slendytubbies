@@ -32,7 +32,18 @@ const SPAWN_RING = 3.2;
 
 /* ------------------------------------------------------------------ engine */
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+// three throws in here when the browser has no usable WebGL2 - Opera Mini, a
+// build too old, or hardware acceleration switched off. Left to propagate it
+// kills the whole module and leaves a black page; caught, it hands the reader
+// the same sentence the pre-check in index.html shows, and stops rather than
+// limping on into a hundred null-renderer errors.
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+} catch (err) {
+  globalThis.__bootFail?.(String(err?.message || err));
+  throw err;
+}
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
