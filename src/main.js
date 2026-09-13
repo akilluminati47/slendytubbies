@@ -54,13 +54,6 @@ const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
 
-addEventListener("resize", () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  showcase?.resize(innerWidth, innerHeight);
-});
-
 const input = new Input(renderer.domElement, renderer, rig);
 const audio = new Audio();
 const settings = new Settings();
@@ -101,6 +94,20 @@ const stageAt = performance.now();
 const showcase = new Showcase();
 boot.push(`showcase ${Math.round(performance.now() - stageAt)}ms`);
 showcase.resize(innerWidth, innerHeight);
+
+// Registered here, not up with the camera, and the ordering is load-bearing:
+// the rig bake before this line is awaited and runs for whole seconds, and a
+// window resize landing inside that await used to reach `showcase` while it was
+// still in its temporal dead zone and throw. The initial size is already set
+// explicitly above, so nothing is lost by waiting until the thing the handler
+// touches actually exists.
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  showcase.resize(innerWidth, innerHeight);
+});
+
 installMenuSfx(audio);
 installTorchBench({ showcase });
 

@@ -204,9 +204,16 @@ export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } 
       // what colour the low ground is, so the two agree instead of fighting.
       .replace("#include <color_fragment>", `#include <color_fragment>
         highp float sH = sHeight(${kind}, vSurfWorld, vSurfObj);
+        // How much ground one pixel now covers, in metres. When that grows past
+        // the size of the relief's own detail, sampling the field once per pixel
+        // is a coin toss - and it was the toss that shimmered into dark streaks
+        // far out and salt-and-pepper on a boulder seen across the clearing. Fade
+        // the whole effect out as the pixel outgrows the detail, so distance
+        // dissolves it instead of aliasing it.
+        highp float sAA = 1.0 / (1.0 + length(fwidth(vSurfWorld)) * 6.0);
         diffuseColor.rgb = mix(diffuseColor.rgb,
           mix(uSurfTint, diffuseColor.rgb * 1.35, sH),
-          uSurfMottle);`)
+          uSurfMottle * sAA);`)
       // Then the relief. Taken after three has settled on a normal, so flat
       // shading still decides the facets and this only adds the grain on top.
       .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>
@@ -220,7 +227,17 @@ export function carve(mat, kind, { bump = 0.6, mottle = 0.35, tint = 0x000000 } 
           highp vec3 r1 = cross(dPdy, normal), r2 = cross(normal, dPdx);
           highp float det = dot(dPdx, r1);
           highp vec3 grad = (r1 * dHdx + r2 * dHdy) / max(abs(det), 1e-7);
-          normal = normalize(normal - uSurfBump * grad);
+          // det is the projected pixel area, and it falls to nothing when the
+          // ground is seen edge-on. Dividing by it - floored at a mere 1e-7 -
+          // turned a pixel of noise at a grazing angle into a gradient the
+          // length of a house, and normalize(normal - that) flipped the normal
+          // clean past black: the dark streaks radiating across the far floor.
+          // Cap the gradient so no perturbation can ever invert the normal.
+          highp float gl = length(grad);
+          grad = gl > 6.0 ? grad * (6.0 / gl) : grad;
+          // And the same distance fade the albedo uses, so the relief dissolves
+          // with the colour rather than shimmering on after it has gone flat.
+          normal = normalize(normal - uSurfBump * sAA * grad);
         }`);
   };
   // A material that changes its program needs to say so, and two materials

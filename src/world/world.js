@@ -101,8 +101,21 @@ export class World {
       pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
     }
     geo.computeVertexNormals();
+    // Smooth normals, NOT flat.
+    //
+    // A flat-shaded material has no vertex normal to interpolate, so three
+    // rebuilds the normal in the fragment shader from the screen-space
+    // derivatives of the view position: normalize(cross(dFdx(p), dFdy(p))).
+    // That is exact inside a triangle and nonsense on the 2x2 pixel quads that
+    // straddle a triangle edge, where the two halves belong to different
+    // planes - and a phone computes one coarse derivative per whole quad, so an
+    // entire block of pixels along every edge gets the wrong normal. On a 96x96
+    // heightfield that is 18,000 edges of dashed dark seams: the grid the ground
+    // wore on mobile. The relief this plane actually wants comes from the shader
+    // (see carve) and does not need the facets, so the facets - and their grid -
+    // go. computeVertexNormals already left smooth normals to interpolate.
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x3d4a33, roughness: 1, metalness: 0, flatShading: true,
+      color: 0x3d4a33, roughness: 1, metalness: 0,
     });
     // Ninety-six squares across two hundred metres is a facet every two metres,
     // and a single flat green over it reads as felt. The relief is generated in
